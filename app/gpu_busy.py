@@ -36,6 +36,15 @@ covered, so a probe that stalled shows as a long one.
 
 A MISSED READ LOSES NOTHING BUT RESOLUTION: the kernel's counters are
 cumulative, so the next interval covers it.
+
+THE CARD'S FIGURE COMES FROM ITS DRIVER WHERE IT CAN (app/gpu_pmu.py: xe's
+perf PMU, amdgpu's `gpu_busy_percent`; `source` says which). Reading another
+process's fdinfo is a ptrace-read check, and on the node every model
+server's was "Permission denied" to the probe (CAP_PERFMON only): it printed
+0 % of a card that was 34–37 % busy (München, 2026-11-01). fdinfo is then
+for WHO, as far as it can be read; it gives the card's figure only when no
+process was unreadable. A card with neither has `busy: null` and says why
+(`blind`) — never 0, which is a measurement.
 """
 from __future__ import annotations
 
@@ -46,7 +55,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 #: one sample a second: the resolution the scheduling measurements used
 PERIOD_S = 1.0
@@ -176,6 +185,7 @@ class BusySampler:
 
     def __init__(self, discover: Callable[[], Iterable[tuple[Path, Holder]]],
                  cards: Callable[[], Iterable[str]] = lambda: (), *,
+                 devices: Callable[[], tuple[Mapping[str, Any], Mapping[str, str]]] | None = None,
                  read: Callable[[Path], str | None] | None = None,
                  period_s: float = PERIOD_S, keep_s: float = KEEP_S,
                  rescan_s: float = RESCAN_S,
@@ -183,6 +193,10 @@ class BusySampler:
                  mono_ns: Callable[[], int] = time.monotonic_ns) -> None:
         self._discover = discover
         self._cards = cards
+        self._open_devices = devices
+        self._devices: dict[str, Any] | None = None     # pdev -> a gpu_pmu.Source
+        self._blind: dict[str, str] = {}                 # pdev -> why it has none
+        self._unreadable = 0                             # processes whose fds were refused
         self._read = read or _read_text
         self.period_s = period_s
         self._keep = max(1, int(keep_s / period_s))
@@ -202,8 +216,19 @@ class BusySampler:
     def _rescan(self, now_ns: int) -> None:
         self._last_scan_ns = now_ns
         self._pdevs.update(p for p in self._cards() if p)
+        if self._devices is None:
+            self._devices, self._blind = {}, {}
+            if self._open_devices is not None:
+                try:
+                    found, why = self._open_devices()
+                    self._devices, self._blind = dict(found), dict(why)
+                except Exception as e:   # noqa: BLE001 — said per card, never raised
+                    self._blind = {"*": f"{type(e).__name__}: {e}"}
+            self._pdevs.update(self._devices)
         seen: set[ClientKey] = set()
-        for path, holder in self._discover():
+        found_files = self._discover()
+        self._unreadable = int(getattr(found_files, "unreadable", 0))
+        for path, holder in found_files:
             text = self._read(path)
             counters = parse_counters(text) if text else None
             if counters is None or counters.empty:
@@ -261,13 +286,35 @@ class BusySampler:
             for engine, share in got.items():
                 engines[pdev][engine] = engines[pdev].get(engine, 0.0) + share
                 mine[engine] = mine.get(engine, 0.0) + share
+        device: dict[str, dict[str, float] | None] = {}
+        for pdev, src in (self._devices or {}).items():
+            try:
+                device[pdev] = src.sample()
+            except Exception:   # noqa: BLE001 — this second has no figure
+                device[pdev] = None
         with self._lock:
             for pdev in self._pdevs:
-                per_engine = {e: round(min(v, 1.0), 4) for e, v in sorted(engines[pdev].items())}
+                source, blind = "fdinfo", None
+                if pdev in device:
+                    source = getattr(self._devices[pdev], "kind", "device")
+                    got = device[pdev]
+                    per_engine = ({e: round(min(v, 1.0), 4) for e, v in sorted(got.items())}
+                                  if got is not None else None)
+                elif self._unreadable:
+                    per_engine = None
+                    blind = (self._blind.get(pdev) or self._blind.get("*") or
+                             "no driver-level source") + (
+                        f"; fdinfo of {self._unreadable} process(es) unreadable "
+                        f"(ptrace read access)")
+                else:
+                    per_engine = {e: round(min(v, 1.0), 4)
+                                  for e, v in sorted(engines[pdev].items())}
                 sample: dict = {"t": round(t, 3),
                                 "dt": None if dt is None else round(dt, 3),
-                                "busy": max(per_engine.values(), default=0.0),
-                                "engines": per_engine,
+                                "busy": (None if per_engine is None
+                                         else max(per_engine.values(), default=0.0)),
+                                "source": source,
+                                "engines": per_engine or {},
                                 "processes": sorted(
                                     ({"pid": h.pid, "label": h.label, "container": h.container,
                                       "busy": round(min(max(e.values(), default=0.0), 1.0), 4)}
@@ -277,6 +324,8 @@ class BusySampler:
                     sample["new"] = new[pdev]
                 if dropped[pdev]:
                     sample["dropped"] = dropped[pdev]
+                if blind:
+                    sample["blind"] = blind
                 self._samples.setdefault(pdev, deque(maxlen=self._keep)).append(sample)
 
     # ------------------------------------------------------------ serving
@@ -314,11 +363,18 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def drm_files(proc: Path, label_of: Callable[[Path], Holder | None]) -> list[tuple[Path, Holder]]:
+class DrmFiles(list):
+    """`drm_files`' answer: the descriptors, and how many processes would not
+    show theirs (`unreadable`) — a figure summed over what could be read is
+    a card's busy only when that is 0."""
+    unreadable: int = 0
+
+
+def drm_files(proc: Path, label_of: Callable[[Path], Holder | None]) -> DrmFiles:
     """Every descriptor under /proc that points into /dev/dri, with who holds
     it — what `BusySampler` reads. `label_of` names a process from its
     /proc directory (None: leave it out)."""
-    out: list[tuple[Path, Holder]] = []
+    out = DrmFiles()
     try:
         pids = [e.name for e in os.scandir(proc) if e.name.isdigit()]
     except OSError:
@@ -327,6 +383,9 @@ def drm_files(proc: Path, label_of: Callable[[Path], Holder | None]) -> list[tup
         pid_dir = proc / name
         try:
             fds = os.listdir(pid_dir / "fd")
+        except PermissionError:
+            out.unreadable += 1           # not ours to read: its share is unknown
+            continue
         except OSError:
             continue
         holder: Holder | None = None
