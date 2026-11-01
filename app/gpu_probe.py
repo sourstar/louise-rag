@@ -21,23 +21,30 @@ Where each figure comes from (measured on the node, 2026-09-18: kernel
   server's directory, Ollama's blob named through its manifest;
 - a card's name: pci.ids, pinned in the image (Dockerfile). The node's own
   copy calls the Arc Pro B70 "Battlemage G21 [Intel Graphics]".
+
+It also keeps the card's BUSY TIME, one sample a second for the last hour
+(app/gpu_busy.py, from the same fdinfo's engine counters), and answers
+GET /busy?since=<unix seconds> with the samples after that instant — the
+time series the worker records (docs/notes/gpu-saturation-plan.md, I1).
 """
 from __future__ import annotations
 
 import argparse
 import fcntl
 import json
+import math
 import os
 import re
 import signal
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
+from urllib.parse import parse_qs, urlsplit
 
 import threading
 import time
 
-from . import gpu_memory
+from . import gpu_busy, gpu_memory
 from .gpu import (GpuDevice, GpuProcess, GpuSnapshot, energy_uj, gt_clock, hwmon_dir,
                   read_sensors, to_json)
 
@@ -357,6 +364,34 @@ def scan() -> dict[str, list[GpuProcess]]:
     return out
 
 
+def holder(pid_dir: Path) -> gpu_busy.Holder | None:
+    """Who a process is, as the panel names it — for the busy samples."""
+    try:
+        pid = int(pid_dir.name)
+    except ValueError:
+        return None
+    return gpu_busy.Holder(pid=pid, label=label(_argv(pid_dir), pid_dir / "root"),
+                           container=container(pid_dir))
+
+
+def card_pdevs() -> list[str]:
+    """Every card's PCI address, so a card nobody uses still has samples
+    (busy 0) rather than none."""
+    out = []
+    for card in cards():
+        try:
+            out.append((card / "device").resolve().name)
+        except OSError:
+            continue
+    return out
+
+
+def busy_sampler() -> gpu_busy.BusySampler:
+    """The probe's sampler over the host's /proc (PROC at call time, so the
+    tests' fake one is used)."""
+    return gpu_busy.BusySampler(lambda: gpu_busy.drm_files(PROC, holder), card_pdevs)
+
+
 # --------------------------------------------------------------------------
 # the snapshot, and the service
 
@@ -414,10 +449,34 @@ def snapshot() -> GpuSnapshot:
         notes=tuple(notes))
 
 
+#: the running sampler; None until main() starts it (or in --once)
+SAMPLER: gpu_busy.BusySampler | None = None
+
+
+def busy_answer(query: str) -> tuple[int, dict]:
+    """GET /busy's status and body: the samples after `since` (all kept
+    when absent); 503 while no sampler runs; 400 for a `since` that is no
+    number."""
+    if SAMPLER is None:
+        return 503, {"error": "the busy sampler is not running"}
+    raw = parse_qs(query).get("since", [None])[0]
+    try:
+        since = float(raw) if raw not in (None, "") else None
+    except ValueError:
+        since = math.nan
+    if since is not None and not math.isfinite(since):
+        return 400, {"error": "since must be Unix seconds"}
+    return 200, SAMPLER.since(since)
+
+
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:   # noqa: N802 — http.server's name
+        url = urlsplit(self.path)
         if self.path == "/health":
             self._send(200, b"ok", "text/plain")
+        elif url.path == "/busy":
+            status, answer = busy_answer(url.query)
+            self._send(status, json.dumps(answer).encode(), "application/json")
         elif self.path == "/gpu":
             try:
                 body, status = json.dumps(to_json(snapshot())).encode(), 200
@@ -446,10 +505,18 @@ def main(argv: list[str] | None = None) -> int:
     if ns.once:
         print(json.dumps(to_json(snapshot()), indent=2))
         return 0
-    # a stateless reader: nothing to finish on a stop but the reply in flight
+    # a reader: nothing to finish on a stop but the reply in flight; the
+    # busy samples are memory only, and the counters they come from are the
+    # kernel's, cumulative, so a restart loses an hour of history and nothing
+    # else
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    global SAMPLER
+    SAMPLER = busy_sampler()
+    threading.Thread(target=SAMPLER.run, args=(threading.Event(),),
+                     name="busy-sampler", daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", ns.port), _Handler)
-    print(f"gpu-probe: serving /gpu on :{server.server_address[1]}", file=sys.stderr, flush=True)
+    print(f"gpu-probe: serving /gpu and /busy on :{server.server_address[1]}",
+          file=sys.stderr, flush=True)
     server.serve_forever()
     return 0
 

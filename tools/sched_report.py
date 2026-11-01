@@ -9,6 +9,7 @@ measurement, and each one missed what the next had to fix:
     python -m app.louise dev schedule-report --rates --seconds 120  documents/s per stage
     python -m app.louise dev schedule-report --pool                 parse pool health
     python -m app.louise dev schedule-report --shares               fair-share accounting
+    python -m app.louise dev schedule-report --gpu --minutes 15     card busy, gaps, who held it
     python -m app.louise dev schedule-report --all                  all of the above
 
 Run it INSIDE the worker container (it needs the manifests and the app):
@@ -20,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from app import collections as c_mod, config, db, parallel, worker
+from app import card_record, collections as c_mod, config, db, parallel, worker
 from app.bundles import genesis
 
 BAD_PLAN = ("SCAN documents", "TEMP B-TREE", "LIST SUBQUERY", "CORRELATED")
@@ -249,6 +250,36 @@ def shares(names, limit: int = 12) -> None:
               " disables the rotation entirely.")
 
 
+def gpu(minutes: int, card: str | None = None) -> None:
+    """The card, minute by minute, from the worker's record
+    (app/card_record.py): its mean busy, the seconds a query held the claim,
+    the seconds with work waiting and of those the GAPS (card idle) and the
+    LOST card time (Σ 1 − busy), and each collection's request-seconds held
+    on the encoder gates. The targets are docs/notes/gpu-saturation-plan.md's:
+    busy ≥ 90 % for one collection alone, gaps under 1 s a minute."""
+    since = time.time() - minutes * 60
+    rows = list(card_record.read(since))
+    print(f"=== the card over the last {minutes} min ({len(rows)} s recorded, "
+          f"{card_record.directory()}):")
+    if not rows:
+        print("  nothing recorded — the worker records only with GPU_PROBE_URL set "
+              "and a probe answering GET /busy")
+        return
+
+    def line(label: str, w) -> str:
+        busy = "   —  " if w.busy is None else f"{w.busy:6.1%}"
+        held = ", ".join(f"{p} {s:.0f}" for p, s in sorted(w.served.items(), key=lambda x: -x[1]))
+        return (f"  {label}  busy {busy}  query {w.query:3d}s  waiting {w.waiting:3d}s  "
+                f"gaps {w.gaps:3d}s  lost {w.lost:5.1f}s  held: {held or '—'}")
+    for w in card_record.summarize(rows, card=card):
+        print(line(time.strftime("%H:%M", time.gmtime(w.start)) + "Z", w))
+    total = card_record.summarize(rows, minute=False, card=card)[0]
+    print(line("all   ", total))
+    per_min = 60.0 / total.seconds if total.seconds else 0.0
+    print(f"  gaps {total.gaps * per_min:.1f} s/min, lost {total.lost * per_min:.1f} s/min "
+          f"(target: gaps under 1 s/min; busy ≥ 90 % for a collection alone)")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -258,13 +289,17 @@ def main(argv=None) -> int:
     ap.add_argument("--pool", action="store_true", help="parse pool health")
     ap.add_argument("--shares", action="store_true",
                     help="what each collection got from each resource")
+    ap.add_argument("--gpu", action="store_true",
+                    help="the card: busy, gaps and who held it, per minute")
+    ap.add_argument("--minutes", type=int, default=15, help="the --gpu window")
+    ap.add_argument("--card", help="the --gpu card's PCI address (default: the busiest)")
     ap.add_argument("--all", action="store_true",
-                    help="queries + shares + rates + pool")
+                    help="queries + shares + rates + pool + gpu")
     ap.add_argument("--seconds", type=int, default=120, help="rates sampling window")
     ap.add_argument("collections", nargs="*")
     args = ap.parse_args(argv)
     if not any((args.queries, args.phases, args.rates, args.pool, args.shares,
-                args.all)):
+                args.gpu, args.all)):
         ap.print_help()
         return 2
     ok = True
@@ -278,6 +313,8 @@ def main(argv=None) -> int:
         rates(args.collections, args.seconds)
     if args.pool or args.all:
         pool_health()
+    if args.gpu or args.all:
+        gpu(args.minutes, args.card)
     return 0 if ok else 1
 
 

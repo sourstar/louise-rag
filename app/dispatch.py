@@ -192,6 +192,14 @@ class Gate:
     _active: Counter = field(default_factory=Counter)
     _seq: itertools.count = field(default_factory=itertools.count)
     stats: dict = field(default_factory=dict)          # Level -> _LevelStats
+    # WHAT EACH PLUGIN REALLY HELD THE SERVER FOR, seconds, never adjusted:
+    # `_served` is the fair-share account, which `_join` raises to the
+    # least-served present plugin, so it is no measurement. The card
+    # recorder (app/card_record.py, I2 of gpu-saturation-plan.md) reads
+    # this, the requests still running included, so a 30 s request shows
+    # second by second, not all at its end.
+    _held: dict = field(default_factory=dict)        # plugin -> seconds, finished requests
+    _running: dict = field(default_factory=dict)     # seq -> (plugin, began)
 
     def _join(self, plugin: str) -> None:
         """A plugin with nothing waiting or running here starts level with
@@ -245,7 +253,8 @@ class Gate:
             s = self.stats.setdefault(lvl, _LevelStats())
             s.admitted += 1
             s.waited_s += time.monotonic() - started
-        began = time.monotonic()
+            began = time.monotonic()
+            self._running[w.seq] = (plg, began)
         try:
             yield
         finally:
@@ -253,16 +262,41 @@ class Gate:
             with self._cv:
                 self._busy -= 1
                 self._active[plg] -= 1
+                self._running.pop(w.seq, None)
+                self._held[plg] = self._held.get(plg, 0.0) + spent
                 self._served[plg] = self._served.get(plg, 0.0) + spent
                 self.stats.setdefault(lvl, _LevelStats()).served_s += spent
                 self._cv.notify_all()
 
     def snapshot(self) -> dict:
+        """The gate now: its capacity, requests running and waiting, the
+        per-level totals, and per plugin (`plugins`) what it holds running
+        (`running`), how many wait (`waiting`, and `corpus` of them at the
+        corpus level) and the seconds it has held the server since start
+        (`held_s`, its running requests' time so far included)."""
+        now = time.monotonic()
         with self._cv:
+            plugins: dict[str, dict] = {}
+
+            def of(plg: str) -> dict:
+                return plugins.setdefault(plg, {"running": 0, "waiting": 0, "corpus": 0,
+                                                "held_s": self._held.get(plg, 0.0)})
+            for plg, n in self._active.items():
+                if n:
+                    of(plg)["running"] = n
+            for w in self._waiting:
+                entry = of(w.plugin)
+                entry["waiting"] += 1
+                entry["corpus"] += int(w.level == Level.CORPUS)
+            for plg in self._held:
+                of(plg)
+            for plg, began in self._running.values():
+                of(plg)["held_s"] += now - began
             return {"capacity": self.capacity, "busy": self._busy,
                     "waiting": len(self._waiting),
                     "levels": {lvl.name.lower(): vars(s).copy()
-                               for lvl, s in sorted(self.stats.items())}}
+                               for lvl, s in sorted(self.stats.items())},
+                    "plugins": plugins}
 
 
 _gates: dict[str, Gate] = {}
