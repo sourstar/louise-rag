@@ -65,8 +65,12 @@ def node_cards(*, fetch: Callable[[str], dict] | None = None,
 
 
 def _stamp(d: Path) -> tuple:
+    # The inode with the time and size, as git's index keeps stat data: two
+    # records within one kernel timestamp tick and of one size share both
+    # (the node's deploy, 2026-11-01, served the older entry), while
+    # `record` replaces the file (os.replace), so every write is a new inode.
     try:
-        return tuple(sorted((f.name, f.stat().st_mtime_ns, f.stat().st_size)
+        return tuple(sorted((f.name, (s := f.stat()).st_ino, s.st_mtime_ns, s.st_size)
                             for f in d.glob("*.json")))
     except OSError:
         return ()

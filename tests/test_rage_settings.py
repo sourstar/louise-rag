@@ -119,6 +119,21 @@ def test_a_new_measurement_is_picked_up_without_a_restart(node):
     assert collections_mod.recipe_for(c).batch == 32
 
 
+def test_a_rewrite_within_one_timestamp_tick_is_picked_up(node):
+    """Same name, same size, same mtime: the node's deploy run (2026-11-01)
+    wrote both within one tick and was served the first."""
+    import os
+    node.recommend(batch=16)
+    c = node.collection()
+    assert collections_mod.recipe_for(c).batch == 16
+    (f,) = (node.shard / rs.DIR).glob("*.json")
+    t, size = f.stat().st_mtime_ns, f.stat().st_size
+    node.recommend(batch=32)
+    assert f.stat().st_size == size
+    os.utime(f, ns=(t, t))
+    assert collections_mod.recipe_for(c).batch == 32
+
+
 def test_the_probe_is_asked_once(node):
     node.recommend()
     c = node.collection()
