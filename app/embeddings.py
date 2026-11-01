@@ -193,6 +193,24 @@ class EndpointBusy(EndpointDeferred):
     loading its weights, overloaded, a proxy that lost it."""
 
 
+#: What VeGa's wrapper answers a load it states no run for (vega_wrapper
+#: `_refuse_load`: "VeGa: no run can be stated: <why>"), carried to us in the
+#: runner's error. It does not heal by waiting: the run is refused until the
+#: model's tree or YAML changes (CLAUDE.md invariant 12).
+VEGA_NO_RUN = "VeGa: no run can be stated"
+
+
+class EndpointRunRefused(EndpointBusy):
+    """The model platform refused to state a run for this model (VeGa's
+    `VEGA_NO_RUN`). For the worker it stays a deferral like any busy answer —
+    no document is touched, and the stage asks again — but a command run by
+    hand or under `deploy/supervise-pass.sh` exits 2, refused: nothing it can
+    retry will change it (München, 2026-11-02: pubmed's CPU twin on an
+    unmeasured OpenVINO tree, retried every minute). Behind LocalAI's later
+    "load is in cooldown" 503 the reason is hidden; it shows again on the
+    next load the runner attempts, and is recognised then."""
+
+
 class EndpointTimedOut(EndpointBusy):
     """The encoder took the request and did not answer within its bound (a
     read or write timeout). The ENDPOINT's state by default — seen on the node
@@ -289,7 +307,14 @@ BUSY_STATUS = frozenset({408, 429})
 
 def _endpoint_error(recipe: "collections_mod.EmbedRecipe", response) -> EndpointDeferred:
     status = response.status_code
-    detail = (getattr(response, "text", "") or "")[:200].replace("\n", " ")
+    body = getattr(response, "text", "") or ""
+    detail = body[:200].replace("\n", " ")
+    if status >= 500 and VEGA_NO_RUN in body:
+        at = body.index(VEGA_NO_RUN)
+        return EndpointRunRefused(
+            f"{body[at:at + 400].strip()} — the model platform behind {recipe.url} refuses "
+            f"to state a run for this model; nothing is written, and waiting does not change "
+            f"it: the model's tree or YAML must (CLAUDE.md invariant 12)", status)
     if status in BUSY_STATUS or status >= 500:
         return EndpointBusy(
             f"embed server HTTP {status}: {detail} — the endpoint {recipe.url} is "

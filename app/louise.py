@@ -5756,6 +5756,20 @@ def main(argv=None) -> int:
     except FileNotFoundError as e:
         print(f"louise: {e}", file=sys.stderr)
         return 2
+    except ConnectionError as e:
+        # An encoder or model ENDPOINT's answer (app/embeddings.py
+        # EndpointDeferred is a ConnectionError, as is an unreachable host):
+        # never the command's crash. Refused (2) where waiting cannot change
+        # it — the platform states no run, or the endpoint is the wrong one —
+        # deferred (3) otherwise, so `deploy/supervise-pass.sh` asks again
+        # only what may heal (07 §7.7; München, 2026-11-02: a refused load
+        # exited 1 and was retried every minute).
+        from app.embeddings import EndpointMisconfigured, EndpointRunRefused
+        if isinstance(e, (EndpointRunRefused, EndpointMisconfigured)):
+            print(f"louise: refused: {e}", file=sys.stderr)
+            return 2
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
     except _HTTPException as e:
         # the ask surface (05) is one service under the CLI and the API, and
         # its refusals are HTTP ones — a withheld collection named is 403,
