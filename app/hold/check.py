@@ -221,6 +221,14 @@ class Ctx:
     #: a listing on the network, so only the units the bound reaches are
     #: weighed (app/acquire/file_origin.py)
     weigh_unit: Callable[[str], int | None] | None = None
+    #: `records-vs-origin`'s comparisons for MANY records, in order:
+    #: `(uid, locator, line)` items in, `(uid, outcome, error)` out, where
+    #: outcome is `verdict`'s or "unreachable"/"errored". Given (by the CLI)
+    #: where the origin is local, it runs them in the parse pool's processes
+    #: (CLAUDE.md, multi-core: one wikidata check re-parsed 3.7 M records at
+    #: 38/s on one core, ~27 h; München, 2026-11-01). None: `reparse`, one
+    #: record at a time — and the outcome is the same either way.
+    reparse_many: Callable[[Any], Any] | None = None
 
     @property
     def shard_tree(self) -> Path:
@@ -708,6 +716,47 @@ def check_vectors_sample(ctx: Ctx) -> Outcome:
                    why=r.why)
 
 
+def verdict(line: bytes, got: bytes) -> str:
+    """A re-parsed line against the record's: "same", "moved", "changed" or
+    "failed" (03 §3.2) — the same rules wherever the re-parse ran."""
+    if got == line:
+        return "same"
+    if _moved_only(line, got):
+        # MOVED, not failed (03 §3.2, amended 2026-10-07): the origin unit
+        # changed since the build and the record re-parsed from it is
+        # otherwise identical. The mirror rewrote half of a sample of
+        # gutenberg's book folders on 2026-10-05 without changing one parsed
+        # record, and every one of them failed.
+        return "moved"
+    if _origin_changed(line, got):
+        # CHANGED AT THE ORIGIN, not failed (03 §3.2, amended 2026-10-11): the
+        # origin unit is no longer the bytes the record was parsed from, so the
+        # record cannot be reproduced from it — and it is no evidence against
+        # the record either. Gutenberg revises texts and catalogue entries
+        # upstream; 17 of 4,055 sampled records were such on 2026-10-11, and
+        # the check failed for every image, the Codex's own included.
+        return "changed"
+    # The FIRST differing record, named — §9.8's detail asks for exactly that,
+    # because a list of every difference between two parsers is a diff and
+    # not a finding. Only a record whose origin unit is the very bytes it was
+    # parsed from can fail.
+    return "failed"
+
+
+def _compared_here(reparse, items):
+    """`Ctx.reparse_many` in this process, one record at a time."""
+    for uid, locator, line in items:
+        try:
+            got = reparse(uid, locator)
+        except FileNotFoundError:
+            yield uid, "unreachable", None
+            continue
+        except Exception as e:                          # noqa: BLE001
+            yield uid, "errored", f"{uid}: {type(e).__name__}: {e}"[:200]
+            continue
+        yield uid, verdict(line, got), None
+
+
 def check_records_vs_origin(ctx: Ctx) -> Outcome:
     """"a seeded sample of shards, RE-FETCHED FROM THE ORIGIN by the
     locator each record carries and re-parsed with the Codex's toolchain,
@@ -814,39 +863,18 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # that had every reason to believe 1.6M records had drifted from
     # PubMed, and the collection's own records were perfect.
     failed, moved, changed, errored, unreachable, compared = [], [], [], [], 0, 0
-    for uid, locator, line in chosen():
+    for uid, outcome, error in (ctx.reparse_many(chosen()) if ctx.reparse_many is not None
+                                else _compared_here(ctx.reparse, chosen())):
         compared += 1
-        try:
-            got = ctx.reparse(uid, locator)
-        except FileNotFoundError:
+        if outcome == "unreachable":
             unreachable += 1
-            continue
-        except Exception as e:                          # noqa: BLE001
-            errored.append(f"{uid}: {type(e).__name__}: {e}"[:200])
-            continue
-        if got != line:
-            if _moved_only(line, got):
-                # MOVED, not failed (03 §3.2, amended 2026-10-07): the origin
-                # unit changed since the build and the record re-parsed from
-                # it is otherwise identical. The mirror rewrote half of a
-                # sample of gutenberg's book folders on 2026-10-05 without
-                # changing one parsed record, and every one of them failed.
-                moved.append(uid)
-                continue
-            if _origin_changed(line, got):
-                # CHANGED AT THE ORIGIN, not failed (03 §3.2, amended
-                # 2026-10-11): the origin unit is no longer the bytes the
-                # record was parsed from, so the record cannot be reproduced
-                # from it — and it is no evidence against the record either.
-                # Gutenberg revises texts and catalogue entries upstream; 17
-                # of 4,055 sampled records were such on 2026-10-11, and the
-                # check failed for every image, the Codex's own included.
-                changed.append(uid)
-                continue
-            # The FIRST differing record, named — §9.8's detail asks for
-            # exactly that, because a list of every difference between two
-            # parsers is a diff and not a finding. Only a record whose origin
-            # unit is the very bytes it was parsed from can fail.
+        elif outcome == "errored":
+            errored.append(error)
+        elif outcome == "moved":
+            moved.append(uid)
+        elif outcome == "changed":
+            changed.append(uid)
+        elif outcome == "failed":
             failed.append(uid)
     if errored and not failed:
         return Outcome(
@@ -1228,7 +1256,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         against: dict | None = None,
         only_shards: Sequence[str] | None = None,
         live: Path | None = None,
-        log=None) -> Report:
+        log=None, reparse_many=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that.
 
     `origin_bytes` RAISES what `records-vs-origin` may read of the origin for
@@ -1254,7 +1282,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
               max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None,
-              Path(live) if live else None, weigh_unit)
+              Path(live) if live else None, weigh_unit, reparse_many=reparse_many)
     outcomes = []
     for c in want:
         try:

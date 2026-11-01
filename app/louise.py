@@ -3441,6 +3441,7 @@ def run_check(a):
         checks=a.checks.split(",") if a.checks else None, sample=a.sample,
         embed=embed, reference=reference,
         reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
+        reparse_many=_reparse_many_from(codex, name, getattr(a, "origin_dir", None)),
         origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
         weigh_unit=_weigh_from(codex, getattr(a, "origin_dir", None)),
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
@@ -3540,7 +3541,7 @@ def _reparse_from(codex, name: str, origin_dir):
     """
     from pathlib import Path
 
-    from app import collections as collections_mod, layers as layers_mod, plugin_io
+    from app import plugin_io
     from app.pack import build as pack_build, records as pack_records
 
     prepare = None
@@ -3562,12 +3563,7 @@ def _reparse_from(codex, name: str, origin_dir):
     # `record_line` — a shape-2 collection writes `figures` on every line,
     # so a re-parse that produced shape 1 would differ from every record it
     # was checking and report the whole sample as failing.
-    collection = collections_mod.Collection(
-        name=name, plugin=codex.plugin, profile=None,
-        embed_mode_default=None, corpus_dir=base,
-        manifest_path=base / "manifest.sqlite", fts_dir=base,
-        lance_dir=base, acquire_enabled=False, license_ack=None,
-        layers=layers_mod.layers_for(codex), codex=codex)
+    collection = _reparse_collection(codex, name, base)
     plugin = collection.plugin_instance()
 
     def reparse(uid: str, locator: str) -> bytes:
@@ -3583,6 +3579,66 @@ def _reparse_from(codex, name: str, origin_dir):
             record, record_line=int(getattr(codex, "record_line", 1) or 1))
 
     return reparse
+
+
+def _reparse_collection(codex, name: str, base):
+    """The collection a re-parse runs as: the origin at `base`, the Codex's
+    layers and record shape (`_reparse_from` explains why both)."""
+    from pathlib import Path
+
+    from app import collections as collections_mod, layers as layers_mod
+    base = Path(base)
+    return collections_mod.Collection(
+        name=name, plugin=codex.plugin, profile=None,
+        embed_mode_default=None, corpus_dir=base,
+        manifest_path=base / "manifest.sqlite", fts_dir=base,
+        lance_dir=base, acquire_enabled=False, license_ack=None,
+        layers=layers_mod.layers_for(codex), codex=codex)
+
+
+#: records handed to the parse pool per page by `_reparse_many_from`
+REPARSE_PAGE = 256
+
+
+def _reparse_many_from(codex, name: str, origin_dir):
+    """`Ctx.reparse_many` for a LOCAL origin: the comparisons of
+    `records-vs-origin` in the parse pool's processes, in order (CLAUDE.md,
+    multi-core — one wikidata check ran at 38 records/s on one core, ~27 h;
+    München, 2026-11-01). The pool's window, profile cap, watchdog and
+    fallback are `parallel.compute_pages`'. None for a network origin: its
+    members are fetched under this process's transfer budget, and children
+    fetching at once would each draw a budget of their own (invariant 5)."""
+    from collections import deque
+
+    from app import parallel
+    if not origin_dir:
+        return None
+    collection = _reparse_collection(codex, name, origin_dir)
+
+    def many(items):
+        pending: deque = deque()
+
+        def pages():
+            page: list[dict] = []
+            for uid, locator, line in items:
+                page.append({"uid": uid, "locator": locator, "line": line})
+                if len(page) >= REPARSE_PAGE:
+                    pending.append(page)
+                    yield page
+                    page = []
+            if page:
+                pending.append(page)
+                yield page
+        for results in parallel.compute_pages("origin-line", collection, pages()):
+            page = pending.popleft()
+            for row, (ok, value) in zip(page, results):
+                if ok:
+                    yield row["uid"], value, None
+                elif value.get("type") == "FileNotFoundError":
+                    yield row["uid"], "unreachable", None
+                else:
+                    yield row["uid"], "errored", f"{row['uid']}: {value.get('type')}: {value.get('msg')}"[:200]
+    return many
 
 
 _member_origins: dict = {}
