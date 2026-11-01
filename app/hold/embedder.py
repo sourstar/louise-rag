@@ -21,6 +21,7 @@ disagreeing about what was measured.
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import statistics
@@ -64,49 +65,83 @@ class StatedRun:
 #: whose answer to any calibration item is below this cosine to the stored
 #: CPU reference fails — "sends that engine to further review"
 CPU_REVIEW_LINE = 0.995
-#: THE REVIEW LINE FOR 4-BIT WEIGHTS (operator, 2026-11-01, choice A). A 4-bit
-#: model's CPU and card kernels differ by path, not by fault — the CPU
-#: quantizes activations to 8 bits, SYCL does not — so its card stands at
-#: ~0.998 against its CPU twin everywhere and lower on the shortest inputs:
-#: gutenberg's Qwen3-Embedding-4B Q4_K_M, run 0a80405f, worst 0.989292 (39
-#: tokens), p1 0.996898, median 0.998358 over 512, exact over 3 fresh loads,
-#: and two CPU engines agreeing 1.000000 on 19 of 19 (München, m6); bge-m3 at
-#: F16 against its twin, worst 0.999930. Still far above what a broken
-#: engine gives (NaN, 0.0865, 0.126). Every other weights keeps 0.995.
-CPU_REVIEW_LINE_4BIT = 0.985
-#: llama.cpp's 4-bit types as a GGUF file is named after them
-#: (Q4_0, Q4_1, Q4_K_S, Q4_K_M, IQ4_NL, IQ4_XS, MXFP4)
-_FOUR_BIT = re.compile(r"(?i)(?:^|[-_.])(?:I?Q4(?:_[A-Z0-9]+)*|MXFP4)(?=[-_.]|$)")
+#: THE REVIEW LINE PER QUANTIZATION LEVEL (operator, 2026-11-01: "calculate a
+#: reasonable threshold per quantization level, do not just assume it is the
+#: same as the full precision"). Why a level moves the card from its CPU twin:
+#: for every QUANTISED weight type llama.cpp's CPU path rounds the activations
+#: to 8 bits before the dot product (Q8_K for the k-quants, Q8_0/Q8_1 for the
+#: others — `vec_dot_type`), where the card's path does not round them the
+#: same way. So Q8_0 is no closer to "full precision" here than Q4_K_M is: each
+#: level is measured, card against its CPU twin over the calibration set
+#: (`tools/cross_vendor_check measure --twin`), and its line computed by ONE
+#: rule fixed before the data — `cpu_line_from`: 50 % headroom over the worst
+#: cosine measured, rounded down to 0.001, never stricter than the operator's
+#: 0.995. A broken engine stays far below any of them (NaN, 0.0865, 0.126).
+CPU_LINE_MARGIN = 1.5
+#: the worst card-vs-CPU-twin cosine measured per level, over the calibration
+#: set's texts (the lowest across the model families measured). A level not
+#: here has NO line: a run of it is not judged against a CPU reference until
+#: it is measured (its statement says so), never lent another level's line.
+MEASURED_CPU_WORST: dict[str, float] = {
+    # gutenberg, Qwen3-Embedding-4B Q4_K_M, run 0a80405f against our CPU
+    # engine's twin, 512 texts one a request: worst 0.989292 (a 39-token
+    # text), p1 0.996898, median 0.998358 (München, m6, 2026-11-01)
+    "Q4_K_M": 0.989292,
+}
+#: weights with no rounding of their own: the operator's 0.995 (2026-10-18)
+FULL_PRECISION = frozenset({"F32", "FP32", "F16", "FP16", "BF16"})
+#: llama.cpp's GGUF type tags, as a weights file is named after them
+_LEVEL = re.compile(
+    r"(?i)(?:^|[-_.])((?:I?Q[1-8](?:_[A-Z0-9]+)*)|MXFP4|BF16|FP?16|FP?32)(?=[-_.]|$)")
 #: what a NEAR-EXACT run must reach against it (operator, 2026-10-31)
 CPU_NEAR_LINE = 0.999
 
 
-def four_bit(engine: Any) -> bool:
-    """Whether the run's weights are a 4-bit quantisation: the weights FILE
-    LocalAI loaded, as its load options name it (`options.Model`, kept by
-    app/vega/loadopts.py, in the stated run and so in its statement), read
-    for llama.cpp's type tag. A name, not the file's own header: VeGa states
-    the weights by digest, and the wrapper — whose code is part of every run
-    — would have to read GGUF's `general.file_type` and state it, a new run
-    for every model. That is the standard way and is written down here to
-    be taken at the wrapper's next change; a file renamed against its type
-    would get the wrong line until then, and either line still fails a
-    broken engine."""
+def quant_level(engine: Any) -> str | None:
+    """The weights' quantization level, upper-case (`Q4_K_M`, `Q8_0`, `F16`
+    …): the type tag of the weights FILE LocalAI loaded, as its load options
+    name it (`options.Model`, kept by app/vega/loadopts.py, in the stated run
+    and so in its statement). None when no file is named or it carries no tag
+    (a Python backend's weights: full precision).
+
+    A name, not the file's own header: VeGa states the weights by digest, and
+    the wrapper — whose code is part of every run — would have to read GGUF's
+    `general.file_type` and state it, a new run for every model. That is the
+    standard way, written down to be taken at the wrapper's next change; a
+    file renamed against its type would get the wrong line until then."""
     options = (engine or {}).get("options") if isinstance(engine, dict) else None
     model = (options or {}).get("Model") if isinstance(options, dict) else None
     if not isinstance(model, str) or not model:
-        return False
+        return None
     stem = os.path.basename(model)
     for ext in (".gguf", ".bin"):
         if stem.lower().endswith(ext):
             stem = stem[: -len(ext)]
-    return bool(_FOUR_BIT.search(stem))
+    found = _LEVEL.findall(stem)
+    return found[-1].upper() if found else None
 
 
-def cpu_review_line(engine: Any) -> float:
-    """The CPU review line a run is held to: CPU_REVIEW_LINE_4BIT for 4-bit
-    weights, CPU_REVIEW_LINE for every other."""
-    return CPU_REVIEW_LINE_4BIT if four_bit(engine) else CPU_REVIEW_LINE
+def cpu_line_from(worst: float) -> float:
+    """THE RULE: a level's review line from the worst card-vs-CPU-twin
+    cosine measured for it — CPU_LINE_MARGIN times its distance from 1 below
+    1, rounded DOWN to 0.001, and never above CPU_REVIEW_LINE."""
+    line = 1.0 - CPU_LINE_MARGIN * (1.0 - float(worst))
+    # rounded first to 1e-9: 1 - 1.5 x 0.05 is 0.92499999… in binary floating point
+    return min(CPU_REVIEW_LINE, math.floor(round(line, 9) * 1000) / 1000)
+
+
+def cpu_review_line(engine: Any) -> float | None:
+    """The CPU review line a run is held to: CPU_REVIEW_LINE for full
+    precision (no tag, or F16/BF16/F32); for a quantised level, the line
+    computed from its measurement (`MEASURED_CPU_WORST`, `cpu_line_from`);
+    None for a quantised level not yet measured."""
+    level = quant_level(engine)
+    if level is None or level in FULL_PRECISION:
+        return CPU_REVIEW_LINE
+    worst = MEASURED_CPU_WORST.get(level)
+    return None if worst is None else cpu_line_from(worst)
+
+
 EXACT, NEAR = "exact", "near"
 #: THE MULTI-LOAD GATE (operator, 2026-10-31: "the gate may include multiple
 #: runs to ensure that the tolerance is not just a lucky run"): fresh loads
@@ -160,8 +195,11 @@ class Run:
     exactness: str = EXACT
     loads: int = 1
     load_variation: float = 1.0
-    #: the CPU review line this run is held to (`cpu_review_line`)
-    cpu_line: float = CPU_REVIEW_LINE
+    #: the CPU review line this run is held to (`cpu_review_line`); None for
+    #: a quantization level not yet measured
+    cpu_line: float | None = CPU_REVIEW_LINE
+    #: its level, for the reason given (`quant_level`)
+    quant: str | None = None
 
     @property
     def cpu_worst(self) -> float | None:
@@ -191,7 +229,8 @@ class Run:
         from the statement)."""
         if not (self.passed >= self.min_pass and self.median >= self.tolerance):
             return False
-        if self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
+        if self.cpu_worst is not None and (self.cpu_line is None
+                                           or self.cpu_worst < self.cpu_line):
             return False
         if self.exactness == EXACT:
             return self.reproducible is not False and self.load_variation >= 1.0
@@ -229,12 +268,18 @@ class Run:
                          "and its collection asks `exactness = \"exact\"` (CLAUDE.md invariant "
                          "12; set the vendor's reproducibility mode and one request at a time, "
                          "docs/notes/approved-encoders.md)")
-        if self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
+        if self.cpu_worst is not None and self.cpu_line is None:
+            parts.append(f"its weights are quantised at {self.quant}, a level whose card-vs-CPU "
+                         f"line is not measured yet (MEASURED_CPU_WORST): it is not judged "
+                         f"against the CPU reference on another level's line — measure it "
+                         f"with `tools/cross_vendor_check measure --twin` "
+                         f"(docs/notes/near-exact-runs.md §2)")
+        elif self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
             parts.append(f"against the stored CPU reference the worst of the 512 is "
                          f"{self.cpu_worst:.6f}, below the review line {self.cpu_line} "
-                         f"(operator, 2026-10-18; 4-bit weights {CPU_REVIEW_LINE_4BIT}, "
-                         f"2026-11-01): nothing is written from this run until a "
-                         f"person has reviewed it (docs/notes/near-exact-runs.md)")
+                         f"({'full precision, operator 2026-10-18' if self.quant in (None, *FULL_PRECISION) else f'{self.quant}, computed from its measurement'}): "
+                         f"nothing is written from this run until a person has reviewed "
+                         f"it (docs/notes/near-exact-runs.md)")
         return "; ".join(parts)
 
 
@@ -489,6 +534,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         load_variation=variation, loads=loads,
         exactness=NEAR if (exactness == NEAR and variation < 1.0) else EXACT,
         cpu_line=cpu_review_line(stated.engine if stated is not None else None),
+        quant=quant_level(stated.engine if stated is not None else None),
     )
 
 
