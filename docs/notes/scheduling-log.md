@@ -2067,3 +2067,27 @@ than half of each second: 32 s/min were lost between requests, against wikidata'
 whole-second gaps are 2.5 s/min, so the loss is the request turnaround at 2 in flight, not stalled
 preparation. The worker used 6.1 cores to prepare it. Unlike wikidata, bcs reads ABOVE ccs here (by 5–13
 points).
+
+### 2026-11-01 — step 1 lever 2 AFTER (#174, requests filled across documents): wikidata and wikipedia alone — MEASURED
+
+**Scenario.** ea8de53 deployed at 23:07; it is #174 plus changes that move no throughput (#179–#181 and the
+settings-stamp fix). Each collection ran alone for 15 min: wikidata 23:13–23:28, then wikipedia 23:30–23:43.
+The others were paused for each window. Night profile, 12 cores. The recipes were unchanged: wikidata batch
+16 / 4 lanes, wikipedia batch 16 / 2 lanes.
+
+| | busy (ccs) | gaps | lost | chunks/s | worker CPU | texts per request |
+|---|---|---|---|---|---|---|
+| wikidata BEFORE (18:28) | 82.1 % | 0.1 s/min | 10.8 s/min | 78.8 | 0.76 | — |
+| wikidata AFTER | 81.5 % | 0.1 s/min | 11.1 s/min | **91.5 (+16 %)** | 0.75 | 6.6 (13,170 in 1,981) |
+| wikipedia BEFORE (22:32) | 46.5 % | 2.5 s/min | 32.1 s/min | 29.5 | 6.10 | — |
+| wikipedia AFTER | **57.3 %** | 0.3 s/min | 25.6 s/min | **40.5 (+37 %)** | 6.04 | 15.9 (5,255 in 330) |
+
+- **wikidata:** 82,327 chunks and 76,388 documents in 15 min. 4,258 wikipedia chunks were finished in the
+  window's first seconds (its unit in flight at the pause).
+- **wikipedia:** 36,477 chunks and 10,078 documents in 15 min.
+
+**Reading.** On wikidata the card's busy figure did not move, but each busy second embeds more chunks: the
+requests now fill across documents (6.6 texts on average, up to 16). On wikipedia, requests are now full
+(15.9 of 16). Busy rises 11 points, the whole-second gaps nearly vanish (2.5 → 0.3 s/min), and chunks/s rise
+37 % on the same CPU. wikipedia is still at 57 %, because the loss inside the seconds remains (25.6 s/min) with
+2 requests in flight. That is the request turnaround wikidata hides with 4 lanes. Lever 2 needs no CPU.
