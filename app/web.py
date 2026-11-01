@@ -1344,6 +1344,33 @@ def _offered_by_torrent_collection(collection: collections_mod.Collection) -> li
     return offered if found else None
 
 
+def _profile_held(collection: collections_mod.Collection) -> list[str]:
+    """The profiles a collection holds, as the additive grow dialog marks
+    them (operator, 2026-11-01: wikipedia's held languages showed no check).
+    A file holding `slices = "all"` holds every slice — each profile, and
+    the everything one, which checks the dialog's "everything" box; a list
+    of slices holds the profiles their delivered slices name; an older
+    `profile` its parts."""
+    from .acquire.specs import ACQUIRE_REGISTRY as specs
+    spec = specs.get(collection.plugin)
+    parts = acquire_spec.profile_parts(collection.profile or "")
+    if spec is None:
+        return parts
+    everything = acquire_spec.everything_profile(spec)
+    slices = getattr(collection, "slices", None)
+    if slices == "all" or (everything is not None and collection.profile == everything):
+        return list(spec.profiles)
+    if slices:
+        held = []
+        for s in slices:
+            key = acquire_spec.delivered_slice(spec, s)
+            name = spec.slice_profiles.get(key) if key else None
+            if name and name not in held:
+                held.append(name)
+        return held or parts
+    return parts
+
+
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     """What "grow" may offer, which depends on how the source's profiles
     relate (spec.profile_mode):
@@ -2243,6 +2270,10 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_mode_file": collection.embed_mode_default,
         "embed_mode_note": getattr(collection, "embed_mode_note", None),
         "share": bool(getattr(collection, "share", False)),
+        # the SHARE box on every collection that can be served (a public
+        # Codex, 04 §4.3) — never only where the p2p line happens to be
+        # cached (operator, 2026-11-01: "some collections are missing it")
+        "shareable": _shareable(collection),
         "p2p": _p2p_summary(collection),
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
@@ -2277,7 +2308,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         # a torrent-collection peer combines slices like an additive source
         "profile_mode": ("additive" if _offered_by_torrent_collection(collection) is not None
                          else (spec.profile_mode if spec else "incremental")),
-        "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
+        "profile_parts": _profile_held(collection),
         "blocked": blocked, "unindexable": unindexable,
         # the origin's inconsistencies flagged, per code (06 §6.1, amended
         # 2026-10-25): the code index alone, a cost in issues not documents
@@ -3010,6 +3041,11 @@ def collection_share(name: str, body: ShareBody):
 
 _p2p_cache: dict[str, tuple[float, dict | None]] = {}
 _P2P_TTL_S = 120.0
+
+
+def _shareable(collection) -> bool:
+    codex = getattr(collection, "codex", None)
+    return codex is not None and getattr(codex, "privacy", "public") == "public"
 
 
 def _p2p_summary(collection) -> dict | None:

@@ -33,8 +33,10 @@
      settings a reader need not touch wait behind one closed line (RULE 2). #}
   <div class="actions ask-row">
     <span class="seg" role="radiogroup" aria-label="what Ask gives">
-      <label><input type="radio" name="how" value="search" onchange="rememberHow()"> Search only</label>
-      <label><input type="radio" name="how" value="summary" onchange="rememberHow()" checked> AI summary</label>
+      <label><input type="radio" name="how" value="search" onchange="rememberHow()"> <span>Search only</span></label>
+      {# "Search + AI summary" (operator, 2026-11-01): the passages are there
+         either way; this adds the written answer above them #}
+      <label><input type="radio" name="how" value="summary" onchange="rememberHow()" checked> <span>Search + AI summary</span></label>
     </span>
     {# "show results in": CONTENT only — the answer and every entry IN
        FULL, its title and headings included, are translated into this

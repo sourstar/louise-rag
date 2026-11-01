@@ -593,7 +593,11 @@ reader needs at the command line:
   publishes is exactly what `hold collection show` lists as held, never
   more, and nothing of a copy that is refused or in quarantine (03
   §3.6): what this peer has not tested it does not offer. `--stop`
-  withdraws the announcement. It refuses (exit 2) a
+  (the Library's SHARE box unchecked) withdraws the announcement and serves
+  nothing new; the transfers under way finish first — libtorrent's graceful
+  pause, each torrent removed once no peer is left and at most 10 minutes
+  later, its files kept until then (operator, 2026-11-01:
+  app/acquire/seeding.py `drain`). It refuses (exit 2) a
   `never-share` collection and announces a `restricted` one to trust-list
   peers only (04 §4.4). Sharing is automatic after a completed fetch for
   a `public` collection unless its file says `share = false`.

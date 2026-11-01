@@ -81,6 +81,9 @@ button.mode.selected:hover{border-color:var(--brass);box-shadow:none}
 input,select,textarea{font-family:var(--mono);font-size:13px;width:100%;background:var(--ink);
   border:1px solid var(--line);color:var(--ivory);padding:7px 9px;border-radius:3px}
 label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px;margin:10px 0 3px}
+/* a checkbox and its label on one line, centred (the SHARE box, 2026-11-01) */
+label.check{display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer}
+label.check input[type=checkbox]{width:auto;margin:0}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;
   letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line)}
@@ -206,6 +209,14 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
 .seg label+label{border-left:1px solid var(--line)}
 .seg input{width:auto;margin:0}
 .seg label:has(input:checked){color:var(--brass);background:var(--panel2)}
+/* On a phone the switch takes the row and both choices share it, at the
+   same font size; a screen too narrow for both on one line wraps the words
+   inside each choice, never mid-word (operator, 2026-11-01) */
+@media (max-width:760px){
+  .ask-row .seg{display:flex;flex:1 1 100%;min-width:0}
+  .ask-row .seg label{flex:1 1 auto;min-width:0;justify-content:center;text-align:center;
+    padding:6px 8px;overflow-wrap:normal;word-break:normal}
+}
 button.ask{padding:6px 22px}
 details.settings{margin-top:10px}
 details.settings>summary{cursor:pointer;color:var(--muted);font-size:12px}
