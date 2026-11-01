@@ -106,7 +106,7 @@ grep -q "^def newer_from_digests" "$ROOT/src.new/app/share/accept.py"           
 grep -q "REWRITE_DRAIN_S" -r "$ROOT/src.new/app"                                  # 3be0cf2
 grep -q "^RERANK_RETRY_PAUSE_S = 0.25" "$ROOT/src.new/app/retrieval.py"             # e9cf8d9 (b573be4)
 grep -q "^def _rerank_call" "$ROOT/src.new/app/retrieval.py"                        # e9cf8d9 (b573be4)
-grep -q "^def stand_aside" "$ROOT/src.new/app/dispatch.py"                           # 50030dc (7cc6975)
+grep -q "^def stand_aside" "$ROOT/src.new/app/rage/dispatch.py"                           # 50030dc (7cc6975)
 grep -q "mkstemp" "$ROOT/src.new/app/share/possession.py"                              # a0c43b6 (f386934)
 grep -q '^SHAPE_T5 = "t5"' "$ROOT/src.new/app/translate.py"                              # 3c376ca
 grep -q "^def _batch_bound" "$ROOT/src.new/app/translate.py"                             # 24d41b9: the shape by vocabulary, max_tokens
@@ -209,12 +209,14 @@ grep -q "^CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)" "$ROOT/src.new/app/h
 grep -q "^def unchanged_books(table, rows, natives) -> set\[int\]:" "$ROOT/src.new/app/bundles/genesis.py"   # #162 (b50a3be): genesis skips byte-identical re-imports; own statements first
 grep -q "^def parse_counters(text: str) -> Counters | None:" "$ROOT/src.new/app/gpu_busy.py"   # #164: the card's busy time (I1-I3)
 grep -q '^CARRIED = ("GPU_PROBE_URL",)' "$ROOT/src.new/deploy/16f/set_platform_image.py"   # #165: the worker gets GPU_PROBE_URL in the image's app.update
-grep -q "    def declare(self, plugin: str, capacity: int | None) -> None:" "$ROOT/src.new/app/dispatch.py"   # #166: a gate's capacity no longer flips to the last caller
+grep -q "    def declare(self, plugin: str, capacity: int | None) -> None:" "$ROOT/src.new/app/rage/dispatch.py"   # #166: a gate's capacity no longer flips to the last caller
 grep -q "^def request_timeout(ctx: int | None, in_flight: int) -> float:" "$ROOT/src.new/app/hold/cpu_reference.py"   # #168: the CPU twin's requests bounded by the window
 grep -q "^class XePmu:" "$ROOT/src.new/app/gpu_pmu.py"   # #169: the card's busy from xe's perf PMU (CAP_PERFMON), never 0 when blind
 grep -q "^def card_busy(engines: Mapping\[str, float\]) -> float:" "$ROOT/src.new/app/gpu_busy.py"   # #170: busy = the busiest compute engine (a resident copy context does not count)
 grep -q "^class Coalescer:" "$ROOT/src.new/app/embeddings.py"   # #174: step 1 lever 2, requests filled across documents
 grep -q "^def cpu_line_from(worst: float) -> float:" "$ROOT/src.new/app/hold/embedder.py"   # #175: a CPU review line per quantization level, computed
+grep -q '        if "batch" in stated or getattr(encoder, "batch", 0):' "$ROOT/src.new/app/collection_file.py"   # #180: a rewrite keeps [encoder] batch and exactness
+test ! -e "$ROOT/src.new/app/dispatch.py"   # #181: the model pool's dispatch is app/rage/dispatch.py
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
@@ -261,6 +263,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_translate_t5.py tests/test_translate_model.py tests/test_query_translation.py tests/test_madlad_translate_server.py \
     tests/test_encoder_bakeoff.py tests/test_web_pages.py tests/test_gpu_models.py \
     tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py tests/test_worker_selection_cost.py tests/test_process_exit.py tests/test_deploy_supervise_pass.py tests/test_derived_cache.py tests/test_plugins_pubmed_pack.py tests/test_backend_templates.py tests/test_wikipedia_page_props.py tests/test_plugins_wikipedia_source.py tests/test_origin_missing.py tests/test_vector_index.py tests/test_embed_producers.py tests/test_run_check.py \
+    tests/test_embed_materialize.py tests/test_rage_settings.py tests/hold/test_rage_settings.py tests/hold/test_rage_settings_cli.py tests/test_rage_name.py tests/test_card_record.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_embedder_cli.py tests/hold/test_cpu_reference.py tests/hold/test_near_exact.py tests/test_encoder_batch.py tests/test_slice_scope.py tests/hold/test_relocate.py tests/test_toml_roundtrip.py tests/test_measure_wikidata_encoder_ab.py tests/test_merge_by_relevance.py tests/test_record_rerank.py tests/test_measure_fusion_calibration.py tests/test_node_show.py tests/test_vega_repro_check.py tests/test_worker_boot_node_state.py tests/hold/test_embedder.py tests/hold/test_backend_engine.py tests/hold/test_engine_options.py tests/hold/test_pair_calibration.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py tests/hold/test_drift.py tests/test_record_source.py tests/test_lance_stable_row_ids.py tests/test_vector_rewrite.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
