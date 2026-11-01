@@ -1,6 +1,6 @@
 """This node's identity (app/identity.py): the web process recognises what
 this node signed from the PUBLIC key file alone, and never reads the seed
-(operator, 2026-09-29; docs/notes/rage.md §13, layer 2)."""
+(operator, 2026-09-29; docs/notes/model-pool.md §13, layer 2)."""
 import os
 
 import pytest

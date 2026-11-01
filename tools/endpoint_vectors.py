@@ -7,12 +7,12 @@ tomorrow can be held to it.
         --url gutenberg=http://nas:30437/upstream/qwen3-embedding-4b \
         --url pubmed.query=http://nas:30437/upstream/medcpt-query
 
-WHY THIS EXISTS. RAGE replaces the per-model apps in one cut-over: the
-operator's rule is that they are shut off BEFORE RAGE loads, because together
-they would hold every model twice on the card (docs/notes/rage.md §16). The
-first proof of RAGE is that its vectors match today's endpoints — and once
+WHY THIS EXISTS. The model pool replaces the per-model apps in one cut-over: the
+operator's rule is that they are shut off BEFORE the model pool loads, because together
+they would hold every model twice on the card (docs/notes/model-pool.md §16). The
+first proof of the model pool is that its vectors match today's endpoints — and once
 those are off there is nothing left to compare with. So `record` runs FIRST,
-while they still answer; `compare` runs after, against RAGE.
+while they still answer; `compare` runs after, against the model pool.
 
 WHAT IS RECORDED, per collection and per side (a bi-encoder pair such as
 MedCPT's has a document side and a query side):
@@ -33,7 +33,7 @@ recorded. The tolerance is the collection's own (its Codex's
 side below it; 3: an endpoint did not answer — a deferral, never a verdict.
 
 A DIFFERENT llama.cpp BUILD IS EXPECTED NOT TO BE BIT-EQUAL. gutenberg's
-encoder runs b10603 today and RAGE's image holds b10630: another engine,
+encoder runs b10603 today and the model pool's image holds b10630: another engine,
 which the cosines judge and the gate will test (03 §3.3).
 
 DNA collections are skipped: the calibration set is text, and they are a

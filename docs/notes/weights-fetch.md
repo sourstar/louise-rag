@@ -5,8 +5,8 @@ rule, creation from LocalAI's gallery and where the origin lives:
 operator, 2026-09-28.*
 
 **The gap.** A peer that takes up a new collection cannot run its encoder
-until someone copies the weights into `/models` by hand. RAGE fetches
-nothing, by design (`rage.md` §10). The spec already says who should
+until someone copies the weights into `/models` by hand. The model pool fetches
+nothing, by design (`model-pool.md` §10). The spec already says who should
 fetch them instead — the node, from other peers — but nothing implements
 it, and three formats it needs are not written down yet (§4).
 
@@ -29,7 +29,7 @@ it, and three formats it needs are not written down yet (§4).
 
 ## 2. The design
 
-**Who does it:** Louise's worker, never RAGE. RAGE keeps reading a
+**Who does it:** Louise's worker, never the model pool. The model pool keeps reading a
 read-only directory and never learns where a file came from.
 
 **Steps**
@@ -70,12 +70,12 @@ read-only directory and never learns where a file came from.
   there.
 - **When to stop.** When the node stops keeping the last collection that
   names a model, it stops announcing it. The file may then be removed,
-  unless a RAGE entry still names that path.
+  unless a model-pool entry still names that path.
 - **Never seeded.** Weights the registry marks as not redistributable.
   Newcomers fetch those from the origin.
 
-**Where RAGE sees them**
-- The store root is bind-mounted into RAGE read-only, once, at
+**Where the model pool sees them**
+- The store root is bind-mounted into the model pool read-only, once, at
   `/models/store`. That replaces today's one bind per model
   (`deploy/truenas-rage.yaml`).
 - An entry names `/models/store/<digest hex>/…`.
@@ -182,9 +182,9 @@ e. **Gated licences.** Some weights require accepting terms before
 ## 5. Out of scope
 
 - **Engine images.** They travel the same way under their image digest
-  (04 §4.3). The mechanism would be the same, but RAGE's own image is
+  (04 §4.3). The mechanism would be the same, but the model pool's own image is
   built and pinned, never fetched at run time.
-- **Drafting the RAGE entry** from the Codex. That is a separate note.
+- **Drafting the model pool entry** from the Codex. That is a separate note.
 
 ## 6. Done when (tests)
 
@@ -201,7 +201,7 @@ e. **Gated licences.** Some weights require accepting terms before
   never announced.
 - The fetch draws from the central bucket: a test with a tiny ceiling
   shows the rate held.
-- RAGE, with the store mounted, loads an entry that names the promoted
+- The model pool, with the store mounted, loads an entry that names the promoted
   path. Before promotion, the entry is `absent`.
 - Seeding:
   - Two held collections in one space announce one model.

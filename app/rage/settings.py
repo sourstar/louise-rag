@@ -1,5 +1,6 @@
-"""Which recommended engine setting THIS node takes for a collection
-(the format and its signing: app/hold/engine_settings.py, 09 §9.19).
+"""RAGE's settings in effect for a collection on THIS node: the
+recommended entry it takes (the format and its signing:
+app/hold/rage_settings.py, 09 §9.19).
 
 `collections.recipe_for` calls `applied`: the keys of `batch` and
 `concurrency` the collection file leaves unset take the entry recommended
@@ -19,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .hold.engine_settings import DIR, Card, Recommendation, read_all, recommend
+from ..hold.rage_settings import DIR, Card, Recommendation, read_all, recommend
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def node_cards(*, fetch: Callable[[str], dict] | None = None,
     that is unset or does not answer gives none — and no recommendation —
     and is asked again after CARDS_RETRY_S, never on every call."""
     global _cards, _cards_failed_at
-    from . import config, gpu
+    from .. import config, gpu
     if _cards is not None:
         return _cards
     if not config.GPU_PROBE_URL:
@@ -57,7 +58,7 @@ def node_cards(*, fetch: Callable[[str], dict] | None = None,
                                          for d in devices))
         except Exception as e:   # noqa: BLE001 — no card known: no recommendation
             _cards_failed_at = clock()
-            log.info("engine settings: the GPU probe did not answer (%s); no "
+            log.info("RAGE settings: the GPU probe did not answer (%s); no "
                      "recommendation applies until it does", type(e).__name__)
             return ()
         return _cards
@@ -85,14 +86,14 @@ def for_collection(collection, *, cards: Iterable[Card] | None = None,
     if not cards:
         return None
     if shard_dir is None:
-        from . import collections as collections_mod
+        from .. import collections as collections_mod
         shard_dir = collections_mod.louise_root() / "collections" / collection.name / "shard"
     d = Path(shard_dir) / DIR
     stamp = _stamp(d)
     if not stamp:
         return None                     # the common case: no file, one listing
     if own is None:
-        from . import run_check
+        from .. import run_check
         own = run_check.signer()
     key = (str(d), codex.collection_id, codex.space_id, cards, own)
     hit = _chosen.get(key)
@@ -101,7 +102,7 @@ def for_collection(collection, *, cards: Iterable[Card] | None = None,
     bodies, refused = read_all(shard_dir, collection_id=codex.collection_id,
                                space_id=codex.space_id)
     for why in refused:
-        log.warning("%s: engine settings set aside: %s", collection.name, why)
+        log.warning("%s: RAGE settings set aside: %s", collection.name, why)
     rec = recommend(bodies, cards, own=own)
     _chosen[key] = (stamp, rec)
     return rec
@@ -118,7 +119,7 @@ def applied(collection, recipe):
     try:
         rec = for_collection(collection)
     except Exception as e:   # noqa: BLE001 — a recommendation is never a reason not to run
-        log.warning("%s: engine settings not read (%s: %s); the file's settings apply",
+        log.warning("%s: RAGE settings not read (%s: %s); the file's settings apply",
                     getattr(collection, "name", "?"), type(e).__name__, e)
         return recipe
     if rec is None:
@@ -138,7 +139,7 @@ def applied(collection, recipe):
     said = (rec.signer, tuple(sorted(change.items())))
     if _told.get(collection.name) != said:
         _told[collection.name] = said
-        log.info("%s: engine settings recommended by %s… for %s:%s applied: %s "
+        log.info("%s: RAGE settings recommended by %s… for %s:%s applied: %s "
                  "(measured %s); the collection file's own keys are kept",
                  collection.name, rec.signer[:20], rec.card.vendor_id, rec.card.device_id,
                  ", ".join(f"{k} {v}" for k, v in sorted(change.items()) if k != "device"),

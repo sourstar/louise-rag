@@ -218,7 +218,7 @@ def test_a_rerank_that_is_merely_slow_keeps_its_own_reason(runner, monkeypatch):
 
 
 def test_corpus_work_keeps_the_cached_answer_and_a_person_s_burst_shares_one_read(runner):
-    from app import dispatch
+    from app.rage import dispatch
     runner.loaded.add("vega-bge-m3")
     with dispatch.working_as(dispatch.Level.CORPUS):
         embeddings.embed_calibration(ENCODER, ["a"], timeout=0.1)

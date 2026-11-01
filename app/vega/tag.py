@@ -55,7 +55,7 @@ _ID = re.compile(r"[0-9a-f]{32}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: The phase-3 form of a pair, what `louise-medcpt-article-ov` decodes
-#: (docs/notes/rage-over-localai.md §13). The wrapper forwards a tagged pair
+#: (docs/notes/model-pool-over-localai.md §13). The wrapper forwards a tagged pair
 #: in it; deploy/localai/backends/louise_backend.py holds the same marker,
 #: and a test holds the two equal.
 PAIR_MARK = "\x1eLOUISE-PAIR\x1e"

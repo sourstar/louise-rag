@@ -347,7 +347,7 @@ writes, is created on the main thread at boot (`refuse_boot`) and stays at
 node's modes were redefined on 2026-09-19 — *pause*: nothing runs;
 *download/seeding only*: exactly that — and every test passed. Watched
 on the node, "download/seeding only" took no new document and the two in
-flight went on: RAGE served 470 embedding requests in the next 100 s,
+flight went on: the model pool served 470 embedding requests in the next 100 s,
 and the largest book is 5.3 h of them. An archive pass did the same, to
 the end of its 300 s budget, and a scan to the end of the corpus (1,083
 s on wikivec). Each already had a unit it stops at — a slice, a row, a
@@ -524,7 +524,7 @@ needs a bound (§6, 5), and so does the exit that cleans them up.
 | concern | file |
 |---|---|
 | the round, stage selection, batching, pipeline threads, prefetch, embed producers | `app/worker.py` |
-| model requests by priority: levels, gates, the interactive claim (§12) | `app/dispatch.py` |
+| model requests by priority: levels, gates, the interactive claim (§12) | `app/rage/dispatch.py` |
 | the parse pool | `app/parallel.py` |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
@@ -1081,7 +1081,7 @@ now (§2's row on the encoders is stale on this point).
 ### The model
 
 **Levels.** `CORPUS < TRANSLATE < CHAT < RERANK < QUERY`
-(`app/dispatch.py`). Every model request carries one.
+(`app/rage/dispatch.py`). Every model request carries one.
 
 **One gate per endpoint.** All requests to one model server pass its
 gate (`embeddings._request_vectors`, the reranker, chat, translation).
@@ -1159,7 +1159,7 @@ claim is live, which was its behaviour before any of this.
 
 | piece | where | proved by |
 |---|---|---|
-| levels, gates, the claim | `app/dispatch.py` | `tests/test_dispatch.py` |
+| levels, gates, the claim | `app/rage/dispatch.py` | `tests/test_dispatch.py` |
 | every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
 | the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
 | producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |

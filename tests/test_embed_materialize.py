@@ -54,7 +54,7 @@ def test_writer_round_trips_concurrency(isolated_config, data_dir, config_dir, t
     assert dataclasses.replace(loaded.embed, query_instruction=None) == recipe
 
 
-def test_a_rewrite_keeps_the_engine_settings_the_file_names(
+def test_a_rewrite_keeps_the_rage_settings_the_file_names(
         isolated_config, data_dir, config_dir, tmp_path):
     """`batch` and `exactness` were dropped by every rewrite until 2026-11-01:
     a share toggle in the Library sent wikidata back from 16 texts a request

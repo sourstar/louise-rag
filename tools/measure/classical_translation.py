@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import translate_before_embed as tbe                     # noqa: E402  (the earlier method)
 
 from app import collections as collections_mod          # noqa: E402
-from app import dispatch, embeddings, translate          # noqa: E402
+from app import embeddings, translate  # noqa: E402
+from app.rage import dispatch
 
 LLM_URL = "http://192.168.178.10:30286"
 LANG_NAME = {"la": "Latin", "grc": "Ancient Greek", "el": "Greek"}

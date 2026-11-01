@@ -170,10 +170,10 @@ louise hold
               cpu-reference <collection> --model M [--query-model Q]   the calibration set as the encoder's CPU twin embeds it, kept for every later gate to compare
                                                                        its run with (near-exact-runs.md §2); refused unless the twin states a CPU run and gives
                                                                        back its own bytes; writes (added 2026-10-31)
-  engine-settings show <collection> [--card D:V:P]                     every signer's recommended engine settings in the SHARD (09 §9.19), the entry this node's
+  rage-settings show <collection> [--card D:V:P]                       every signer's recommended RAGE settings in the SHARD (09 §9.19), the entry this node's
                                                                        card type takes, and what the collection file states (its keys win); exit 1 when a file was set aside
               record <collection> [--batch N] [--concurrency M] [--busy F] [--chunks-per-s F] [--window-s S] [--card D:V:P]
-                                                                       sign this node's measured settings for its card type into `<SHARD>/engine-settings/`,
+                                                                       sign this node's measured settings for its card type into `<SHARD>/rage-settings/`,
                                                                        replacing its own entry for that card; only under a run validated here; writes (added 2026-11-01)
               calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
@@ -1179,7 +1179,7 @@ unknown command. The table says where each went.
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 runs on use (`/api/search` and `/api/verify` are kept for their clients, §7.4) |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
-| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
+| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with the model pool, 2026-10-18: it measured reloads through the model pool's admin API) |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 
@@ -1386,7 +1386,7 @@ unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
 panel empty and says why, and nothing else changes (`RAGE_URL` was
-retired with RAGE, 2026-10-18: a run is learnt from VeGa's receipts).
+retired with the model pool, 2026-10-18: a run is learnt from VeGa's receipts).
 `VEGA_URL` is where the receipts of an `api = "vega"` encoder
 are read (`/vega/receipts`, `/vega/runs/<run_id>`); unset, every answer of
 such an encoder is a deferral and nothing is written or searched through
@@ -1496,8 +1496,9 @@ batch = 16                                     # optional: chunks a request carr
                                                # writes batched answers only once the gate measured it at this batching
                                                # (it runs again by itself when the batching changes). Not in the space
                                                # (added 2026-10-31: wikipedia's embedding was bound by one chunk a request)
-concurrency = 4                                # optional: requests in flight; absent, 1. ABSENT, `batch` and `concurrency`
-                                               # each take the setting recommended for this node's card type in the SHARD
+concurrency = 4                                # optional: requests in flight; absent, 1. `batch` and `concurrency` are RAGE's
+                                               # settings (01, docs/notes/rage.md). ABSENT, each takes the setting
+                                               # recommended for this node's card type in the SHARD
                                                # (09 §9.19), when one is; written here, the file's value wins — the
                                                # recommendation is never binding (amended 2026-11-01)
 

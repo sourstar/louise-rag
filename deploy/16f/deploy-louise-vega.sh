@@ -2,7 +2,7 @@
 # deploy-louise-vega.sh — deploy-louise-3edbabb.sh plus the explicit model keys
 # (operator, 2026-10-08) and, since 2026-10-11, the SHARD directory rename
 # (5c): the code of 2026-10-08/09 (input forms, Codex 5/6,
-# VeGa's receipts path beside RAGE, SHARD vocabulary, the torrent landing
+# VeGa's receipts path beside the model pool, SHARD vocabulary, the torrent landing
 # fixes) REFUSES a collection file that still says `model =`, so the node's
 # files are migrated in the stop window (5a), after a dry run on a copy (3a).
 #
@@ -77,7 +77,7 @@ for d in "$ROOT"/data/collections/*/drag; do
   LIVE_MOUNTS="$LIVE_MOUNTS -v $d:/data/collections/$n/shard:ro"
 done
 # The model keys, on a COPY of the live config (the live files are migrated in 5a,
-# with the app stopped): align each `model` line to its RAGE URL, then migrate.
+# with the app stopped): align each `model` line to its the model pool URL, then migrate.
 CHECK=/tmp/louise-cfg-check
 rm -rf "$CHECK" && cp -a "$ROOT/config" "$CHECK"
 python3 "$ROOT/src.new/deploy/16f/align_model_names.py" "$CHECK"/collections/*.toml

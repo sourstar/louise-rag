@@ -163,7 +163,7 @@ def test_a_process_on_wsls_gpu_is_unreadable_never_a_cpu_process(tmp_path):
 
 # ---- the driver is the one the card is bound to ------------------------------------
 #
-# Operator, 2026-09-20: "RAGE should be independent from a specific
+# Operator, 2026-09-20: "RAGE [the model pool] should be independent from a specific
 # manufacturer." The driver in a run used to be "the first GPU module loaded"
 # from a fixed list. The reference node loads TWO — `xe` for its Arc and
 # `amdgpu` for the processor's own graphics — and read `xe` by luck of order.

@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from app import config, dispatch, gpu, gpu_governor, gpu_level, node_state
+from app import config, gpu, gpu_governor, gpu_level, node_state
+from app.rage import dispatch
 from app.gpu_clock import Governor
 from app.node_profile import GpuLevel
 

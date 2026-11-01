@@ -70,7 +70,7 @@ MAX_CLONE_BYTES = 2 * 2**30
 CLONE_POLL_S = 0.5
 DEFAULT_INTERVAL_MIN = 60
 
-_USER_AGENT = "louise-rag/0.1 (+https://github.com/sourstar/louise-rag)"
+_USER_AGENT = "louise-rag/0.1 (+https://github.com/sourstar/project-louise)"
 
 #: LocalRecall's `isTextFile`, by extension, exactly (rag/sources/git.go).
 TEXT_EXTENSIONS = frozenset((

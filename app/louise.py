@@ -4165,8 +4165,8 @@ def _recipe_for(codex, name):
 def _card_types(a):
     """This node's card types (the GPU probe's /gpu), or the one `--card`
     names as `driver:vendor:device`."""
-    from app import recommended_settings as rec
-    from app.hold import engine_settings as es
+    from app.rage import settings as rec
+    from app.hold import rage_settings as es
     if getattr(a, "card", None):
         parts = a.card.split(":")
         if len(parts) != 3:
@@ -4175,13 +4175,14 @@ def _card_types(a):
     return rec.node_cards()
 
 
-def cmd_engine_settings_show(a) -> int:
-    """`hold engine-settings show <collection>` (09 §9.19): every signer's
-    recommended settings in the collection's SHARD, which one this node
+def cmd_rage_settings_show(a) -> int:
+    """`hold rage-settings show <collection>` (09 §9.19): every signer's
+    recommended RAGE settings in the collection's SHARD, which one this node
     takes for its card, and what its collection file states — the file's
     own keys win. Exit 0; 1 when a file was set aside."""
-    from app import collections as collections_mod, recommended_settings as rec
-    from app.hold import engine_settings as es
+    from app import collections as collections_mod
+    from app.rage import settings as rec
+    from app.hold import rage_settings as es
     name, codex = col.resolve(a.root, a.collection)
     shard = col.shard_dir_of(a.root, name)
     bodies, refused = es.read_all(shard, collection_id=codex.collection_id,
@@ -4196,7 +4197,7 @@ def cmd_engine_settings_show(a) -> int:
     for why in refused:
         print(f"set aside: {why}")
     if not bodies and not refused:
-        print(f"{name}: no recommended engine settings in {shard / es.DIR}")
+        print(f"{name}: no recommended RAGE settings in {shard / es.DIR}")
     try:
         cards = _card_types(a)
     except ValueError as e:
@@ -4228,18 +4229,18 @@ def cmd_engine_settings_show(a) -> int:
     return 1 if refused else 0
 
 
-def cmd_engine_settings_record(a) -> int:
-    """`hold engine-settings record <collection> --batch N --concurrency M
+def cmd_rage_settings_record(a) -> int:
+    """`hold rage-settings record <collection> --batch N --concurrency M
     [--busy F --chunks-per-s F --window-s S] [--card driver:vendor:device]`
     (09 §9.19): sign this node's measured settings for its card type into
     the collection's SHARD, replacing its own earlier entry for that card.
-    The engine is the run that answers now, and it must be one this node
-    has validated for the space: a setting is recorded only from a gated
-    run. Exit 0 recorded; 2 a usage error or no validated run; 3 the
+    The `engine_id` recorded is the encoder's engine (09 §9.3) in the run
+    that answers now, and that run must be one this node has validated for
+    the space: a setting is recorded only from a gated run. Exit 0 recorded; 2 a usage error or no validated run; 3 the
     encoder or the probe could not be asked."""
     from app import run_check
     from app.bundles import keys as node_keys
-    from app.hold import embedder as emb, engine_settings as es, runs as runs_mod
+    from app.hold import embedder as emb, rage_settings as es, runs as runs_mod
     name, codex = col.resolve(a.root, a.collection)
     if a.batch is None and a.concurrency is None:
         print("louise: name --batch, --concurrency or both: what is recommended",
@@ -5164,16 +5165,17 @@ def build_parser() -> argparse.ArgumentParser:
                                        "the book_id index")
     args_collection(p); p.set_defaults(fn=cmd_index_show)
 
-    # ---- hold engine-settings ------------------------------------------
-    esn = nouns.add_parser("engine-settings",
-                           help="the engine settings recommended per card type, signed in "
-                                "the SHARD (09 §9.19; never binding)")
+    # ---- hold rage-settings --------------------------------------------
+    esn = nouns.add_parser("rage-settings",
+                           help="RAGE's settings (texts a request, requests in flight) "
+                                "recommended per card type, signed in the SHARD "
+                                "(09 §9.19; never binding)")
     esverbs = esn.add_subparsers(dest="verb", required=True)
     p = esverbs.add_parser("show", help="every signer's entries, and what applies here")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
                    help="a card type instead of this node's (e.g. xe:8086:e223)")
-    p.set_defaults(fn=cmd_engine_settings_show)
+    p.set_defaults(fn=cmd_rage_settings_show)
     p = esverbs.add_parser("record", help="sign this node's measured settings for its card")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--batch", type=int, help="texts a request")
@@ -5183,7 +5185,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--window-s", dest="window_s", type=int, help="the window measured, seconds")
     p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
                    help="the card type measured, where the node has several")
-    p.set_defaults(fn=cmd_engine_settings_record)
+    p.set_defaults(fn=cmd_rage_settings_record)
 
     # ---- hold embedder --------------------------------------------------
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")

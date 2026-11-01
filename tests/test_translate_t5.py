@@ -14,7 +14,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app import config, dispatch
+from app import config
+from app.rage import dispatch
 from app import translate as mt
 
 _spec = importlib.util.spec_from_file_location(

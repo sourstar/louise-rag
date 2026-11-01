@@ -1,6 +1,6 @@
 #!/bin/bash
 # rename-vega-app-20261018.sh — the `louise-rage` app becomes `louise-vega`
-# (operator, 2026-10-18: no RAGE nomenclature left). TrueNAS cannot rename an
+# (operator, 2026-10-18: no the model pool nomenclature left). TrueNAS cannot rename an
 # app, and we never delete one: the old app is STOPPED, a new one is created
 # with the SAME compose — image vega:bb9bf61, port 30439, the receipts
 # socket's and the state's host paths — and checked end to end. The operator

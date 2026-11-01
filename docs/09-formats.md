@@ -183,7 +183,7 @@ is the 32 raw bytes of the body's canonical-JSON digest:
 | `louise/event/v1` | an event body, and a pull request (§9.9) |
 | `louise/pointer/v1` | a certifier's pointer (§9.11) |
 | `louise/calibration/v1` | the calibration member's statement (§9.12) |
-| `louise/engine-settings/v1` | a signer's recommended engine settings (§9.19; *added 2026-11-01*) |
+| `louise/rage-settings/v1` | a signer's recommended RAGE settings (§9.19; *added 2026-11-01*) |
 
 The bundle is signed over its own framed payload under the domain
 `louise-rag/bundle-sig/v1` (§9.7). A signature made under one domain
@@ -272,7 +272,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `6` · `7` · `8` · `9` · `10` | yes | the Codex format version (§9.18). Version 10 (*amended 2026-11-01*, operator: "if it useful add a parameter in the codex specifying if the collection requires bit exactness or near bit exactness"; CLAUDE.md invariant 12) is the version-9 object with `space.exactness` (below), written for a space that requires bit-exact runs and for no other, so no Codex, space or `collection_id` already written moves; its `slicing.container` is required as at 9. Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target, and a version-9 Codex carries `annotates` exactly when it is an annotations Codex (its `space` null); its `space.cut` is present where the token cut is declared and absent otherwise, since a Parquet collection need not cut by tokens. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` · `7` · `8` · `9` · `10` | yes | the Codex format version (§9.18). Version 10 (*amended 2026-11-01*, operator: "if it useful add a parameter in the codex specifying if the collection requires bit exactness or near bit exactness"; CLAUDE.md invariant 12) is the version-9 object with `space.exactness` (below), written for a space that requires bit-exact runs and for no other, so no Codex, space or `collection_id` already written moves; its `slicing.container` is required as at 9. Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target, and a version-9 Codex carries `annotates` exactly when it is an annotations Codex (its `space` null); its `space.cut` is present where the token cut is declared and absent otherwise, since a Parquet collection need not cut by tokens. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one the model pool stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -681,7 +681,7 @@ the chain, and never ahead of the period open now.
 | `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
 | `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
 | `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here, nor a part that a `shards`, `relations` or `figures` entry names, nor a file of the `engine-settings` member (§9.19) is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here, nor a part that a `shards`, `relations` or `figures` entry names, nor a file of the `rage-settings` member (§9.19) is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A part entry:
@@ -1903,7 +1903,7 @@ carries the request header `Louise-Level`, one of `corpus` ·
 order of model work — corpus embedding, then a query's steps in their order,
 so a query further along goes first (*amended 2026-10-25, operator*: the
 same five values; the order was corpus · translate · chat · rerank · query).
-It is advisory. RAGE uses it to hold the device's
+It is advisory. The model pool uses it to hold the device's
 clock while a person waits, and may use it for nothing an answer
 depends on: the same request gives the same answer at every level, and
 an endpoint that ignores the header loses nothing but speed.
@@ -2181,7 +2181,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `slicing` | `slicing/<sha256 hex>.json`: the family map a slicing block names (§9.3; *amended 2026-10-24*) | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json`, and `seals/lists/<sha256>.xml` for each trusted list its entries name (*amended 2026-10-08*) | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
-| `engine-settings` | `engine-settings/<key hex>.json`, one per signer: recommended engine settings (§9.19), optional | per file, in the digest's `files` (*added 2026-11-01*) |
+| `rage-settings` | `rage-settings/<key hex>.json`, one per signer: recommended RAGE settings (§9.19), optional | per file, in the digest's `files` (*added 2026-11-01*) |
 
 No two kinds share a shape (the text index's `index-<slice>`, which shared
 `index-<space>`'s, left the table on 2026-10-08), and a slice name of 16
@@ -2387,7 +2387,7 @@ names one schema, the one its section fixes:
 | `louise-calibration-run` | 4 | §9.12 (4 since 2026-10-08: a backend engine's run; every other run is stated at 3) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
-| `louise-engine-settings` | 1 | §9.19 |
+| `louise-rage-settings` | 1 | §9.19 |
 | VeGa tag (`\x1eVEGA/1\x1e`), receipt, receipts route | 1 | §9.12 (the version is in the tag's marker; neither the receipt nor the routes carry `kind` or `version`) |
 
 Two rows above were one row each until the figures amendment, and the
@@ -2415,7 +2415,7 @@ WHOLE, the Codex and the peer's calibration statement, because a reader
 of the old version would take a tree digest for an image and guess, and
 writes the new version for an object carrying a backend engine alone:
 every Codex, statement, `engine_id` and run already written or stated —
-an argv engine's, one RAGE stated — keeps its bytes, and nothing is
+an argv engine's, one the model pool stated — keeps its bytes, and nothing is
 gated again for it. The bundle header, the attestation, the digest and
 the space author's calibration member carry an `engine_id` and kept
 their versions. `protocol_version` (§9.3, §9.17)
@@ -2445,30 +2445,32 @@ canonical form of §9.1, the two hash functions and the signature scheme
 of §9.2 are not versioned by a field: they are what every version is
 written in, and changing them is a new protocol, not a new version.
 
-## 9.19 Recommended engine settings
+## 9.19 Recommended RAGE settings
 
 *(Added 2026-11-01, operator: "A recommended, non binding, setting shall be
 part of a collection"; choice B — a separate signed file in the SHARD, one
 entry per card type, updatable without touching the collection.)*
 
 How fast a collection embeds on a card depends on settings that are not
-the space's: texts a request (`batch`) and requests in flight
-(`concurrency`). They change no vector beyond the space's tolerance — the
+the space's: how RAGE, the RAG Engine (01; docs/notes/rage.md), drives
+the encoder — texts a request (`batch`) and requests in flight
+(`concurrency`). They are RAGE's settings, never the encoder's *engine*
+(§9.3), which is the Codex's and inside `collection_id`. They change no vector beyond the space's tolerance — the
 gate measures them before a batched answer is written (03 §3.3) — so they
 are never inside `collection_id` or `space_id`. What one peer measured on
 a card is what the next peer with the same card wants to start from, so it
 travels with the collection, signed by whoever measured it.
 
-**The file.** `engine-settings/<key hex>.json` at the SHARD's root, where
+**The file.** `rage-settings/<key hex>.json` at the SHARD's root, where
 `<key hex>` is the signer's public key as 64 lowercase hexadecimal digits
 (the textual form of §9.2 without `ed25519:`). One file per signer, so two
 peers never write the same file and a signer re-measuring replaces only
-its own entry. An envelope (§9.2) under `louise/engine-settings/v1`, whose
+its own entry. An envelope (§9.2) under `louise/rage-settings/v1`, whose
 body is exactly:
 
 | key | type | meaning |
 |---|---|---|
-| `kind` | `"louise-engine-settings"` | |
+| `kind` | `"louise-rage-settings"` | |
 | `version` | `1` | |
 | `key`, `time` | §9.2 | the signer, and when it signed |
 | `collection_id`, `space_id` | ids | the collection and space the settings were measured for; a file naming others is set aside |
@@ -2485,7 +2487,7 @@ and each entry is exactly:
 
 No two entries of one file name the same card type. A file whose name is
 not its body's signer, whose signature does not verify, or with any
-unknown key (§9.18) is set aside, and `hold engine-settings show` says why.
+unknown key (§9.18) is set aside, and `hold rage-settings show` says why.
 
 **Never binding.** A node takes an entry only:
 
@@ -2503,7 +2505,7 @@ file is: a recommendation a node cannot reproduce stops nothing but
 itself. Without a probe, or without an entry for its card, a node runs
 the file's settings and its own defaults.
 
-**The member.** All signers' files are one member, `engine-settings`
+**The member.** All signers' files are one member, `rage-settings`
 (§9.16): not in the snapshot — so a re-measurement needs no new snapshot —
 but in the digest's `members` with its `files` (§9.9), each file its own
 torrent, the member root over them. A fetcher keeps a file only when it

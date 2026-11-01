@@ -14,7 +14,7 @@ names the set that decides it — JuriFindIT (Dalla Noce et al., Findings of
 EACL 2026), the first statutory-article-retrieval set for Italian — and
 12.4 recorded its availability as UNVERIFIED because egress blocked the
 check. It is verified: `jurifindit/JuriFindIT` is published as parquet.
-This tool turns 7.2's procedure into something runnable against RAGE.
+This tool turns 7.2's procedure into something runnable against the model pool.
 
 WHAT IS MEASURED. The 179 expert questions of the `validation` split against
 the 23,617-node `corpus` split, scored with the metric definitions of

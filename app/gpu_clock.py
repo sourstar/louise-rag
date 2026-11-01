@@ -14,7 +14,7 @@ any GPU without naming one.
 WHO HOLDS IT. Two callers, one mechanism:
 - the GPU governor app (app/gpu_governor.py), which follows the node's
   interactive claim;
-- RAGE's front, which followed the requests it proxied (docs/notes/rage.md
+- The model pool's front, which followed the requests it proxied (docs/notes/model-pool.md
   §11) until it retired on 2026-10-09; its code went on 2026-10-18.
 
 This module and app/gpu_level.py (the profile's GPU level: power limit,
@@ -41,8 +41,8 @@ from pathlib import Path
 #: (operator, 2026-09-23: "pin it to half of the maximum frequency
 #: instead"). A fraction, never a frequency: `rp0_freq` and `rpn_freq` are
 #: the card's own numbers, so this is the same instruction on any GPU and
-#: no vendor's clock range is written down anywhere (memory:
-#: rage-vendor-independent).
+#: no vendor's clock range is written down anywhere (operator, 2026-09-20:
+#: vendor independence).
 #:
 #: WHY HALF. Holding the maximum was bought to stop chat's token-by-token
 #: decode letting the clock sag (87-92 s a call at ~990 MHz against 64 s

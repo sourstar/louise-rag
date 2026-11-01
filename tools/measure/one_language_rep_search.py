@@ -37,7 +37,8 @@ import numpy as np
 import tantivy
 
 from app import collections as collections_mod
-from app import db, dispatch, embeddings, fts, httpc, retrieval, vector_index
+from app import db, embeddings, fts, httpc, retrieval, vector_index
+from app.rage import dispatch
 from app.language_plan import LanguagePlan
 
 DEEP_T = 300

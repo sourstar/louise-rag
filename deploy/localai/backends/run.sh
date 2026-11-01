@@ -10,7 +10,7 @@
 # downloads into it, which would be a backend no image holds (09 §9.12).
 set -eu
 # ABSOLUTE: LocalAI starts this as `./run.sh` from the backend's directory
-# (seen in the smoke test, rage-over-localai §11), and the argument vector is
+# (seen in the smoke test, model-pool-over-localai §11), and the argument vector is
 # the engine's `args` (09 §9.3) — a program named relative to a working
 # directory the run does not state.
 dir=$(cd "$(dirname "$0")" && pwd)

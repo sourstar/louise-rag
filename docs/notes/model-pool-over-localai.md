@@ -1,9 +1,15 @@
-# RAGE over LocalAI: the protocol, the guarantee, the runner
+# The model pool over LocalAI: the protocol, the guarantee, the runner
+
+> **Name (2026-11-01).** This note is about **the model pool**, named RAGE from 2026-09-20 until
+> it became VeGa and retired on 2026-10-18. RAGE now names only the RAG Engine, Louise's own
+> engine ([rage.md](rage.md)). Paths here — `app/rage/`, `tests/rage/`, `deploy/rage/`,
+> `rage.toml`, `rage.d/`, the image `ghcr.io/sourstar/rage` — are the model pool's, deleted
+> with it (read them with `git show <commit>:<path>`); none of them is the RAG Engine's.
 
 *2026-10-02. **Accepted 2026-10-03**: the patch (§4, carried), §5's
-choice and §6's text (applied to 02, 03 and 09). The operator: "RAGE grants the
+choice and §6's text (applied to 02, 03 and 09). The operator: "RAGE [the model pool] grants the
 compliance of the vectors only, while LocalAI will manage pre-build,
-preload, caching and eviction policies. RAGE addresses a fundamental RAG
+preload, caching and eviction policies. RAGE [the model pool] addresses a fundamental RAG
 need that no platform addresses today." And: "Louise implements a new
 protocol to create, derive, share and contribute collections."*
 
@@ -19,15 +25,15 @@ where a line says UNVERIFIED.
 | layer | its job | what it gives the layer above | who else does it |
 |---|---|---|---|
 | **Louise** | the collection protocol: create, derive (02 §2.7), share, contribute (04 §4.5), check (03), ask (05) | — | nobody |
-| **RAGE** | vector compliance: every answer states which run produced it, read from what was actually launched | `Louise-Run` on every answer, and `GET /louise/runs/<id>` (09 §9.12) | nobody: no surveyed system states which run answered ([`rage-prior-art.md`](rage-prior-art.md)) |
-| **LocalAI** | the model lifecycle: backends, building, preloading, caching, eviction | answers from a model process | many; LocalAI fits this card's mix best (rage-prior-art §3) |
+| **The model pool** | vector compliance: every answer states which run produced it, read from what was actually launched | `Louise-Run` on every answer, and `GET /louise/runs/<id>` (09 §9.12) | nobody: no surveyed system states which run answered ([`model-pool-prior-art.md`](model-pool-prior-art.md)) |
+| **LocalAI** | the model lifecycle: backends, building, preloading, caching, eviction | answers from a model process | many; LocalAI fits this card's mix best (model-pool-prior-art §3) |
 
 Only the middle layer is new work. The top layer is the reason for it, and
 the bottom layer is reused.
 
-## 2. Louise touches a model only through RAGE
+## 2. Louise touches a model only through the model pool
 
-| protocol act | what it needs from a model | what it reads from RAGE |
+| protocol act | what it needs from a model | what it reads from the model pool |
 |---|---|---|
 | create (`hold collection create`, 06 §6.6) | the reference vectors, and the engine the Codex freezes (02 §2.4, 09 §9.3) | the run object: its `engine` |
 | derive (02 §2.7) | nothing: no encoder, no gate (03 §3.3) | nothing |
@@ -46,7 +52,7 @@ still be computed from what was launched. That condition is §4.
 Everything LocalAI decides changes when an answer comes, or whether it
 comes. It never changes what an answer says without the answer saying so.
 That covers what is loaded, evicted, preloaded or pinned, and when a
-backend restarts. It holds because RAGE states the run of every answer and
+backend restarts. It holds because the model pool states the run of every answer and
 Louise checks that run before every write (03 §3.3).
 
 So a bad eviction costs a reload. An overcommit costs speed, or an
@@ -58,7 +64,7 @@ break this, and each is handled:
    GGUF (`core/config/gguf.go` :57–95), and app-wide runtime settings
    change `ContextSize` (`runtime_settings_registry.go` :229). So the
    model's YAML file is not what loaded, and any of these defaults can
-   change the numbers. This is safe only if RAGE reads the options exactly
+   change the numbers. This is safe only if the model pool reads the options exactly
    as LocalAI sent them (§4, gap 1).
 2. **Batching across callers.** The fingerprint (03 §3.3) measures
    batching at the peer's own settings only. On a single node, LocalAI's
@@ -67,23 +73,23 @@ break this, and each is handled:
    requests from different callers. That is compliant; the cost is
    throughput (§8.2).
 3. **Spill.** When LocalAI overcommits (it loads anyway after 30 retries,
-   rage-prior-art §3), `xe` moves memory to system RAM. The same kernels
+   model-pool-prior-art §3), `xe` moves memory to system RAM. The same kernels
    run, so the numbers should not change, but this is UNVERIFIED. Nothing
    would catch a difference, because the run stays the same. The first
    proof measures the fingerprint under spill (§8.1).
 
-## 4. What RAGE needs from LocalAI
+## 4. What the model pool needs from LocalAI
 
-| RAGE needs | for | LocalAI at 58830f7 | gap |
+| The model pool needs | for | LocalAI at 58830f7 | gap |
 |---|---|---|---|
-| the process serving model *m*: pid and start time | the check before and after each answer (rage.md §8) | `GET /system` → `loaded_models[].process.pid`, `.started_at` (`core/schema/localai.go` :201–227; admin route, `routes/localai.go` :457) | none |
+| the process serving model *m*: pid and start time | the check before and after each answer (model-pool.md §8) | `GET /system` → `loaded_models[].process.pid`, `.started_at` (`core/schema/localai.go` :201–227; admin route, `routes/localai.go` :457) | none |
 | the program that process runs | `engine.image`, `build`, `variant` | `/proc/<pid>/exe`; the backend's `metadata.json` (`version`, `uri`, `digest` at install, `core/gallery/backend_types.go` :13) | none, if the backends are in the image (§8.5) |
 | its environment | `engine.env` | the model YAML's `env:` reaches the process (`pkg/model/process.go` :293), together with LocalAI's own environment | none: `/proc/<pid>/environ` is checked as today |
 | **the options its weights were loaded with** | the run (§5) | sent through gRPC `LoadModel(ModelOptions)`, so they are not in argv. They are hashed only in distributed mode (`EffectiveModelOptionsHash`, `nodes/router.go` :410), and on a single node not even the hash is recorded | **gap 1: blocks** |
-| the weights file | `weights` | `ModelOptions.Model` (covered by gap 1); a GGUF also shows as an mmap in `/proc/<pid>/maps` | RAGE hashes the file itself, as today |
+| the weights file | `weights` | `ModelOptions.Model` (covered by gap 1); a GGUF also shows as an mmap in `/proc/<pid>/maps` | the model pool hashes the file itself, as today |
 | proof that the answer came from that process | the run per answer | single node: one process per model; no header names it | none: checking (pid, start) before and after is enough. A response header naming the instance would be cleaner (gap 2, optional) |
 
-**Gap 1 is the only blocker, and it is patched.** Without it RAGE can state no run for any
+**Gap 1 is the only blocker, and it is patched.** Without it the model pool can state no run for any
 model LocalAI serves. Louise would then search and write nothing (03 §3.3),
 so the node could not embed at all. Nobody upstream has asked for it: a
 search on 2026-10-02 found no issue. The fix is small. LocalAI already
@@ -133,7 +139,7 @@ flash attention, threads, seed.
     their engines stay reproducible from the images they name.
   - What it costs: LocalAI serving the same weights is another engine, so
     the gate admits it like any new build (03 §3.3). Every space on the
-    node is re-gated once at cut-over, and only then. rage.md §9 already
+    node is re-gated once at cut-over, and only then. model-pool.md §9 already
     accepted that cost for a rebuild.
   - **`EnvVars` is the engine's `env`, stated once** (amended 2026-10-03,
     operator). LocalAI copies a model's `env:` into the load call
@@ -151,7 +157,7 @@ flash attention, threads, seed.
 - **C, rejected: encoders stay on llama-swap and everything else moves to
   LocalAI.** This contradicts the direction. It would also put two
   lifecycle managers on one card, each a stranger to the other, which is
-  exactly the case rage.md §19 exists to survive.
+  exactly the case model-pool.md §19 exists to survive.
 
 With A, the readable fields take this form: `name` is
 `"localai/<backend>"`, `build` is `"<LocalAI release>+<backend version>"`,
@@ -168,7 +174,7 @@ models" up to "That makes it" become:
 > It is the platform that serves the models, in two parts. A model
 > runner — LocalAI on this node — launches, loads, keeps and evicts the
 > engines; what it decides changes when an answer comes, never what it
-> says. RAGE, the RAG Engine, stands in front of the runner and does one
+> says. The model pool, the RAG Engine, stands in front of the runner and does one
 > thing: it computes the run identity of every answer from what was
 > actually launched — the process the kernel shows, the image it runs
 > from, the weights it holds, the options the runner sent it — never from
@@ -178,7 +184,7 @@ models" up to "That makes it" become:
 The rest of the sentence is unchanged.
 
 **09 §9.12, the run identity.**
-- "What RAGE, the node's model container, states" becomes "What RAGE
+- "What RAGE [the model pool], the node's model container, states" becomes "What RAGE [the model pool]
   states, for every engine the node's model runner launched,".
 - A bullet is added after `args` and `env`:
 
@@ -195,10 +201,10 @@ The rest of the sentence is unchanged.
 **09 §9.3** gains A's `options` row. **09 §9.18** moves the two versions.
 **02 §2.4** names the load options among what the engine is, and **02
 §2.7** says a version-3 space copies into a version-4 Codex as it is.
-**rage.md** §2 now says who launches, and §4 is marked superseded at the
+**model-pool.md** §2 now says who launches, and §4 is marked superseded at the
 cut-over.
 
-## 7. What RAGE keeps, and what goes
+## 7. What the model pool keeps, and what goes
 
 | today (`app/rage/`) | becomes |
 |---|---|
@@ -206,22 +212,22 @@ cut-over.
 | `runs.py`, `procfs.py`, `store.py`: the identity, `/proc`, the runs | kept. `match` reads `/system` and `/proc` in place of llama-swap's argv |
 | `clock.py`: `Louise-Level` holds the card's clock | kept. The front is the only process that reads the header, and the header changes no answer |
 | `front.py`: the admin routes, behind `ADMIN_TOKEN_FILE` | kept, as the only door to LocalAI's admin routes. LocalAI takes keys only from an environment value (§8.4), so it listens on loopback with no key and publishes nothing. The front's `load` and `unload` pass through to LocalAI's `POST /backend/load` and `POST /backend/shutdown`, and a request without the token never reaches LocalAI |
-| `front.py`: `PUT` and `DELETE /louise/models/<id>`, adding and removing a model | kept, and they now write LocalAI's model YAML, the file for the desired state (operator, 2026-10-03; invariant 10). **Where:** LocalAI reads the YAMLs and the weights from one models path, and refuses weights outside it (`VerifyPath`, `pkg/utils/path.go` L34). So the models path is a writable directory under RAGE's state holding the YAMLs, and the weights are bind-mounted read-only inside it, as today (rage.md §10, invariant 5). `HF_HOME` is set elsewhere, because LocalAI points it at the models path when it is unset (`initializers.go` L122). **`PUT`** writes `<id>.yaml` and calls `POST /models/reload`. It refuses with 422 a YAML that leaves any option in §10's list unpinned, so the API cannot bring back the drift §10 removes. If the model is loaded, `PUT` also shuts it down, so the change arrives as a new run, named and gated. **`DELETE`** shuts the model down, removes its YAML and reloads. LocalAI's reload does NOT forget a config whose file is gone (§11; localai-bugs.md B8), so `DELETE` answers 502 and says the model goes at LocalAI's next start. **Hand-written YAMLs:** today's `rage.d/` rule carries over. The API overwrites only the files it wrote, which it marks with a first-line comment; a hand-written YAML is edited by hand (409) |
-| `front.py`: `GET /louise/gpu`, the System tab's panel | kept, fed by other sources. The clock and the container name stay as they are. The card's real memory is still read from the driver (rage.md §19), now split by model using `/system`'s `size_vram`; whatever is left over is a stranger's. Each GPU process is labelled with its model from `/system`'s `process.pid`, joined to the host's pids through `NSpid` as before (rage.md §11). The events become what RAGE sees rather than what it decided: a model loaded or unloaded, from one `/system` reading to the next, and a new run with the options that changed (§10) |
-| `front.py`: `POST /louise/models/<id>/restart`, the operator's button for the fan (rage.md §11) | kept. It calls `/backend/shutdown` and then `/backend/load` for that model and no other: never another model, never another app (operator, 2026-09-20). With the options pinned (§10), the reload states the same run |
+| `front.py`: `PUT` and `DELETE /louise/models/<id>`, adding and removing a model | kept, and they now write LocalAI's model YAML, the file for the desired state (operator, 2026-10-03; invariant 10). **Where:** LocalAI reads the YAMLs and the weights from one models path, and refuses weights outside it (`VerifyPath`, `pkg/utils/path.go` L34). So the models path is a writable directory under the model pool's state holding the YAMLs, and the weights are bind-mounted read-only inside it, as today (model-pool.md §10, invariant 5). `HF_HOME` is set elsewhere, because LocalAI points it at the models path when it is unset (`initializers.go` L122). **`PUT`** writes `<id>.yaml` and calls `POST /models/reload`. It refuses with 422 a YAML that leaves any option in §10's list unpinned, so the API cannot bring back the drift §10 removes. If the model is loaded, `PUT` also shuts it down, so the change arrives as a new run, named and gated. **`DELETE`** shuts the model down, removes its YAML and reloads. LocalAI's reload does NOT forget a config whose file is gone (§11; localai-bugs.md B8), so `DELETE` answers 502 and says the model goes at LocalAI's next start. **Hand-written YAMLs:** today's `rage.d/` rule carries over. The API overwrites only the files it wrote, which it marks with a first-line comment; a hand-written YAML is edited by hand (409) |
+| `front.py`: `GET /louise/gpu`, the System tab's panel | kept, fed by other sources. The clock and the container name stay as they are. The card's real memory is still read from the driver (model-pool.md §19), now split by model using `/system`'s `size_vram`; whatever is left over is a stranger's. Each GPU process is labelled with its model from `/system`'s `process.pid`, joined to the host's pids through `NSpid` as before (model-pool.md §11). The events become what the model pool sees rather than what it decided: a model loaded or unloaded, from one `/system` reading to the next, and a new run with the options that changed (§10) |
+| `front.py`: `POST /louise/models/<id>/restart`, the operator's button for the fan (model-pool.md §11) | kept. It calls `/backend/shutdown` and then `/backend/load` for that model and no other: never another model, never another app (operator, 2026-09-20). With the options pinned (§10), the reload states the same run |
 | `model.py`: `rage.toml` | shrinks to what the identity needs: card names, `pci`, the device per model. The lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) move to LocalAI's model YAML |
-| `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, and the `park` route | retired at cut-over, through [`legacy-to-delete.md`](legacy-to-delete.md). Until then they are the reference for the upstream proposals (rage-prior-art §7) |
+| `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, and the `park` route | retired at cut-over, through [`legacy-to-delete.md`](legacy-to-delete.md). Until then they are the reference for the upstream proposals (model-pool-prior-art §7) |
 | `deploy/rage/servers/` and the three servers | become LocalAI Python backends (`deploy/localai/backends/`, done 2026-10-03): DAR-legal-it → `Embedding`, MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen, and served by neither front). Each wraps its server's model code unchanged and reads its settings from the load call: `context_size` and `batch` where they mean what LocalAI means, `options` for the rest. MedCPT is read as `api = "jina"` at `/v1/rerank`. **The translator's batch travels in one prompt** (operator, 2026-10-03): LocalAI calls `Predict` once per prompt, so the prompt is the JSON request and the completion's text its JSON answer; Louise's client speaks it under `TRANSLATE_API=completion`, beside today's `/translate` until 15g |
 
 **What the node loses until upstream takes it:** the declared ledger,
-priority eviction, stranger-aware pressure and parking (rage.md §7, §19,
+priority eviction, stranger-aware pressure and parking (model-pool.md §7, §19,
 §21). LocalAI's count-based LRU, `pinned` and `concurrency_groups` take
 their place, and the encoders are pinned. The loss is availability, never
 compliance (§3).
 
 ## 8. To measure first, on the node
 
-1. **Go/no-go: LocalAI's Intel images on the B70.** rage.md §3 left this
+1. **Go/no-go: LocalAI's Intel images on the B70.** model-pool.md §3 left this
    unverified. Test the llama-cpp SYCL backend with bge-m3, gated by hand:
    fingerprint, batch invariance, and the fingerprint again under spill
    (§3.3).
@@ -230,17 +236,17 @@ compliance (§3).
    number is also the weight 04 §4.5 gives to contributions. If it drops,
    ask upstream for a batched `Embedding` call (gap 3); none was found
    requested.
-3. **Weights hashed at every launch** (09 §9.12). RAGE learns of a LocalAI
+3. **Weights hashed at every launch** (09 §9.12). The model pool learns of a LocalAI
    launch only after it happens, so the hash no longer runs during the
    load. The first answer after each reload waits for it: about 5 s for
-   8 GB, an estimate. LocalAI evicts more often than RAGE did. If this
+   8 GB, an estimate. LocalAI evicts more often than the model pool did. If this
    costs too much, the way out is a digest cache keyed on a ZFS snapshot
-   (rage.md §20), which needs its own amendment.
+   (model-pool.md §20), which needs its own amendment.
 4. **Invariant 8.** LocalAI takes API keys only from an environment value
    or a flag (`LOCALAI_API_KEY`, `core/cli/run.go` :78). LocalAI therefore
    listens on 127.0.0.1 inside the image, as llama-swap does today, with no
    key set. The front's `ADMIN_TOKEN_FILE` guards admin requests. With no
-   key set, the admin routes RAGE uses answer without one (§11, on the
+   key set, the admin routes the model pool uses answer without one (§11, on the
    real LocalAI). Publishing LocalAI's own UI would
    need upstream to read the key from a file.
 5. **Backends in the image.** The run's `image` is the node image's digest
@@ -259,7 +265,7 @@ compliance (§3).
 1. **Upstream:** everything in [`localai-bugs.md`](localai-bugs.md), filed
    by the operator.
 2. **On the node:** §8.1 and §8.2. This is where the go/no-go is decided.
-   If it fails, today's RAGE keeps running unchanged.
+   If it fails, today's model pool keeps running unchanged.
 3. **The front over LocalAI.** Tests first: `test_runs` and `test_front`
    run against a fake `/system` and a fake `/proc`.
 4. **The three backends.**
@@ -297,7 +303,7 @@ wrong vector gets in. The cost is availability on this node:
 
 The cost scales with the number of distinct option sets, not with
 reloads. A statement is kept per run, so a run that comes back is valid
-at once. The gate's duration is not measured yet (rage.md §14).
+at once. The gate's duration is not measured yet (model-pool.md §14).
 
 **Why this is worse than llama-swap.** Today only an edit to `rage.toml`
 changes a run. LocalAI fills in every field a model's YAML leaves unset,
@@ -319,7 +325,7 @@ the node then goes into quarantine in turn, at whatever moment LocalAI
 reloads each model. That is the disruption the operator foresaw.
 
 **The answer: pin, and make drift visible. The identity stays as it is.**
-1. **Pin (15e).** Every model RAGE serves sets, in its YAML, every field
+1. **Pin (15e).** Every model the model pool serves sets, in its YAML, every field
    the table names: `context_size`, `batch`, `threads`, `gpu_layers`,
    `seed` (not -1), and `parallel` in `options`. Add `f16`, `flash_attention` and `mmap` while
    at it. The image sets `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
@@ -328,7 +334,7 @@ reloads each model. That is the disruption the operator foresaw.
    changes only by a deliberate edit, as a llama-server flag does today. A
    test holds every model YAML to the list, which is re-read whenever the
    LocalAI base moves.
-2. **Visible (15d).** When a model's run changes, RAGE records an event
+2. **Visible (15d).** When a model's run changes, the model pool records an event
    naming the options that differ from its previous run, on the System
    page, for example "bge-m3: new run — NBatch 512 → 2048".
 3. **Not narrowing `options` to what "matters".** Dropping options
@@ -350,7 +356,7 @@ fills in nothing.
 
 *`deploy/rage/Dockerfile.localai`, target `smoke`: LocalAI built from the
 series' base with P1, its CPU llama.cpp backend from the same commit, and
-RAGE's front. The model is `tools/rage_smoke_model.py`, a 480 KB GGUF with
+the model pool's front. The model is `tools/rage_smoke_model.py`, a 480 KB GGUF with
 random weights. Built and run in the development sandbox. No card is
 involved, so this is not 15c.*
 
@@ -382,7 +388,7 @@ docker run -p 18080:8080 -e RAGE_IMAGE=sha256:<64 hex> -e ADMIN_TOKEN_FILE=/run/
 
 **What it found.**
 1. **The seed.** Unset, LocalAI draws a random one at every load. Each
-   reload was another run, and RAGE's event named it: "Seed 551695963 →
+   reload was another run, and the model pool's event named it: "Seed 551695963 →
    1045691491". Now on §10's list: `PUT` requires `parameters.seed`
    (not -1), and the six YAMLs pin it.
 2. **Fixed defaults.** LocalAI also fills `FlashAttention: "auto"`,
@@ -446,7 +452,7 @@ imported at the image's build, on the node.
 *Run unattended at the operator's word. The image
 `ghcr.io/sourstar/rage@sha256:b203a361…a092d` ran as a throwaway container
 (`rage-15c`, port 30499, its own folder `/mnt/ssd5/apps/louise-rage-15c`,
-no clock) beside the live RAGE, which was not touched. The scripts were
+no clock) beside the live the model pool, which was not touched. The scripts were
 `gate15c.py`, `nan15c*.py` and `fp15c.py`, run from Louise's own image with
 the branch's code. They are throwaway and kept in `/tmp/15c-scripts` on
 the node.*
@@ -460,7 +466,7 @@ calibration texts, its tolerance 0.95), through Louise's client:
 | LocalAI 58830f7 + P1, SYCL f16 backend, 3 passes | 16/16, median 1.0000, each pass | 0.999004–0.999006 | 10,651–10,756 | false |
 
 - On the card: 1,036 MiB at first, 1,149 MiB once warm. The first answer
-  took 12.6 s with the load and the weights hash; RAGE stated a run on
+  took 12.6 s with the load and the weights hash; the model pool stated a run on
   every answer.
 - **Throughput (§8.2).** One text per backend call is 12 % FASTER than
   llama-server's batches here. R2 (a batched `Embedding`) is not needed.
@@ -504,17 +510,17 @@ against the live one on five PubMed-style pairs:
 - **DAR-legal-it (≈6 GB) and MADLAD (≈8 GB) on the card.** About 6 GB was
   free beside the live models.
 
-Both need a window in which the live RAGE gives up its models, or the
+Both need a window in which the live the model pool gives up its models, or the
 cut-over itself.
 
 **What the test did to the live node:** while it held 1.4 GB of the card,
-the live RAGE gave up MADLAD (idle) under pressure, by design (rage.md
+the live the model pool gave up MADLAD (idle) under pressure, by design (model-pool.md
 §19). It comes back on the next translation, at the cost of a load.
 Nothing else changed, and the test container is removed.
 
 ## 13. Text pairs: `input_pairs` and `louise-medcpt-article-ov` (2026-10-08)
 
-The RAGE half of [`input-forms.md`](input-forms.md). LocalAI's embeddings
+The model pool half of [`input-forms.md`](input-forms.md). LocalAI's embeddings
 endpoint takes strings and hands a backend one string per call, so a
 tokenizer text pair (MedCPT's title, abstract) has no way through it.
 

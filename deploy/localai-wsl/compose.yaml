@@ -28,7 +28,7 @@ services:
       LD_LIBRARY_PATH: /usr/lib/wsl/lib
       LOCALAI_BACKEND_GALLERIES: >-
         [{"name":"localai","url":"github:mudler/LocalAI/backend/index.yaml@master"},
-         {"name":"louise","url":"github:sourstar/louise-rag/deploy/localai/gallery/index.yaml@main"}]
+         {"name":"louise","url":"github:sourstar/project-louise/deploy/localai/gallery/index.yaml@main"}]
     volumes:
       - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
       - /opt/rocm/lib/librocdxg.so.1:/usr/lib/x86_64-linux-gnu/librocdxg.so:ro

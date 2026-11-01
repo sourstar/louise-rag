@@ -22,7 +22,7 @@ and the pieces are put back with the text's own paragraph breaks.
 
 SERVED BY LocalAI since migration step 15f: deploy/localai/backends/louise-madlad
 imports this module and answers `Predict` with `handle`, the batch as one JSON
-prompt. Its HTTP server and its parking (rage.md §21) went with llama-swap at
+prompt. Its HTTP server and its parking (model-pool.md §21) went with llama-swap at
 15g (docs/notes/legacy-to-delete.md §8); its settings are the model YAML's.
 
 `null` is an item whose target the model does not know — never the input

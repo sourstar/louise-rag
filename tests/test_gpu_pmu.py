@@ -209,7 +209,7 @@ def test_fdinfo_alone_counts_only_when_every_process_could_be_read(tmp_path, mon
 
 
 def test_the_recorder_keeps_no_figure_for_a_card_the_probe_cannot_see(tmp_path):
-    from app import card_record as cr
+    from app.rage import card_record as cr
     asked = {"t": 1_762_000_000.0}
 
     def fetch(url, since):

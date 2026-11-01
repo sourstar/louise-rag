@@ -96,10 +96,11 @@ class EmbedRecipe:
     # (`hold.runs`, `run_check.contributing`). Not part of the space, like
     # `concurrency`.
     batch: int = 0
-    # Which of `batch` and `concurrency` the collection FILE names. Those are
-    # the operator's and stay; a key it leaves unset may take the setting
-    # recommended for this node's card type in the collection's SHARD
-    # (app/hold/engine_settings.py, 09 §9.19; operator 2026-11-01: "A
+    # Which of `batch` and `concurrency` — RAGE's settings, how the RAG Engine
+    # drives this encoder (docs/notes/rage.md) — the collection FILE names.
+    # Those are the operator's and stay; a key it leaves unset may take the
+    # setting recommended for this node's card type in the collection's SHARD
+    # (app/hold/rage_settings.py, 09 §9.19; operator 2026-11-01: "A
     # recommended, non binding, setting shall be part of a collection").
     # Provenance, not a setting: two recipes that send the same are equal.
     stated: frozenset[str] = field(default=frozenset(), compare=False)
@@ -373,8 +374,8 @@ def recipe_for(collection) -> EmbedRecipe:
     # recommended in the collection's SHARD for this node's card type, when
     # one is (09 §9.19). Here, so the worker sends and the gate measures the
     # same (`run_check.contributing`).
-    from . import recommended_settings
-    return recommended_settings.applied(collection, embed)
+    from .rage import settings
+    return settings.applied(collection, embed)
 
 
 # What the worker may SPEND on a collection's local encoder (never what

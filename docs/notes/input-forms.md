@@ -61,7 +61,7 @@ The request: the OpenAI-style embeddings body plus one field,
 strings already means two texts in that style; a separate field is not
 ambiguous.
 
-## RAGE
+## The model pool
 
 The front accepts `input_pairs` only for a model whose YAML declares the
 option `pairs:true` — which therefore enters the run's engine options and so

@@ -2,11 +2,11 @@
 # Switch-over step 3 (docs/notes/vega.md §12): builds one of the platform's
 # Python backends (deploy/localai/backends) IN PLACE for the LocalAI app —
 # deploy/rage/Dockerfile.localai's `louise-backends` stage and its venv step,
-# with one difference: the app's image is not RAGE's, so the backend carries
+# with one difference: the app's image is not the model pool's, so the backend carries
 # its own portable CPython (as LocalAI's own python backends do) and, for
-# MADLAD, its own torch (2.14.0+xpu, the version RAGE's image pins) in its venv
+# MADLAD, its own torch (2.14.0+xpu, the version the model pool's image pins) in its venv
 # instead of a system one; `lib` -> `venv/lib` puts torch's SYCL runtime before
-# the image's older oneAPI on LD_LIBRARY_PATH (run.sh), as RAGE's lib/ did.
+# the image's older oneAPI on LD_LIBRARY_PATH (run.sh), as the model pool's lib/ did.
 #
 #   docker run --rm -e NAME=louise-medcpt-rerank \
 #     -v /mnt/tank/apps/localai/backends/louise-medcpt-rerank:/backends/louise-medcpt-rerank \

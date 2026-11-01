@@ -185,7 +185,7 @@ def wikipedia_snapshots(wiki: str = "enwiki", timeout: float = 30.0) -> tuple[st
 # Wikimedia returns 403 to generic library user agents (learned the hard
 # way against the dumps host); the listing endpoint is under the same
 # policy as the files.
-_WIKI_USER_AGENT = ("louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
+_WIKI_USER_AGENT = ("louise-rag/0.1 (+https://github.com/sourstar/project-louise) "
                     "httpx")
 
 

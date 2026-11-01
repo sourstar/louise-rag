@@ -624,7 +624,7 @@ def _read_sample(con, key: str, max_age_s: float):
 
 
 # QUERY PRIORITY (A5) is the node's interactive claim now, in
-# state/node.sqlite (app/dispatch.py, docs/notes/scheduling.md §12): one
+# state/node.sqlite (app/rage/dispatch.py, docs/notes/scheduling.md §12): one
 # claim for every interactive level, cleared when the last call ends, read
 # by the worker before each REQUEST rather than between documents.
 

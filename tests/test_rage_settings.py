@@ -1,4 +1,4 @@
-"""Which recommended engine setting this node takes (app/recommended_settings.py,
+"""Which recommended RAGE setting this node takes (app/rage/settings.py,
 09 §9.19): only for a key the collection file leaves unset, only for this
 node's card type, and through `collections.recipe_for`, so the gate measures
 what the worker sends."""
@@ -10,8 +10,9 @@ from types import SimpleNamespace
 import pytest
 from nacl import signing
 
-from app import collections as collections_mod, config, gpu, recommended_settings as rs, run_check
-from app.hold import engine_settings as es, envelope as env
+from app import collections as collections_mod, config, gpu, run_check
+from app.rage import settings as rs
+from app.hold import rage_settings as es, envelope as env
 from tests.hold.conftest import pubmed
 
 ME = signing.SigningKey(b"\x01" * 32)

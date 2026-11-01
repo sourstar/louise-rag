@@ -157,7 +157,7 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
     `amdgpu` for the processor's own graphics, and read `xe` because `xe`
     came first in the tuple — an NVIDIA card beside that AMD graphics would
     have been stated as `amdgpu` (operator, 2026-09-20: no manufacturer in
-    RAGE). Without a declared address the old reading stands ONLY where it
+    the model pool). Without a declared address the old reading stands ONLY where it
     cannot be wrong — exactly one GPU module loaded; with several, no run is
     stated and the reason says what to declare.
 

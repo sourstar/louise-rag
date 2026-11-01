@@ -1,10 +1,10 @@
 """Every request to a model endpoint carries its level, and the chat client
 speaks either protocol (migration-plan step 13e; docs/09-formats.md §9.12,
-*the request's level*; docs/notes/rage.md §4, §11).
+*the request's level*; docs/notes/model-pool.md §4, §11).
 
 `Louise-Level` is what lets a model container hold the card's clock while a
 person waits without anything being written anywhere: it sees every model
-request itself (RAGE's front did, until 2026-10-09). `CHAT_API=openai` is
+request itself (the model pool's front did, until 2026-10-09). `CHAT_API=openai` is
 what lets the chat model leave Ollama for LocalAI — the same file, behind
 llama-server — and come back by switching one variable.
 """
@@ -12,9 +12,10 @@ import json
 
 import pytest
 
-from app import collections as collections_mod, config, dispatch, embeddings, llm, \
+from app import collections as collections_mod, config, embeddings, llm, \
     retrieval, translate
-from app.dispatch import Level
+from app.rage import dispatch
+from app.rage.dispatch import Level
 
 
 @pytest.fixture
@@ -154,7 +155,7 @@ def test_ollama_stays_exactly_what_it_was(chat_server, monkeypatch):
     assert chat_server["headers"] == {"Louise-Level": "chat"}
 
 
-def test_openai_is_what_rage_serves(chat_server, monkeypatch):
+def test_openai_is_what_the_model_pool_served(chat_server, monkeypatch):
     monkeypatch.setattr(config, "CHAT_API", "openai")
     monkeypatch.setattr(config, "CHAT_URL", "http://nas:30437/upstream/chat")
     chat_server["answer"] = {"choices": [{"message": {"content": "Ahab."}}]}

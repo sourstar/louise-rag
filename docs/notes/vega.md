@@ -1,12 +1,12 @@
 # VeGa, the Vector Gate: receipts in place of a front
 
 *Operator's proposal and decisions, 2026-10-08. Supersedes the front of
-[`rage-over-localai.md`](rage-over-localai.md) once it is proved on the node
-(§6); until then RAGE runs unchanged.*
+[`model-pool-over-localai.md`](model-pool-over-localai.md) once it is proved on the node
+(§6); until then the model pool runs unchanged.*
 
 ## 1. The proposal
 
-1. RAGE is renamed **VeGa, the Vector Gate**: its job is to make every
+1. The model pool is renamed **VeGa, the Vector Gate**: its job is to make every
    vector's provenance provable, nothing else.
 2. VeGa sits **between LocalAI and its backends**, as a gRPC pass-through:
    LocalAI's `backend-xyz` is also installed as `vega-backend-xyz`, the same
@@ -14,8 +14,8 @@
 3. Ordinary backends work as usual (LocalAGI's model); `vega-` backends serve
    Louise.
 4. So **LocalAI is the only one handling VRAM** on the card. Today two
-   lifecycle managers share it — RAGE's (a patched LocalAI inside its own
-   image) and the LocalAI app's — which is the case rage.md §19 and
+   lifecycle managers share it — the model pool's (a patched LocalAI inside its own
+   image) and the LocalAI app's — which is the case model-pool.md §19 and
    [`gpu-card-overcommit`] exist to survive.
 
 Operator, same day: Louise makes **two requests, the embedding and the
@@ -64,11 +64,11 @@ Louise ──POST /v1/embeddings (model vega-xyz, tagged inputs)──► LocalA
   digests prove it changed neither an input nor a vector. A request it
   routed to a non-`vega` backend has no receipt and is refused.
 - The check sits in Louise, the writer, not in a header she must trust.
-- **The LocalAI patch goes.** RAGE needed P1 (`deploy/localai/patches/`) to
+- **The LocalAI patch goes.** The model pool needed P1 (`deploy/localai/patches/`) to
   learn the options a model was loaded with; the wrapper receives
   `LoadModel(ModelOptions)` itself. It is also the backend's parent, so it
   knows its exe, argv and environment without `/proc` matching, and it can
-  hash the weights DURING the load (rage-over-localai §8.3's cost goes).
+  hash the weights DURING the load (model-pool-over-localai §8.3's cost goes).
 - VeGa leaves the data path: vectors travel LocalAI → Louise once.
 
 ## 4. What changes in the specification
@@ -79,7 +79,7 @@ To write when §6 passes, before the code ships:
   bound to the input and the vector, read by the writer before the write;
   the runner is outside the trust path.
 - **09 §9.12**: the tag, the receipt and the receipts route replace
-  `Louise-Run` (kept as long as RAGE runs). Wire format — operator's
+  `Louise-Run` (kept as long as the model pool runs). Wire format — operator's
   proposal, so approved in principle; the bytes get their own review.
 - **09 §9.3, `engine.image`**: the backends come from LocalAI's gallery as
   OCI images (`/mnt/tank/apps/localai/backends`), not from one node image.
@@ -123,9 +123,9 @@ Decided in writing it, for the operator's review:
 
 - The LocalAI app runs `quay.io/go-skynet/local-ai:v4.11.0-gpu-intel` with
   `/dev/dri`; its backends are on tank and include
-  `intel-sycl-f16-llama-cpp`. RAGE's LocalAI is built from 58830f7, which
+  `intel-sycl-f16-llama-cpp`. The model pool's LocalAI is built from 58830f7, which
   is v4.11.0 too: one gRPC protocol for both.
-- The weights sit on ssd5 under RAGE's mounts; the LocalAI app mounts
+- The weights sit on ssd5 under the model pool's mounts; the LocalAI app mounts
   `/mnt/ssd5/apps/localai/models`.
 
 ## 6. To prove before anything is retired
@@ -136,11 +136,11 @@ Decided in writing it, for the operator's review:
    every float32, two values and negative zero needed handling, and are
    handled; the proof on the real LocalAI is still to do.*
 2. **LocalAI's eviction on xe.** Its LRU, `pinned` and active-backend limit
-   must keep the encoders on the card under LocalAGI's load. RAGE's governor
+   must keep the encoders on the card under LocalAGI's load. The model pool's governor
    reads the card's free memory; LocalAI may not. If it falls short the fix
    goes upstream or into LocalAI's config, never a second scheduler.
    *On the node (§11): proved for the loads tried, by the memory reclaimer
-   and `pinned`, not by `vram_budget`. Still open: LocalAI cannot see RAGE's
+   and `pinned`, not by `vram_budget`. Still open: LocalAI cannot see the model pool's
    memory, and it checks nothing before a load.*
 3. **The fingerprint through the wrapper** equals the fingerprint direct
    (03 §3.3): the wrapper forwards bytes, so it must.
@@ -162,7 +162,7 @@ Decided in writing it, for the operator's review:
 2. The wrapper (a generic gRPC proxy that intercepts `LoadModel` and
    `Embedding` and forwards everything else as opaque bytes), the receipts
    service, Louise's client; tests against a fake LocalAI.
-3. §6 on the node, with a `vega-` llama.cpp beside the live RAGE.
+3. §6 on the node, with a `vega-` llama.cpp beside the live the model pool.
 4. The specification (§4), then the cut-over, then the pubmed migration of
    input-forms.md.
 
@@ -177,7 +177,7 @@ Not deployed; nothing on the node. Wired into `app/embeddings.py` on
 | `app/vega/service.py`, `__main__.py` | the receipts service: intake on a unix socket, read-only HTTP |
 | `app/vega/client.py` | Louise's side: `tag_batch`, `verify_response` → vectors and run ids, or `Refusal` / `Deferral` |
 | `deploy/vega/` | the wrapper (`vega_wrapper.py`), `run.sh`, `vega.example.json`, `requirements.txt` |
-| `app/rage/runs.py` | `driver_string(runtime_lines=…)`: the wrapper reads the runtime from dpkg's status file |
+| `app/rage/runs.py` (the model pool's, deleted 2026-10-18) | `driver_string(runtime_lines=…)`: the wrapper reads the runtime from dpkg's status file |
 | `tools/vega_f32_json.go` | the float32-through-JSON check, exhaustive and golden |
 | `tests/vega/` | 94 tests; the 15 gRPC ones need grpcio, protobuf and grpcio-tools |
 
@@ -186,8 +186,8 @@ Not deployed; nothing on the node. Wired into `app/embeddings.py` on
 anything else, a non-canonical byte included, is refused. `input_digest` =
 `H` of that object without `id`; `vector_digest` = `H` of the vector as
 little-endian f32. The phase-3 pair marker stays as the BACKEND's form of a
-pair (`louise-medcpt-article-ov` reads it): replacing it in RAGE's front, the
-backend and their tests is not trivial while RAGE runs.
+pair (`louise-medcpt-article-ov` reads it): replacing it in the model pool's front, the
+backend and their tests is not trivial while the model pool runs.
 
 **The window** (*amended 2026-10-18*, operator's yes; [char-cut-truncation.md](char-cut-truncation.md)).
 Either form may carry `"window":<tokens>`: the encoder embeds at most that
@@ -234,7 +234,7 @@ receipt again is acknowledged, another one refused. **HTTP:** `GET
 UNAVAILABLE (`VeGa unavailable`, which `client.is_deferral` reads); the
 weights hash 1,800 s; a stop's grace 30 s.
 
-**The run** is RAGE's identity computed by the backend's parent: `name`
+**The run** is the model pool's identity computed by the backend's parent: `name`
 `localai/<metadata name>` (else the directory's), `variant` null. **`image`
 is the backend's installed files, hashed at every load (`tree_digest`; §4,
 no pinning) — PENDING the 09 §9.3 amendment.** *Since 2026-10-31 (operator,
@@ -260,10 +260,10 @@ tree digest's first 12 hex digits, without `sha256:`; never the `uri`'s
 moving tag. `args` `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`
 (09 §9.3, a backend engine; the child is started with the real absolute
 path); `env` the load's
-`EnvVars`; `options` RAGE's canonical form of the ModelOptions received — a
+`EnvVars`; `options` the model pool's canonical form of the ModelOptions received — a
 field the wrapper's `backend.proto` cannot name refuses the load; `device`
 read from the child's DRM clients (`vega.json` `cards`). **`driver`** is the
-kernel and module as RAGE reads them, then the driver library the backend
+kernel and module as the model pool reads them, then the driver library the backend
 loads (§10, finding 4): `ZE_ENABLE_ALT_DRIVERS` from the backend processes'
 own `/proc/<pid>/environ` (the environment the wrapper gave, when none can be
 read), else the one its `lib/` carries (`libze_intel_gpu.so.*`), each as
@@ -284,7 +284,7 @@ is therefore a new run, gated before its first vector.
 **Louise's path (2026-10-08).** An encoder opts in with `api = "vega"` in
 its collection's `[encoder]` (it holds for `query_url` too) and `model =
 "vega-…"` (since the same day `embed_model` and `query_model`, 07 §7.8); where receipts are read is node identity, `VEGA_URL` (07 §7.8,
-amended). RAGE's `api = "openai"` + `Louise-Run` path is unchanged.
+amended). The model pool's `api = "openai"` + `Louise-Run` path is unchanged.
 `embeddings._request_vouched`, under the one entry point, so chunks,
 queries, the gate, probes and calibration all take it: every input tagged
 (a pair as the tagged pair, never `input_pairs`), `encoding_format:
@@ -319,8 +319,8 @@ says why. `hold embedder calibrate` takes `api = "vega"`. Tests:
 
 ## 10. The node proof (2026-10-08)
 
-*§6 on the node, beside the live RAGE, which was only read. Scripts in
-`deploy/vega/proof/` (deleted 2026-10-18 with RAGE's code; in git at fe9124e): `build_package.sh` builds the package,
+*§6 on the node, beside the live the model pool, which was only read. Scripts in
+`deploy/vega/proof/` (deleted 2026-10-18 with the model pool's code; in git at fe9124e): `build_package.sh` builds the package,
 `proof.py` and `proof_direct.py` measure, `gpu_snapshot.py` reads the card as
 `app/gpu_probe` does. Texts: 2,048 docstrings of Python's standard library
 (295,514 characters; 81,754 tokens by LocalAI's tokenizer, 40 a text), in
@@ -353,24 +353,24 @@ python:3.12-slim). The real backend's `metadata.json`, verbatim:
 |---|---|---|
 | 1, base64 | LocalAI v4.11.0 honours `encoding_format: "base64"`: 4,096 bytes = 1,024 f32 | yes |
 | 1, f32 through LocalAI | 2,048 texts × (base64, JSON) = 4,096 vectors: 4,096 vector digests match, 0 mismatch, 0 receipt missing; `client.verify` 128/128 batches; no `-0` in the JSON bodies | passed |
-| 3, wrapper vs direct, one engine (`vega-bge-m3` vs `vega-bge-m3-direct`: same LocalAI, backend, options, weights) | 1,975/2,048 bit-identical, cosine min 0.99999, max abs diff 7.5e-4. The engine against itself (the base64 pass vs the JSON pass of `vega-bge-m3`): 1,975/2,048, 6.5e-4 | passed: the wrapper changes no byte; the rest is the engine's own run-to-run drift (rage-over-localai §12) |
-| 3, vs RAGE's `bge-m3` | 1,975/2,048 bit-identical, cosine min 0.9999956, median 1.0, max abs diff 2.8e-4 | equivalent; the runs differ (below) |
-| 4, throughput | direct 29.4 texts/s; behind the wrapper 28.3, with the receipts read 28.2 (−4 %); one receipts read costs 1.5 ms per batch; RAGE 27.6 texts/s = 1,100 tokens/s, `vega-bge-m3` 1,069 (base64) and 1,047 (JSON) tokens/s | passed. The absolute tokens/s is far below §12's 10,700: short texts, one gRPC call each |
+| 3, wrapper vs direct, one engine (`vega-bge-m3` vs `vega-bge-m3-direct`: same LocalAI, backend, options, weights) | 1,975/2,048 bit-identical, cosine min 0.99999, max abs diff 7.5e-4. The engine against itself (the base64 pass vs the JSON pass of `vega-bge-m3`): 1,975/2,048, 6.5e-4 | passed: the wrapper changes no byte; the rest is the engine's own run-to-run drift (model-pool-over-localai §12) |
+| 3, vs the model pool's `bge-m3` | 1,975/2,048 bit-identical, cosine min 0.9999956, median 1.0, max abs diff 2.8e-4 | equivalent; the runs differ (below) |
+| 4, throughput | direct 29.4 texts/s; behind the wrapper 28.3, with the receipts read 28.2 (−4 %); one receipts read costs 1.5 ms per batch; the model pool 27.6 texts/s = 1,100 tokens/s, `vega-bge-m3` 1,069 (base64) and 1,047 (JSON) tokens/s | passed. The absolute tokens/s is far below §12's 10,700: short texts, one gRPC call each |
 | 2, eviction | as configured, LocalAI evicts nothing (below) | **not proved, open** (→ §11) |
 | refusals | untagged → 500 `InvalidArgument … without a VeGa tag`; a non-canonical tag → 500 `InvalidArgument … not in canonical form`; neither left a receipt. For every one of 6,145 answers, the receipt was there at the first read after the HTTP answer | passed |
 
-**The two runs** (`GET /vega/runs/sha256:798e5bc8…` vs RAGE's
+**The two runs** (`GET /vega/runs/sha256:798e5bc8…` vs the model pool's
 `sha256:40005906…`) have the same weights (`sha256:daec91ff…`) and device.
 They differ in:
 - `name`: `localai/intel-sycl-f16-llama-cpp` vs `localai/llama-cpp`;
 - `build`: the metadata has no `version`, so it is the `uri`, a moving
   `latest-` tag;
-- `image`: `eb0c909e…`, the backend's, vs RAGE's `e64893cf…`;
+- `image`: `eb0c909e…`, the backend's, vs the model pool's `e64893cf…`;
 - `args`: `/backends/intel-sycl-f16-llama-cpp/run.sh` vs the `ld.so` argv;
 - `env`'s path;
-- `driver`: the LocalAI image's `26.05.37020.3` vs RAGE's `26.18.38308.1`;
+- `driver`: the LocalAI image's `26.05.37020.3` vs the model pool's `26.18.38308.1`;
 - the model path;
-- `options`: RAGE's LocalAI build adds `cache_reuse:256`, the app's v4.11.0
+- `options`: the model pool's LocalAI build adds `cache_reuse:256`, the app's v4.11.0
   does not.
 
 **Eviction (§6.2).** LocalAI's runtime settings:
@@ -389,16 +389,16 @@ The card has 32,656 MiB. The driver's `used`, step by step:
 
 | state | used | added |
 |---|---|---|
-| before (RAGE's five processes) | 12,131 MiB | |
+| before (the model pool's five processes) | 12,131 MiB | |
 | with `vega-bge-m3` | 13,268 MiB | its child: 1,132 MiB |
 | with LocalAGI's `qwen3.8-2b-q4`, loaded for the test | 20,299 MiB | 7,031 MiB |
 | with `vega-bge-m3-direct` | 21,417 MiB | |
 
-RAGE's processes did not move: 9,419 / 1,104 / 1,082 / 336 / 167 MiB on the
+The model pool's processes did not move: 9,419 / 1,104 / 1,082 / 336 / 167 MiB on the
 card throughout. LocalAI's `/system` estimates (`size_vram` 1.19 GB and
 7.37 GB) are close to the driver's figures. So LocalAI keeps everything
 because it has no limit. What it does under pressure was not tried, since
-that would need its settings changed. Three of RAGE's processes were already
+that would need its settings changed. Three of the model pool's processes were already
 flagged pushed-out (host > card) before anything here was loaded.
 
 **Found.**
@@ -457,8 +457,8 @@ To remove them:
 
 ## 11. Eviction on the node (2026-10-08)
 
-*§6.2 on the LocalAI app (v4.11.0-gpu-intel), beside the live RAGE, which
-was only read. Scripts in `deploy/vega/proof/` (deleted 2026-10-18 with RAGE's code; in git at fe9124e):
+*§6.2 on the LocalAI app (v4.11.0-gpu-intel), beside the live the model pool, which
+was only read. Scripts in `deploy/vega/proof/` (deleted 2026-10-18 with the model pool's code; in git at fe9124e):
 - `evict_snap.py` reads the card from the host, as `app/gpu_probe` does: the
   DRM fdinfo of every process, one record per client, plus xe's TTM managers
   in debugfs;
@@ -483,7 +483,7 @@ Settings went through `POST /api/settings`, which persists them in
 
 On Intel, LocalAI finds the card through clinfo (total 31,023 MiB). It sums
 `drm-total-vram*` over the fdinfo of the processes in its own PID namespace.
-So it sees only its own models, never RAGE's.
+So it sees only its own models, never the model pool's.
 
 **`vram_budget` caps figures, not allocations.** It caps both the reported
 total and the reported free memory at the budget S. In this setup:
@@ -503,8 +503,8 @@ budget is left empty.** It would mean something only if LocalAI could see
 everything on the card.
 
 **The settings chosen**, and the arithmetic:
-- Card C = 32,656 MiB. RAGE R = 12,110 MiB: its five processes, unchanged in
-  every reading. Margin M = 2,048 MiB, for RAGE loading a small idle model,
+- Card C = 32,656 MiB. The model pool R = 12,110 MiB: its five processes, unchanged in
+  every reading. Margin M = 2,048 MiB, for the model pool loading a small idle model,
   compute-buffer growth, and the driver's 26 MiB not attributed to any
   process.
 - At peak LocalAI may hold A = C − R − M = **18,498 MiB**.
@@ -539,7 +539,7 @@ load.
 | 1, size-aware (t = 0.25/0.36, sizes known) | granite was used first, then `filler-b`, then `filler-c`. Loading `filler-a` evicted `filler-b`: the largest file, the oldest of the equal ones. Granite stayed, although it was older | passed |
 | 1, timing | Eviction: the model is gone from `/system` < 0.1 s after the tick, and its card memory is freed at once. Reload: `vega-bge-m3` 7.9–10.0 s (the first batch, load included); a 2B chat model 44–46 s | — |
 | 2, `pinned` | `vega-bge-m3` (pid 590775) stayed resident from 20:56 to 21:08, through 7 evictions in which it was the least recently used model | **passed** |
-| 3, no overcommit, no spill | The card's peak was 24,879 of 32,656 MiB (lowest free 7,777, while `qwen3.8-2b-q4` loaded). LocalAI's peak was 12,769 MiB, under A. At every reading xe's `gtt_mm` usage equals the sum of all processes' `drm-resident-gtt` + `-system`, to the MiB (10,850–12,124 MiB). No process ever lost `vram0` while gaining host memory: the only drops are −25 MiB in a just-loaded model, with its host memory unchanged. RAGE's five processes were identical in all 20 readings | **passed** for these loads |
+| 3, no overcommit, no spill | The card's peak was 24,879 of 32,656 MiB (lowest free 7,777, while `qwen3.8-2b-q4` loaded). LocalAI's peak was 12,769 MiB, under A. At every reading xe's `gtt_mm` usage equals the sum of all processes' `drm-resident-gtt` + `-system`, to the MiB (10,850–12,124 MiB). No process ever lost `vram0` while gaining host memory: the only drops are −25 MiB in a just-loaded model, with its host memory unchanged. The model pool's five processes were identical in all 20 readings | **passed** for these loads |
 | 4, LocalAGI's model | `qwen3.8-2b-q4` loaded at 7,032 MiB with t = 0.36. Its load evicted one filler, and it answered "5" to "What is 2+3?" (22+31 tokens). It was evicted later as LRU, and came back in 46 s | **passed** |
 | 5, vectors after eviction/reload | 256 texts, base64, all 8 batches receipt-verified, the same run `sha256:798e5bc8…` throughout. The engine against itself on one load: 246/256 bit-identical, max abs diff 1.7e-4. After an explicit reload: 246/256, 1.5e-4. After the reclaimer's eviction and reload: 246/256, 1.3e-4. After the LocalAI restart: 246/256, 1.2e-4. Cosine ≥ 0.9999989 everywhere | **passed**: within the engine's own variation. `pinned` is not a load option, so the run does not change |
 
@@ -547,7 +547,7 @@ load.
 in system memory. Under pressure it moves VRAM objects to TT without telling
 anyone, and fdinfo counts each object where it is now. So host memory is not
 spill in itself. A fresh `vega-bge-m3` already holds 564–910 MiB in `gtt`
-(SYCL host allocations), and RAGE's processes 114–5,126 MiB, which is why
+(SYCL host allocations), and the model pool's processes 114–5,126 MiB, which is why
 §10 saw three of them "pushed out" before anything was loaded. Spill is a
 process whose `vram0` falls while its `gtt` rises, with no unload. The
 card-wide check is debugfs `gtt_mm` usage against the sum of the processes'
@@ -572,8 +572,8 @@ host figures.
    process grows past X and older models go before it answers. This is
    harmless, but it is why the bound is X + L and not X.
 
-**Still open (§6.2).** LocalAI does not see RAGE. If RAGE grows by more than
-M, LocalAI will not react. RAGE does see LocalAI (rage.md §19) and gives up
+**Still open (§6.2).** LocalAI does not see the model pool. If the model pool grows by more than
+M, LocalAI will not react. The model pool does see LocalAI (model-pool.md §19) and gives up
 its own idle models. And there is no check before a load: a single model
 bigger than the headroom overcommits the card whatever the settings. Two
 models in this LocalAI are that big: `swift-qwen3.8-27b` (18.0 GB of
@@ -602,7 +602,7 @@ counts every process on the card.
 ## 12. Staging in the LocalAI app (2026-10-08/09)
 
 *Switch-over step 3, unattended. Every model Louise uses is staged in the
-LocalAI app beside the live RAGE (read only); no Louise collection file was
+LocalAI app beside the live the model pool (read only); no Louise collection file was
 changed. Scripts in `deploy/vega/stage/` (not committed); the packages are
 built from commit 89418c9, whose staged files are 4148d4b's bytes.*
 
@@ -636,13 +636,13 @@ transformers 5.15.1 from the HF cache. The check pairs were this staging's
   beside it, not held to the bound. The edit to `convert_article.py` is not
   committed.
 
-**Mounts.** One `app.update localai` (`deploy/vega/stage/mounts.py`, deleted 2026-10-18 with RAGE's code; in git at fe9124e)
+**Mounts.** One `app.update localai` (`deploy/vega/stage/mounts.py`, deleted 2026-10-18 with the model pool's code; in git at fe9124e)
 added six read-only host
 paths without ACLs (uid 568 already reads them through their inherited
-NFSv4 entry `user:apps`). They are RAGE's own: `bge-m3-models`,
+NFSv4 entry `user:apps`). They are the model pool's own: `bge-m3-models`,
 `louise-rage/models/chat`, `granite-models`, `llama-embed`, `madlad-models`
 and `medcpt-models`, mounted at `/models/weights/{bge-m3,chat,granite,
-llama-embed,madlad,medcpt}`. So a model path is RAGE's, byte for byte.
+llama-embed,madlad,medcpt}`. So a model path is the model pool's, byte for byte.
 
 Checked against the dataset's 01:00 snapshot, leaf by leaf, the only other
 change in the user config is `ix_context.scale_version`, which TrueNAS
@@ -651,7 +651,7 @@ the 9 new ones. The reclaimer settings read back unchanged (enabled, 0.36,
 size-aware, no budget).
 
 **The YAMLs** (`/mnt/ssd5/apps/localai/models`, sources in
-`deploy/vega/stage/models/`). Every load option is copied from RAGE's YAML.
+`deploy/vega/stage/models/`). Every load option is copied from the model pool's YAML.
 Only three things differ: the backend, the env (`NEO_CACHE_DIR` and
 `OV_CACHE_DIR` under `/data/louise-cache`), and `pinned`.
 - `vega-bge-m3`: updated to the mounted weights, NOT pinned (wikipedia has
@@ -678,7 +678,7 @@ in the middle of its load, while a translation model filled the card to
 rewrites the YAML without its comments, so put the commented file back
 afterwards (`pinned` reads the same).
 
-**Verified** (`deploy/vega/stage/verify.py`, in `vega-proof`; deleted 2026-10-18 with RAGE's code; in git at fe9124e). Each model was loaded once,
+**Verified** (`deploy/vega/stage/verify.py`, in `vega-proof`; deleted 2026-10-18 with the model pool's code; in git at fe9124e). Each model was loaded once,
 asked, compared, and shut down. The inputs were 64 standard-library
 docstrings (64 pairs for the pair encoder), cut to 1,000 characters for
 the 512-token models. Every vector came back with base64 and was checked
@@ -686,22 +686,22 @@ against its receipt (64/64 for each encoder).
 
 | model | first call, load included | vs | cosine min / median | bit-identical | max abs diff |
 |---|---|---|---|---|---|
-| `vega-granite` | 9.2 s | RAGE `granite-embedding-107m-multilingual` | 1.0 / 1.0 | 64/64 | 0 |
-| `vega-bge-m3` | 11.9 s | RAGE `bge-m3` | 0.9999971 / 1.0 | 47/64 | 2.8e-4 |
-| `vega-medcpt-query` | 6.3 s | RAGE `medcpt-query` | 0.9999405 / 1.0 | 50/64 | 1.4e-3 |
-| `vega-medcpt-article` | 6.3 s | RAGE `medcpt-article` | 0.9999999 / 1.0 | 50/64 | 6.6e-5 |
-| `vega-medcpt-article-ov` (pairs, GPU) | 7.3 s | transformers fp32 CPU (RAGE has no such model) | 0.9999963 / 0.9999985 | 0/64 | 5.7e-3 |
-| `vega-qwen3-embedding-4b` | 33.7 s | RAGE `qwen3-embedding-4b` | 0.9999991 / 0.9999997 | 3/64 | 1.2e-4 |
+| `vega-granite` | 9.2 s | the model pool `granite-embedding-107m-multilingual` | 1.0 / 1.0 | 64/64 | 0 |
+| `vega-bge-m3` | 11.9 s | the model pool `bge-m3` | 0.9999971 / 1.0 | 47/64 | 2.8e-4 |
+| `vega-medcpt-query` | 6.3 s | the model pool `medcpt-query` | 0.9999405 / 1.0 | 50/64 | 1.4e-3 |
+| `vega-medcpt-article` | 6.3 s | the model pool `medcpt-article` | 0.9999999 / 1.0 | 50/64 | 6.6e-5 |
+| `vega-medcpt-article-ov` (pairs, GPU) | 7.3 s | transformers fp32 CPU (the model pool has no such model) | 0.9999963 / 0.9999985 | 0/64 | 5.7e-3 |
+| `vega-qwen3-embedding-4b` | 33.7 s | the model pool `qwen3-embedding-4b` | 0.9999991 / 0.9999997 | 3/64 | 1.2e-4 |
 
 The other four models:
-- `louise-rerank-bge`: the same order as RAGE's on 9 documents, scores
+- `louise-rerank-bge`: the same order as the model pool's on 9 documents, scores
   within 1.05e-3; 8.1 s with the load.
 - `louise-rerank-medcpt`: the same order, identical scores; 4.7 s.
 - `louise-translate-madlad`: 4 sentences (it, de, fr, ja), identical to
-  RAGE's; peak 5,658 MB; 25.0 s with the load.
+  the model pool's; peak 5,658 MB; 25.0 s with the load.
 - `louise-chat-qwen3-8b`: "Rome"; 9.4 s with the load.
 
-During these loads the card stayed at 18.7–19.1 of 32.6 GB used (RAGE's).
+During these loads the card stayed at 18.7–19.1 of 32.6 GB used (the model pool's).
 At the end nothing is loaded and LocalAI is RUNNING.
 
 **The runs** (`GET /vega/runs/<id>`).
@@ -719,7 +719,7 @@ At the end nothing is loaded and LocalAI is RUNNING.
     26.05.37020.3-1~24.04~ppa3; intel-opencl-icd 26.05.37020.3-1~24.04~ppa3;
     libze1 1.27.0-1~24.04~ppa2`. OpenVINO carries no driver.
 - `options` hold no `cache_reuse`. The app's LocalAI does not add it, while
-  RAGE's build adds `cache_reuse:256` (§10). It was recorded, not copied
+  the model pool's build adds `cache_reuse:256` (§10). It was recorded, not copied
   into the YAMLs.
 - `vega-granite` and `vega-medcpt-article-ov` were loaded a second time.
   Each stated the same run, so neither backend's tree moved between loads.
@@ -832,14 +832,14 @@ Done by hand, step by step, after the operator's "Proceed with 1".
   backend gate on the VeGa endpoint: "baseline reproduced"; searches with
   vector hits through receipts on gutenberg-744ba8430fed and pubmed (pubmed
   reranked by MedCPT on LocalAI); wikipedia answers exactly as it did under
-  RAGE (text hits only: its vector leg and reranker exceed their budgets —
+  the model pool (text hits only: its vector leg and reranker exceed their budgets —
   an older problem, open); chat "Rome", translation correct.
 - **Second peer** (dev PC): new code, its four files migrated and switched,
   env to LocalAI/VeGa; a search answers with vector hits (238 ms dense).
-- **RAGE retired:** the `rage` service removed from `louise-rage`
+- **The model pool retired:** the `rage` service removed from `louise-rage`
   (definition kept in `/mnt/ssd5/apps/louise-rage/rage-service-retired-2026-10-09.json`,
   mode 600); nothing points at :30437.
-- **Reclaimer:** with RAGE gone LocalAI holds everything on the card (9,521
+- **Reclaimer:** with the model pool gone LocalAI holds everything on the card (9,521
   MiB used = vega-qwen3 9,363 + vega-granite 134). C = 32,656, margin 2,048,
   largest model ≈ 9,500 (vega-qwen3) → trigger X ≤ 21,108 MiB → threshold
   **0.68** of the 31,023 MiB LocalAI sees; LocalAI restarted (§11 lesson).
@@ -857,7 +857,7 @@ Done by hand, step by step, after the operator's "Proceed with 1".
    (louise-stop's source url rewritten); fixed in it and in
    align_model_names.py (3078c83).
 3. The backend gate's 30-minute pass was keyed on the collection name, so
-   RAGE's pass covered VeGa's vectors until it expired; keyed on the
+   the model pool's pass covered VeGa's vectors until it expired; keyed on the
    endpoint now (89b8ebf).
 4. New deposit collections and `hold collection create` named the model
    from the encoder LABEL when the URL named none; both now take explicit

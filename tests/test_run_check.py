@@ -382,7 +382,7 @@ def test_a_description_that_does_not_hash_to_the_run_is_refused(node, endpoint):
     assert statements_kept(root) == []
 
 
-def test_the_platform_is_found_before_upstream_or_at_rage_url():
+def test_the_platform_is_found_before_upstream_or_at_the_model_pools_url():
     assert hold_runs.base_url(DOC_URL) == ENDPOINT
     assert hold_runs.base_url("http://enc:8080", "http://encoder:30437/") == ENDPOINT
     assert hold_runs.base_url("http://enc:8080") is None

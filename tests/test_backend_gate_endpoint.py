@@ -1,5 +1,5 @@
 """A backend-gate verdict holds only for the endpoint it was reached on
-(2026-10-09: gutenberg's [encoder] moved from RAGE to LocalAI and RAGE's pass
+(2026-10-09: gutenberg's [encoder] moved from the model pool to LocalAI and the model pool's pass
 covered LocalAI's vectors for up to PASS_TTL_S)."""
 from types import SimpleNamespace
 
