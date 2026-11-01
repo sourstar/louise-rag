@@ -10,7 +10,10 @@ Instruments I1–I3 of docs/notes/gpu-saturation-plan.md, joined:
   through one second hold four;
 - I3, the gaps: whether a collection had work it could send now
   (`stats.Recorder.feeders()`, set by the embed feeders) and whether a
-  person's query held the node's claim (`dispatch.interactive_active`).
+  person's query held the node's claim (`dispatch.interactive_active`);
+- the work done: each collection's documents and chunks embedded that
+  second (`stats.Recorder.done()`), so a window's chunks a second come
+  from the same record as its busy share (app/rage/bench.py).
 
 ONE LINE A SECOND, JSON, in `<root>/state/card/<UTC date>.jsonl`:
 
@@ -18,7 +21,8 @@ ONE LINE A SECOND, JSON, in `<root>/state/card/<UTC date>.jsonl`:
      "cards": {"0000:03:00.0": 0.82},
      "gates": {"http://localai:8080": {"running": 4, "waiting": 1,
                                        "served": {"wikidata": 0.97}}},
-     "feed": {"wikidata": {"in": 4, "backlog": 1}}}
+     "feed": {"wikidata": {"in": 4, "backlog": 1}},
+     "done": {"wikidata": [3, 4]}}
 
 `cards` is None for a second the probe never answered for (LATE_S). Only
 gates and feeders with something to say are written. KEEP_DAYS of files are
@@ -82,6 +86,7 @@ class CardRecorder:
                  gates: Callable[[], dict] = dispatch.snapshot,
                  feeders: Callable[[], dict] | None = None,
                  claim: Callable[[], bool] = dispatch.interactive_active,
+                 done: Callable[[], dict] | None = None,
                  fetch: Callable[[str, float | None], dict] = gpu.busy_since,
                  wall: Callable[[], float] = time.time,
                  keep_days: int = KEEP_DAYS) -> None:
@@ -90,6 +95,8 @@ class CardRecorder:
         self._gates = gates
         self._feeders = feeders or (lambda: stats.recorder().feeders())
         self._claim = claim
+        self._done = done or (lambda: stats.recorder().done())
+        self._done_was: dict[str, tuple[int, int]] | None = None
         self._fetch = fetch
         self._wall = wall
         self._keep_days = keep_days
@@ -123,7 +130,18 @@ class CardRecorder:
             query = int(bool(self._claim()))
         except Exception:   # noqa: BLE001 — an unreadable claim holds nothing
             query = 0
-        row = {"t": sec, "q": query, "gates": gates, "feed": feed}
+        done: dict[str, list[int]] = {}
+        try:
+            now_done = self._done()
+        except Exception:   # noqa: BLE001 — telemetry never ends the worker
+            now_done = None
+        if now_done is not None:
+            was, self._done_was = self._done_was, now_done
+            for name, (docs, chunks) in (now_done.items() if was is not None else ()):
+                d0, c0 = was.get(name, (0, 0))
+                if docs > d0 or chunks > c0:
+                    done[name] = [docs - d0, chunks - c0]
+        row = {"t": sec, "q": query, "gates": gates, "feed": feed, "done": done}
         was = self._pending.get(sec)
         self._pending[sec] = row if was is None else _merge(was, row)
 
@@ -164,6 +182,8 @@ class CardRecorder:
                                 for u, g in row["gates"].items()}
             if row["feed"]:
                 out["feed"] = row["feed"]
+            if row.get("done"):
+                out["done"] = row["done"]
             lines.setdefault(_day(sec), []).append(json.dumps(out, separators=(",", ":")))
         oldest_kept = min(self._pending, default=int(now)) - int(LATE_S) - 1
         for sec in [s for s in self._cards if s < oldest_kept]:
@@ -236,7 +256,12 @@ def _merge(a: dict, b: dict) -> dict:
         mine = feed.setdefault(name, {"in": 0, "backlog": 0})
         mine["in"] = max(mine["in"], f["in"])
         mine["backlog"] = max(mine["backlog"], f["backlog"])
-    return {"t": a["t"], "q": max(a["q"], b["q"]), "gates": gates, "feed": feed}
+    done = {n: list(v) for n, v in a.get("done", {}).items()}
+    for name, (d, c) in b.get("done", {}).items():
+        mine = done.setdefault(name, [0, 0])
+        mine[0] += d
+        mine[1] += c
+    return {"t": a["t"], "q": max(a["q"], b["q"]), "gates": gates, "feed": feed, "done": done}
 
 
 # ------------------------------------------------------------------ reading
@@ -278,6 +303,9 @@ class Window:
     gaps: int = 0                    # of those, the card idle
     lost: float = 0.0                # of those, Σ (1 − busy)
     served: dict[str, float] = field(default_factory=dict)   # collection -> seconds held
+    docs: dict[str, int] = field(default_factory=dict)       # collection -> documents embedded
+    chunks: dict[str, int] = field(default_factory=dict)     # collection -> chunks embedded
+    backlog: dict[str, int] = field(default_factory=dict)    # collection -> seconds with work waiting
 
     @property
     def busy(self) -> float | None:
@@ -306,7 +334,14 @@ def summarize(rows: Iterable[dict], *, minute: bool = True,
         if busy is not None:
             w.card_seconds += 1
             w.busy_sum += busy
-        backlog = any(f.get("backlog") for f in (row.get("feed") or {}).values())
+        feed = row.get("feed") or {}
+        backlog = any(f.get("backlog") for f in feed.values())
+        for name, f in feed.items():
+            if f.get("backlog"):
+                w.backlog[name] = w.backlog.get(name, 0) + 1
+        for name, (d, c) in (row.get("done") or {}).items():
+            w.docs[name] = w.docs.get(name, 0) + d
+            w.chunks[name] = w.chunks.get(name, 0) + c
         if row.get("q"):
             w.query += 1
         elif backlog:

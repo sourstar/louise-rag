@@ -107,12 +107,25 @@ class Recorder:
         # these waits as a GAP the engine left (gpu-saturation-plan.md, I3);
         # idle with nothing waiting is no gap.
         self._backlog: set[str] = set()
+        # Documents and chunks embedded since the process started, per
+        # collection: never pruned, so the card recorder can write the
+        # per-second difference and a window's chunks/s comes from the same
+        # record as its busy share (app/rage/bench.py).
+        self._done: dict[str, list[int]] = {}
 
     def record_embed(self, collection: str, *, seconds: float, docs: int,
                      chunks: int, chars: int) -> None:
         with self._lock:
             self._embed.setdefault(collection, _Stream()).add(
                 seconds, {"docs": docs, "chunks": chunks, "chars": chars})
+            done = self._done.setdefault(collection, [0, 0])
+            done[0] += int(docs)
+            done[1] += int(chunks)
+
+    def done(self) -> dict[str, tuple[int, int]]:
+        """(documents, chunks) embedded since start, per collection."""
+        with self._lock:
+            return {name: (d[0], d[1]) for name, d in self._done.items()}
 
     def record_fetch(self, collection: str, *, seconds: float, bytes_moved: int) -> None:
         """Bytes that actually crossed the network. Adopted files are
@@ -172,6 +185,7 @@ class Recorder:
             self._fetch.clear()
             self._in_flight.clear()
             self._backlog.clear()
+            self._done.clear()
 
 
 _recorder = Recorder()
