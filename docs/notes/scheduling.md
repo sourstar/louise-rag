@@ -1113,14 +1113,7 @@ and translation when TRANSLATE_URL is unset.
 **Two batches submitted, a third prepared (the operator's rule).**
 - Each collection has an embed PRODUCER thread. It selects candidates,
   loads chunks and reads what is held: all the CPU work of a batch.
-- A batch is one document's requests. **Amended 2026-11-01 (GPU plan,
-  step 1 lever 2): a batch is one REQUEST, which may carry several short
-  documents' texts up to the gated `[encoder] batch`
-  (`embeddings.Coalescer`).** wikidata (1.04 chunks a document) sent ~1
-  text a request and its card computed 82 % of the time. The rule's
-  purpose is kept: still at most `slots` requests per collection at the
-  gate, a successor always waiting. What waits now is up to
-  EMBED_COALESCE_DOCS documents whose texts fill the next request.
+- A batch is one document's requests.
 - At most two batches per (collection, level) hold a slot at the gate,
   and a third is prepared meanwhile.
 - When a batch returns, its slot passes at once to the prepared one,
