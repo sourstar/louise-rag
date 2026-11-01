@@ -203,6 +203,7 @@ grep -q '^SHOWN_ONLY = ("origin",)' "$ROOT/src.new/app/copy_state.py"   # #154 (
 grep -q '^TABLE_KEYS: dict\[str, str\] = {}' "$ROOT/src.new/app/pack/slicing.py"   # #155 (b7d54a7): per-value vector tables, INERT while no key is declared; grow fix (bb0a391)
 grep -q "^def settle_stopped(collection, state_dir: Path, con, log=None) -> bool:" "$ROOT/src.new/app/share/seeder.py"   # #156 (0333c15): the SHARE box's graceful stop
 grep -q "^def _profile_held(collection" "$ROOT/src.new/app/web.py"   # #156: held languages checked in grow
+grep -q "^def held(recipe, \*, holder: str" "$ROOT/src.new/app/encoder_use.py"   # #157 (103c22a): embedder commands hold the encoder lease for their whole run
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
