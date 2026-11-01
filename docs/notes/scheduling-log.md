@@ -1929,12 +1929,12 @@ card's busy share is that process's (`/root/measure/gpu_busy.py`: DRM fdinfo cyc
 from the worker log's batch totals (`embed_rate.py`), the worker's CPU from its cgroup
 (`/sys/fs/cgroup/docker/<id>/cpu.stat` on TrueNAS, not `system.slice`). Day profile (8 cores).
 
-| window | card busy / min | wikidata chunks/s | wikipedia chunks/s | worker CPU |
+| window | card busy / min (corrected from fdinfo ×2, saturation test 18:2x; fdinfo read in brackets) | wikidata chunks/s | wikipedia chunks/s | worker CPU |
 |---|---|---|---|---|
 | wikidata at batch 16 alone, first 15 min after its gate (vector-count slope) | — | 42.0 | paused | — |
-| A: wikipedia alone (14:22–14:32) | 8–21 % | paused | 32.0 / 18.7 | — |
-| B: both (14:34–14:44) | 25–36 % | 32.9 / 19.9 | 11.9 / 7.0 | — |
-| C: wikidata alone at batch 16 (14:46–14:51) | 36–40 % | **57.0** | paused | 0.96 cores |
+| A: wikipedia alone (14:22–14:32) | 16–42 % (8–21) | paused | 32.0 / 18.7 | — |
+| B: both (14:34–14:44) | 50–72 % (25–36) | 32.9 / 19.9 | 11.9 / 7.0 | — |
+| C: wikidata alone at batch 16 (14:46–14:51) | 72–80 % (36–40) | **57.0** | paused | 0.96 cores |
 
 **What changed.**
 - wikidata's `[encoder] batch = 16`, under `concurrency = 4`. Its gate re-ran (16/16, median
@@ -1977,7 +1977,7 @@ The same harness as window A (`prod_profile_tag.sh`, py-spy 60 s at minute 2, `l
 | genesis in 10 min | 22 parts, 1,089,033 vectors rewritten | 8 parts, 130,885 vectors read, none rewritten |
 | wikipedia chunks/s, beside wikidata | 11.9 / 7.0 | **17.4 / 16.7** |
 | wikidata chunks/s, beside wikipedia | 32.9 / 19.9 | 13.4 / 26.5 |
-| card busy (bge-m3 process) / min | 25–36 % | 15–34 % |
+| card busy (bge-m3 process) / min, corrected from fdinfo ×2 (saturation test 18:2x) | 50–72 % (fdinfo 25–36) | 30–68 % (fdinfo 15–34) |
 | the pool's `upsert_book` share | 16.6 % (`statements_for_space` 87.6 % of it) | 3.8 % (`check_write > statements` 22.6 %, `> check` 71.2 %) |
 
 **Reading.** The rewrite churn is gone: 80 times fewer commits, and the table now grows only by
@@ -1994,7 +1994,7 @@ deployed at 17:33. Full-speed override in force (night profile, 12 cores). Nothi
 | measure | value |
 |---|---|
 | wikidata chunks/s (worker log) | **62.3** (56,458 chunks, 53,203 documents in 15 min) |
-| card busy (`/root/measure/gpu_busy.py`, bge-m3 process) per min | 45, 44, 41, 43, 42, 43, 43, 42, 43, 43, 42, 43, 38, 37 % |
+| card busy per min, corrected from fdinfo ×2 (saturation test 18:2x) | 90, 88, 82, 86, 84, 86, 86, 84, 86, 86, 84, 86, 76, 74 % (`gpu_busy.py` read half: 45 … 37 %) |
 | worker CPU (cgroup) | 0.77 cores |
 | `schedule-report --gpu`: held (gate's served seconds/min) | wikidata ~200/min (2,883 in 15 min) |
 | `schedule-report --gpu`: busy, gaps, lost | **invalid**: 0.0 % busy, gaps 60 s/min |
@@ -2005,3 +2005,42 @@ record. gpu-probe (`pid: host`, root, `CAP_PERFMON` only) gets "Permission denie
 (`CAP_SYS_PTRACE`), so the probe counts no DRM client and reports `"engines": {}, "processes": []`.
 The host reads 2 DRM fds on the same process. Nothing was changed. The gaps at the 120 s stream
 boundaries cannot be seen until the probe can read fdinfo, so this row is redone once it can.
+
+### 2026-11-01 — the card's busy figure: the PMU, and fdinfo reads half on this card (saturation test 18:2x) — MEASURED
+
+76964d2 (#169) reads the B70's busy from xe's perf PMU (`xe_0000_03_00.0`, engine-active / engine-total
+ticks, CAP_PERFMON only). To settle the PMU (~70 %) against fdinfo (~33 %) seen at 18:00, every collection
+was paused (gutenberg held) and ccs0 loaded on its own: 4 loops of one ~8 k-token text on vega-bge-m3 through
+the vouched path, 63 requests in 128 s, 0.49 requests/s.
+
+| | perf ccs0 | `/busy` (PMU) | fdinfo (`gpu_busy.py`) |
+|---|---|---|---|
+| saturating load, 2 min | 91.8 %, 92.1 % | mean 90.4 % (131 samples) | 45 %, 46 % |
+| idle, 1 min | 0.0 % | — | 0 % |
+
+**Reading.** fdinfo's client cycles are halved on this card and kernel; the PMU is the truth and does not
+overcount at idle. Every fdinfo figure this afternoon is ×2: the tables above are corrected, with the fdinfo
+reading in brackets. So "neither the card (≤ 40 %)" in the 14:5x reading means ≤ 80 % on the PMU.
+**The copy engine:** under load, bcs reads the same as ccs within a few tenths, both in perf (18:29: bcs 78.4 %,
+ccs 78.3 %) and in the probe. The Level Zero copy context is resident and counted active, so step 1's figure
+is ccs alone.
+
+### 2026-11-01 — step 1 BEFORE: wikidata alone at batch 16 / concurrency 4, on the PMU — MEASURED
+
+**Scenario.** 18:28–18:43, wikidata alone. wikipedia, pubmed and normattiva paused for the window; gutenberg
+paused and held. 76964d2 deployed. Full-speed override (night profile, 12 cores). Nothing else on the card.
+
+| minute (UTC) | ccs | bcs | gaps | lost |
+|---|---|---|---|---|
+| 17:29 | 77.4 % | 77.6 % | 0 s | 13.5 s |
+| 17:30–17:42 | 80.5–83.9 % | 80.9–84.3 % | 0–1 s | 9.4–11.5 s |
+| all (885 s recorded) | — | 82.1 % (busiest engine) | **1 s (0.1 s/min)** | **158.7 s (10.8 s/min)** |
+
+- **wikidata:** **78.8 chunks/s** (71,316 chunks, 68,322 documents in 15 min); held ~200 s/min.
+- **Worker CPU:** 0.76 cores (cgroup).
+- **`gpu_busy.py` beside it:** 40–43 %, i.e. 80–86 % ×2, agreeing.
+
+**Reading.** The card is ~82 % busy with wikidata alone and there are no idle gaps of a whole second, even at
+the 120 s stream boundaries (gaps 0.1 s/min). The missing ~18 % is lost INSIDE the seconds, between requests.
+Lever 1, which removes the drain at the stream boundary, has little visible to recover here. The 18 % is the
+request turnaround at 4 in flight × 16 texts.
