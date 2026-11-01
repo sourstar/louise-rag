@@ -217,6 +217,7 @@ grep -q "^class Coalescer:" "$ROOT/src.new/app/embeddings.py"   # #174: step 1 l
 grep -q "^def cpu_line_from(worst: float) -> float:" "$ROOT/src.new/app/hold/embedder.py"   # #175: a CPU review line per quantization level, computed
 grep -q '        if "batch" in stated or getattr(encoder, "batch", 0):' "$ROOT/src.new/app/collection_file.py"   # #180: a rewrite keeps [encoder] batch and exactness
 test ! -e "$ROOT/src.new/app/dispatch.py"   # #181: the model pool's dispatch is app/rage/dispatch.py
+grep -q "(s := f.stat()).st_ino, s.st_mtime_ns, s.st_size" "$ROOT/src.new/app/rage/settings.py"   # the settings cache sees a rewrite within one timestamp tick (the 536e9a3 deploy failed on it)
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
