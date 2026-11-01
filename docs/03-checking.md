@@ -123,8 +123,22 @@ record's locator points into (09 §9.5) — the units are ranked by
 locator without its member, and they are read in that order up to the
 last one that keeps the sum of their sizes within **256 MiB**; the
 first is always read, whatever it weighs. Every sampled record of a
-unit that is read is compared byte for byte; the others are not
-compared in this run and the report says so. The seed still decides
+unit that is read is compared byte for byte, but for a unit heavier
+than the bound; the others are not compared in this run and the report
+says so. **A unit heavier than the bound is compared in part**
+(amended 2026-11-01, operator, RULE 1: a rule that forces a
+recomputation is changed): of its `n` sampled records, the
+⌈n × bound / weight⌉ — at least one — that `sample(seed, …)` ranks
+first over their uids, and the report names, for each such unit, its
+weight, `n` and the share compared. Only the first unit taken can be
+one. Wikidata's every record points into its one dump file, so a check
+re-parsed all 3.7 M of its sampled records (~27 h at 38 per second);
+the share is about 6,800. Nothing is lost: on the builder, under the
+build's own image, the check re-runs the same code on the same bytes
+and can catch only a parser that is not deterministic or a locator
+that is wrong (§3.4: it passes a wrong parser), which a seeded share
+finds as well; elsewhere the seed still decides which records, and the
+union over peers grows with every check. The seed still decides
 everything, so the union of what peers have compared grows with every
 check, and anyone can recompute from an attestation which units it
 read. The bound is the platform's and not the plan's, for the reason
