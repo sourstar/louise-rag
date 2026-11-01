@@ -223,3 +223,13 @@ def test_the_recorder_keeps_no_figure_for_a_card_the_probe_cannot_see(tmp_path):
     import json
     row = json.loads(next(tmp_path.glob("*.jsonl")).read_text().splitlines()[0])
     assert row["cards"] is None, "unknown, never 0"
+
+
+def test_a_cards_busy_is_its_busiest_compute_engine_not_a_resident_copy_context():
+    """München, perf 2026-11-01: bcs 78.4 % beside ccs 78.3 %, 92.7 beside
+    91.9, 0 at idle — the copy engine counted active while compute runs."""
+    assert gb.card_busy({"bcs": 0.927, "ccs": 0.919, "rcs": 0.0}) == 0.919
+    assert gb.card_busy({"bcs": 0.6, "ccs": 0.1, "rcs": 0.3}) == 0.3
+    assert gb.card_busy({"gfx": 0.37}) == 0.37
+    assert gb.card_busy({"vcs": 0.2, "bcs": 0.4}) == 0.4, "no compute engine named: the busiest"
+    assert gb.card_busy({}) == 0.0
