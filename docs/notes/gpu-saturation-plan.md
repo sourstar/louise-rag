@@ -1,0 +1,139 @@
+# The card kept busy, shared and interruptible: the plan (2026-11-01)
+
+*Operator, 2026-11-01:*
+> "When the switch to near exactness has been verified on all the collections I want you to:
+> 1. Optimize each collection so that the embedding uses the GPU close to 100% in stand alone mode (only that collection).
+> 2. These optimizations are only part of the common collections backend (that is not the localai backend, but louise's engine to handle quering, reranking, embedding in the most efficient way).
+> 3. Test concurrently the embeddings of multiple collections ensuring that the GPU is properly shared without relevant idle times.
+> 4. Test that queries have an higher priority without breaking embeddings in the middle and without breaking the several steps needed to complete a query already in process. […] Do every step in the order I gave you. Step 2 actually is a base rule that applies to all the other steps."
+
+The steps run in the operator's order: precondition, then 1, then 3, then 4. Step 2 is a rule that applies to all of them. Every change follows scheduling.md §6 and measuring.md §6: BEFORE numbers, one deploy, AFTER numbers, a row in scheduling-log.md.
+
+## The base rule (step 2): where the optimizations live
+
+**Louise's engine** is the model-work layer that every collection uses:
+- the encoder gates and request levels (`app/dispatch.py`: the gates, the levels CORPUS < TRANSLATE < QUERY < RERANK < CHAT, the interactive claim);
+- the embedding client (`app/embeddings.py`);
+- the worker's feeders (`_embed_producer`, `_embed_parallel`);
+- the query steps (`app/retrieval.py`, `app/llm.py`, `app/translate.py`).
+
+The rule has three parts:
+- **One mechanism for every collection.** No collection gets its own code path. A collection's numbers (batch, requests in flight) are chosen by the engine from measurement (RULE 2), never hand-set per collection as the way to tune.
+- **LocalAI stays a plain model server.** Its backends and model YAMLs are not where tuning happens. A model-server setting changes only when Louise's engine needs a capability it lacks, and then as a run setting that the gate validates (invariant 12).
+- **The VeGa wrapper is ours.** It may publish what the engine needs to see, such as the card's busy time.
+
+Today's per-collection `[encoder] batch` and `concurrency` keys become what the engine chose, recorded, rather than what a person typed. Every setting the engine moves to is gated first: a new batching is a new run to the gate, which takes about 8 minutes.
+
+## What exists, and what does not (survey of 2026-11-01)
+
+**What exists:**
+- **One gate per URL**, strict by level, least-served plugin first within a level (dispatch.py:206).
+- **Corpus stands aside card-wide** while a query step holds the claim (dispatch.py:378).
+- **The claim is per step**: a whole-query claim was reverted because it idled the card 3–4 s per query (scheduling-log 1174–1189).
+- **The feeders:** one producer per collection, 2 requests submitted and 1 prepared (`EMBED_PLUGIN_SLOTS`), streams of `EMBED_STREAM_S` = 120 s.
+- **Measured today:**
+
+  | window | card busy | rate |
+  |---|---|---|
+  | wikidata alone (batch 16, 4 in flight) | 36–40 % | 57 chunks/s |
+  | wikipedia alone | 8–21 % | — |
+  | both | 25–36 % | — |
+
+  The bound is latency per request, not the card and not the CPU.
+
+**What does not exist:**
+- (a) **Nothing chooses batch or requests in flight.** They are static, hand-set values.
+- (b) **No in-app measure of the card's busy time or idle gaps.** Today's figures come from `/root/measure/gpu_busy.py` on the node; `app/gpu_probe.py` reads memory only. The gate's per-collection served time (`Gate._served`) is never published.
+- (c) **No end-to-end test of query priority under load.** The tests patch the claim or run one process.
+
+**Two defects found by the survey:**
+- **One gate for every model on a URL.** All models behind one LocalAI address share one gate, and `gate()` resets that gate's capacity to whatever the latest caller passes (dispatch.py:281–284). Two collections with different concurrency flip it back and forth.
+- **Stale text in scheduling.md:** lines 1083 and 1099–1103, and line 873 naming `db.claim_query_priority`.
+
+## Step 0 — the precondition: near-exact verified on every collection
+
+For each collection with an encoder, all three must hold:
+1. #160, #161 and #162 are deployed.
+2. Its encoder's document run, and its query run where the space has one, has passed the gate again under the new rule. The statement records `exact` or `near`, with its `load_variation` and its batching.
+3. Where a run is near-exact, it has a stored CPU reference. A run that stays exact needs none.
+
+| collection | encoder | known blocker |
+|---|---|---|
+| wikidata, wikipedia | bge-m3 | the CPU twin must run on our engine (patch 0002, token ids); München is on it |
+| gutenberg | qwen3-embedding-4b | the query-side CPU reference to finish |
+| pubmed | MedCPT article + query | the CPU twins' 503s; rerun on the #157 image |
+| normattiva | DAR-legal-it | to check |
+| deposit collections | as declared | to check |
+
+München produces the table for every collection on the node, and step 1 starts when every row passes. Meanwhile I build the instruments, which change nothing on the node.
+
+## Instruments first (needed by 1, 3 and 4), all in Louise
+
+- **I1 — the card's busy time series.** The VeGa wrapper already knows its backend's processes and its card. It reads each child's DRM fdinfo engine cycles (`drm-cycles-*`, `drm-total-cycles-*`: the xe and amdgpu standard, what `gpu_busy.py` reads) and publishes busy per model per second through VeGa's read-only route. The worker records it with its own telemetry. Pros: in-app, per model, no host tool. Cons: a wrapper change, which is a new run per model and gated once each.
+- **I2 — who used the card.** Each gate publishes its served time per collection and level, and its waiting work, as a time series beside I1 (the stats publisher; telemetry is published by someone other than the thread doing the work).
+- **I3 — idle gaps.** A second counts as idle when the card is idle while some collection had prepared work waiting. Includes the drain and refill at each 120 s stream boundary (worker.py:1688, 1813). Reported in `louise dev schedule-report --gpu`.
+- **I4 — query timing under load.** A harness in `tools/measure/`: real web-process queries (embed → search → rerank → answer) against a worker embedding at full rate. It records each step's wait and service time, its errors, and the corpus throughput lost.
+
+## Step 1 — each collection alone, card close to 100 %
+
+**Target:** sustained card busy ≥ 90 % (I1) with the collection alone. "Close to 100 %": the last few percent are the request boundaries. Throughput must rise with it; busy that does not raise chunks/s is not counted.
+
+**The engine's levers, in order of cost** (each measured BEFORE/AFTER, one deploy each):
+1. **No drain at stream boundaries.** A feeder hands over to the next stream with its requests still in flight, instead of draining to zero every 120 s. Engine code, no run change.
+2. **Batch by tokens, not by texts.** A request carries up to a token budget, filling the encoder's window (bge-m3: ubatch 8192). A request of wikidata's ~120-token chunks then holds ~64 texts, and wikipedia's longer ones fewer. One run setting per budget, gated (the near-exact rule holds batches to the bound).
+3. **Requests in flight chosen by measurement.** AIMD on throughput (the wheel already used for the re-index window): add one while chunks/s rises, back off on a fall or a deferral. It moves only between settings already gated: a ladder such as {2, 4, 6, 8}, each gated once and recorded. Persisted as the engine's last good value, re-confirmed after a restart (invariant 10: runtime, not desired state).
+4. **The producer, where it becomes the bound** (wikipedia's chunk preparation, the write path #162 eased). Prepared batches ahead in the parse pool, and commits per batch.
+
+**Order:** wikidata, wikipedia, gutenberg, pubmed, normattiva, deposit. Each gets its standalone row in scheduling-log.md:
+- busy, chunks/s, tokens/s;
+- the chosen batch and requests in flight;
+- the gate's verdict;
+- a byte or bound check on 2,000 written rows.
+
+**Done for a collection:** ≥ 90 % busy sustained over 15 min, or the measured reason it cannot. For example, a model whose server cannot take a batch: then step 2 decides whether a server capability is needed.
+
+## Step 3 — several collections at once, the card shared without idle gaps
+
+1. **Fix the gate defect first.** One gate per (URL, model) with its own capacity. Above the gates, one CARD resource: the in-flight budget the card can keep busy, measured in step 1, shared by DRR across the collections with work (`app/sched.py`, the existing wheel). It is work-conserving: a collection with no work leaves its share to the others.
+2. **Measure** with 2, 3, then every collection embedding:
+   - card busy (I1) at least the best standalone figure;
+   - idle gaps (I3) under ~1 s a minute;
+   - each collection's served share (I2) within ±10 % of the DRR rule;
+   - no collection starved over any 5 min.
+3. **Tests:**
+   - unit: the card budget, DRR shares, a collection arriving and leaving;
+   - a scenario with a mock encoder: three feeders and the gaps counted;
+   - the live rows on the node.
+
+## Step 4 — queries first, nothing broken in the middle
+
+**The rules to hold:**
+- **A query step waits behind at most the corpus requests already sent.** None is pre-empted (dispatch.py:27). So the engine bounds a corpus request's duration while queries are possible: a token budget whose service time is ≤ ~200 ms, measured. With requests in flight ≤ N, a query step waits at most N × 200 ms.
+
+  Steps 1 and 4 pull against each other here: large batches fill the card and lengthen that wait. The token budget and N are chosen together, and recorded with the measurement.
+- **The model server's own queue.** Corpus requests queued at a one-sequence server sit ahead of a query. The engine keeps at most the in-flight depth step 1 needs queued there, never more.
+- **No embedding broken in the middle.** A stand-aside is a WAIT, bounded and never an error:
+  - the document is neither deferred nor errored, and never half-written (invariant 2: marked only after its commit);
+  - its batch is finished, not abandoned;
+  - only a wait past the request's deadline is a deferral, as today.
+- **No query broken between its steps.** Today the claim drops between steps, so corpus requests sent in that gap delay the next step. A short hold-over keeps the claim for a step's expected successor, for example 0.5 s after a query step if that query has more steps. It is measured against the idle cost that made the whole-query claim be reverted.
+- **Across processes** (web and worker share no gate): the claim stays the coupling. Its read period (0.1 s) is part of the bound and is measured.
+
+**The test (I4)**, run with the worker at the full rate from steps 1 and 3 on every collection:
+- a scripted query every 10 s for 30 min, and bursts of 5;
+- for each step (translate, query embedding, rerank, answer), p50 and p95 waits within budget against the same query with the card idle;
+- zero query step failures;
+- corpus side: zero errors and zero half-written documents (`chunks_drift` over the documents embedded in the window); throughput lost during queries reported.
+
+Plus the unit and scenario tests that are missing:
+- a real web process and a worker against a mock encoder;
+- the cross-process claim under load;
+- a hold-over that does not idle the card.
+
+## What this asks of München, in order
+
+1. Step 0's table, and the CPU twins.
+2. Deploying I1–I3, then each lever of step 1 alone, with its row.
+3. The live windows of steps 3 and 4.
+
+I write the code, the tests and the notes. München deploys and measures. Nothing moves on the node without its BEFORE numbers.
