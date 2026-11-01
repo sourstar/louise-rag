@@ -35,7 +35,7 @@ from typing import Callable
 
 import httpx
 
-from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db, discovery,
+from . import (card_record, catalog, chunking, collections as collections_mod, config, cpu_limit, db, discovery,
                 layers as layers_mod, parallel,
                 dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
                 origin_missing,
@@ -1525,6 +1525,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     submitted = None if slots is None else threading.Semaphore(slots)
     group = max(window * 2, config.EMBED_BATCH_DOCS)
     rows = _embed_candidates(con, scope, group, collection)
+    # whether this collection has work it could send now (the card
+    # recorder's gaps, app/card_record.py): yes while candidates remain, no
+    # once the selection runs dry or the encoder defers
+    stats.recorder().set_backlog(collection.name, bool(rows))
     if not rows:
         return False
     sink = embeddings.PendingWrites()
@@ -1818,6 +1822,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 fresh = [r for r in _embed_candidates(con, scope, group, collection)
                          if r["uid"] not in seen]
                 if not fresh:
+                    stats.recorder().set_backlog(collection.name, False)
                     return
                 seen.update(r["uid"] for r in fresh)
                 held = read_held(fresh)
@@ -1856,6 +1861,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         flush()         # what was embedded is written, SIGTERM included
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
+        if deferred or _stop.is_set() or (keep_going is not None and not keep_going()):
+            stats.recorder().set_backlog(collection.name, False)   # held back, not waiting
         _pin_end(pin)
         with lent_lock:
             for c in lent:
@@ -4250,13 +4257,16 @@ def _embed_producer(collection, gone: threading.Event) -> None:
     try:
         while not _stop.is_set() and not gone.is_set():
             if _paused.is_set() or _acquire_only.is_set():
+                stats.recorder().set_backlog(collection.name, False)
                 time.sleep(2)
                 continue
             collection = _live_collection(collection)
             try:
                 if not _producer_step(con, collection):
+                    stats.recorder().set_backlog(collection.name, False)
                     time.sleep(config.WORKER_IDLE_SLEEP)
             except Exception as e:   # noqa: BLE001 — a producer must outlive any stream
+                stats.recorder().set_backlog(collection.name, False)
                 if manifest_contended(e):
                     db.log_event(con, "warn", "embed",
                                  f"stream deferred — manifest busy ({e})")
@@ -5429,6 +5439,13 @@ def run_forever():
     dispatch.set_default_level(Level.CORPUS)
     threading.Thread(target=_stats_publisher, name="stats-publisher",
                      daemon=True).start()
+    # the card's record, second by second (app/card_record.py): its busy
+    # time from the GPU probe, the gates' served time, the gaps. Telemetry
+    # on its own thread; nothing to record without a probe
+    if config.GPU_PROBE_URL:
+        card = card_record.CardRecorder(config.GPU_PROBE_URL, card_record.directory())
+        threading.Thread(target=card.run, args=(_stop,), name="card-record",
+                         daemon=True).start()
     # the vector index maintainer: its own thread, so an hour-long build or
     # a compaction never idles a pipeline thread or the GPU loop
     threading.Thread(target=_index_maintainer, name="index-maintainer",

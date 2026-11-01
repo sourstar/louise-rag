@@ -243,6 +243,14 @@ def _get_json(url: str) -> dict:
     return response.json()
 
 
+def busy_since(url: str, since: float | None) -> dict:
+    """The probe's busy samples after `since` (GET /busy, app/gpu_busy.py)
+    — for the worker's card recorder (app/card_record.py). Bounded like the
+    panel's fetch; raises what the fetch raised."""
+    query = "" if since is None else f"?since={since:.3f}"
+    return _get_json(url.rstrip("/") + "/busy" + query)
+
+
 def panel(url: str) -> dict:
     """The fragment's context: unset, unreachable (with why), or the cards."""
     if not url:
