@@ -301,11 +301,19 @@ nor searched with.
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
 one at a time again in reverse order, then the way the peer contributes:
 its batching and its concurrency (*amended 2026-10-25*, operator's
-choice A; CLAUDE.md invariant 12). The two single-text passes must be
-equal byte for byte, or the run FAILS whatever its cosines: a vector its
-own run cannot reproduce cannot be checked by anyone. The batched answers
-must equal the single-text ones byte for byte, or the run is validated
-only for single-text, one-at-a-time work. (From 2026-10-12 to 2026-10-25
+choice A; *amended again 2026-11-01*, operator's choice B; CLAUDE.md
+invariant 12). A run whose every answer to one text — in either order,
+across three fresh loads, batched or alone — is the same byte string is
+**exact**. One whose answers to a text differ is **near-exact** when
+they all stay within cosine 0.99999 of each other and the run reaches
+the stored CPU reference at 0.999 (docs/notes/near-exact-runs.md);
+further apart, the run FAILS whatever its cosines. Both are admitted,
+and the statement says which. Peers accept each other at the space's
+tolerance in any case, and no two kinds of hardware give the same
+bytes, so local byte equality is evidence, not the condition of
+admission. A collection may still ask `exactness = "exact"`: then its
+runs are held to bytes, and batched answers that differ from the
+single-text ones validate a run for single-text work only. (From 2026-10-12 to 2026-10-25
 a band was allowed: batched answers as close to the single-text ones as
 two single-text passes were to each other. Under invariant 12 those
 passes are equal, so the band was only f32 rounding, and a batched vector
@@ -318,7 +326,8 @@ is measured, never assumed. The sixteen vectors' hash, the run's
 the worker repeats. A peer that runs the same run on the same kind of
 device reproduces it bit for bit, which is stronger evidence than any
 tolerance and is the reproduction the Codex's engine is frozen for
-(02 §2.4).
+(02 §2.4) — for an exact run; a near-exact run's fingerprint is evidence
+of the answers it gave, and a peer reproduces them within its bound.
 
 The result is a signed **calibration statement** — "this run, on this
 peer, is compliant with this space" — whose bytes are 09 §9.12's

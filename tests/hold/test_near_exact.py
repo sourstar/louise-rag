@@ -1,7 +1,8 @@
-"""Near-exact runs (operator, 2026-10-31, choice C; docs/notes/near-exact-runs.md
-§3): the gate measures several fresh loads itself; a run whose answers vary
-is admitted only where its collection asked for near-exact, within 0.99999,
-and against a stored CPU reference at 0.999."""
+"""Near-exact runs (operator, 2026-10-31, choice C; amended 2026-11-01, choice
+B: near-exact is the rule; docs/notes/near-exact-runs.md §3): the gate
+measures several fresh loads itself; a run whose answers vary — across
+orders, loads or batches — is admitted within 0.99999 and against a stored
+CPU reference at 0.999, unless its collection asks for "exact"."""
 from __future__ import annotations
 
 import numpy as np
@@ -61,13 +62,13 @@ def test_the_gate_measures_fresh_loads_and_an_exact_model_stays_exact():
     assert run.load_variation == 1.0
 
 
-def test_a_flip_across_loads_fails_an_exact_run_and_says_how_to_ask_for_near():
+def test_a_flip_across_loads_fails_a_run_its_collection_holds_to_bytes():
     card = Card(flip_on=2)
     _codex, run = _gate(card, exactness="exact")
     assert card.flipped, "the flip happened on a fresh load, not within one"
     assert run.reproducible is True, "within one load it gave back its own bytes"
     assert not run.ok and run.exactness == "exact"
-    assert "near" in run.why() and run.load_variation < 1.0
+    assert 'exactness = "exact"' in run.why() and run.load_variation < 1.0
 
 
 def test_a_near_run_within_the_bounds_is_admitted_and_its_statement_says_so():
@@ -108,8 +109,9 @@ def test_the_sweep_reaches_every_length_band_and_a_variation_never_reads_as_1():
 def test_exactness_is_read_from_the_collections_encoder_block():
     from app import collections as collections_mod
     base = {"url": "http://localai:8080", "embed_model": "m", "query_model": "m"}
-    assert collections_mod.parse_recipe(base, where="t").exactness == "exact"
-    assert collections_mod.parse_recipe(dict(base, exactness="near"), where="t").exactness == "near"
+    assert collections_mod.parse_recipe(base, where="t").exactness == "near", \
+        "near-exact is the rule (operator, 2026-11-01, choice B)"
+    assert collections_mod.parse_recipe(dict(base, exactness="exact"), where="t").exactness == "exact"
     with pytest.raises(ValueError, match="exactness"):
         collections_mod.parse_recipe(dict(base, exactness="roughly"), where="t")
 
@@ -134,3 +136,49 @@ def test_a_nan_on_any_load_fails_the_run_however_often_it_repeats():
     assert closest == 0.0
     _codex, run = _gate(NanCard(), exactness="near")
     assert not run.ok
+
+
+
+class BatchCard(Card):
+    """Exact one text at a time; a batch answers the longest text at `cos`."""
+
+    def __init__(self, *, cos):
+        super().__init__()
+        self.batch_cos = cos
+
+    def batch(self, texts):
+        out = fake_embed(texts)
+        k = max(range(len(texts)), key=lambda i: len(texts[i]))
+        out[k] = _nudged(out[k], self.batch_cos)
+        return out
+
+
+def _batched_gate(card, *, exactness, cpu=True):
+    codex = codex_768(version=5)
+    ref = reference()
+    return codex, emb.run_gate(
+        codex, reference=ref, embed=lambda t: ref, seed=b"\x09" * 32,
+        stated=_vega_run(codex), embed_one=card.one, contribute=card.batch,
+        cpu_reference=("sha256:" + "44" * 32, perturbed(ref, indices=(3,), to=0.9995)) if cpu else None,
+        reload=card.reload, exactness=exactness)
+
+
+def test_batches_within_the_bound_are_admitted_and_counted_in_the_variation():
+    """Operator, 2026-11-01, choice B: batching is checked against the run's
+    bound, not bytes — and the batch's distance is part of the run's own."""
+    codex, run = _batched_gate(BatchCard(cos=0.999995), exactness="near")
+    assert run.ok and run.batch_invariant is True and run.exactness == "near"
+    assert emb.NEAR_VARIATION <= run.load_variation < 1.0
+    body = emb.read_statement(emb.statement(run, codex, a_key(), now="2026-11-01T00:00:00Z"))
+    assert body["batch_invariant"] is True and hold_runs.passing(body, codex)
+
+
+def test_batches_further_apart_are_refused_and_bytes_stay_bytes_where_asked():
+    _codex, far = _batched_gate(BatchCard(cos=0.9999), exactness="near")
+    assert far.batch_invariant is False, "a batching fault is refused as before"
+    assert far.ok and far.exactness == "exact", "and the run stays valid for one text a request"
+    _codex, strict = _batched_gate(BatchCard(cos=0.999995), exactness="exact")
+    assert strict.batch_invariant is False and strict.exactness == "exact", \
+        "a collection that asks for exact holds batches to bytes"
+    _codex, nocpu = _batched_gate(BatchCard(cos=0.999995), exactness="near", cpu=False)
+    assert not nocpu.ok, "a near-exact run stands against a stored CPU reference"

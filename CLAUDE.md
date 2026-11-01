@@ -286,38 +286,44 @@ are the ones that have drifted; prefer to add a test when you touch them.
     test (tests/test_invariant_11_origin_form.py: every registered plugin's
     source module carries "THE ORIGIN FORM, and why"), its content by
     review.*
-12. ENCODER DETERMINISM. *(Operator, 2026-10-18: a fundamental pillar.)*
-    The same input on the same card, the same build and the same flags
-    gives the SAME BYTES, every time — not "within tolerance". Tolerance
-    (03 §3.1) is for what no vendor can promise, agreement ACROSS
-    hardware; it is never a cover for a card that does not reproduce its
-    own output, because a vector its own encoder cannot reproduce cannot
-    be checked by anyone. So every encoder run on a card uses its stack's
-    bitwise-reproducibility mode, set in the MODEL's YAML `env` so the
-    stated run carries it (docs/notes/approved-encoders.md, "Bitwise
-    reproducibility, by vendor"):
-      - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0` (rocBLAS reduces with
-        atomics by default; llama.cpp's F16 models go through its gemm_ex);
+12. ENCODER REPRODUCIBILITY. *(Operator, 2026-10-18: a fundamental
+    pillar; amended 2026-11-01, operator's choice B: "considering that
+    collections embedding is ideally distributed, that different hw
+    produce slightly different vectors, and the acceptance policy is
+    anyway a tolerance threshold, it makes not much sense to enforce local
+    bit exactness in this scenario".)* Every encoder run must REPRODUCE
+    ITSELF: the same input on the same card, build and flags gives answers
+    within cosine 0.99999 of each other — across orders, fresh loads and
+    batches — and reaches the stored CPU reference at 0.999; a run that
+    does not FAILS, however good its cosines to the calibration member,
+    because that is how a broken engine shows (oneDNN's SDPA: a NaN and a
+    vector at cosine 0.09). A run that gives back its own BYTES is recorded
+    **exact**, one within the bound **near-exact**; both are admitted, and
+    the statement says which (docs/notes/near-exact-runs.md, 03 §3.3).
+    Peers accept each other at the space's tolerance (03 §3.1): no two
+    kinds of hardware give the same bytes, so local byte equality is
+    evidence, never the condition of admission. A collection may still ask
+    `exactness = "exact"` — bytes or nothing. Each card still runs with its
+    stack's reproducibility mode in the MODEL's YAML `env` until a setting
+    without it is measured, one at a time, faster and within the bound
+    (docs/notes/approved-encoders.md, "Bitwise reproducibility, by vendor"):
+      - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0`;
       - Intel SYCL: `GGML_SYCL_ENABLE_DNN=0` (oneDNN chooses kernels by
         heuristic and drifts run to run; llama-intel-arc-b70);
       - NVIDIA CUDA: none to set — cuBLAS disallows atomics by default;
-        a single stream (`parallel:1`) keeps it so;
       - Vulkan, llama.cpp CPU: no mode offered — measure, do not assume.
-    And it is MEASURED, never assumed: before a new engine (card, build,
-    flags, env) embeds for a collection, the same texts are embedded over
-    several fresh loads and in several orders, and every vector must come
-    back bit-identical (llama-intel-arc-b70 `capture.py` + a byte compare;
-    the prompt cache and overlapping requests are what break it — `-np 1`).
+    And it is MEASURED, never assumed: the gate embeds the sixteen
+    fingerprint texts one at a time, again in reverse order, over three
+    fresh loads with a sweep of lengths, and the way the peer contributes
+    (its batch and concurrency), before any vector of the run is written.
     *Enforced: the VeGa wrapper states no card run whose model env lacks
     its vendor's mode (deploy/vega/vega_wrapper.py `DETERMINISM`,
-    tests/vega/test_wrapper_logic.py); the gate fails a run whose sixteen
-    fingerprint texts, embedded one at a time again in reverse order, come
-    back different, and admits batched answers only when they equal the
-    single-text bytes (app/hold/embedder.py, operator 2026-10-25,
-    tests/hold/test_embedder.py); the fresh-load half by the measurement
-    harness and review.* Open: torch (louise-python) and
-    OpenVINO have their own controls (`torch.use_deterministic_algorithms`,
-    CUBLAS_WORKSPACE_CONFIG) and are not yet checked by the wrapper.
+    tests/vega/test_wrapper_logic.py); the gate's verdicts — exact,
+    near-exact, fail — and the batch bound (app/hold/embedder.py,
+    app/hold/runs.py `passing`, tests/hold/test_near_exact.py).* Open:
+    torch (louise-python) and OpenVINO have their own controls
+    (`torch.use_deterministic_algorithms`, CUBLAS_WORKSPACE_CONFIG) and are
+    not yet checked by the wrapper.
 
 ## Engineering rules (blocking in review; each one was paid for)
 - **"Fix it after" is NEVER an option** (docs/01, promise 8). A known
