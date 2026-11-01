@@ -12,6 +12,14 @@ wheel."*
 2. **If 1 ever fails:** batching that is identical *by construction*.
    Below is what exists for that, checked on 2026-11-01.
 
+## Every option, and its standing
+
+| option | standing |
+|---|---|
+| 1. gated batches on today's engine, with the byte check on written rows | **in use** (wikipedia), wikidata under test |
+| 2. batching identical by construction (below) | the option if 1 fails |
+| several instances of the same model on the card, each one text at a time | **DEPRECATED** (operator, 2026-11-01: "The double model is a dirty hack, keep it in the list of options but mark it as a deprecated option"). Each instance costs a full copy of the weights and of its compute buffer in VRAM, on a card shared with chat, reranker and translator. Its test (M5) was stopped before it timed anything. |
+
 ## What exists
 
 | where | what | status | fits us? |
