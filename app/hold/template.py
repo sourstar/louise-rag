@@ -309,7 +309,8 @@ def _version_with_container(version: int, slicing: dict[str, Any]) -> int:
             f"slicing.container needs Codex version {codex_mod.GRAPH_VERSION}, and this space is copied "
             f"from a version {version} Codex whose layers carry no `input`: raising it would move the "
             f"space (02 §2.7). Drop the container or do not copy the space")
-    return codex_mod.GRAPH_VERSION
+    # at least version 9; a space that requires bit-exact runs is 10 (9 plus it)
+    return max(version, codex_mod.GRAPH_VERSION)
 
 
 # --------------------------------------------------------------------------
@@ -550,6 +551,13 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
     work.setdefault("per", default_per(update.cadence))
 
     space = _space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped)
+    slicing = (_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
+               else default_slicing(source))
+    if space.exactness is not None and "container" not in slicing:
+        # A SPACE THAT REQUIRES BIT-EXACT RUNS is written at EXACTNESS_VERSION,
+        # version 9 plus the field, where the container is required: the JSONL
+        # lines are what its absence meant below 9 (09 §9.3, §9.5)
+        slicing = dict(slicing, container=codex_mod.JSONL)
     codex = Codex(
         descriptive=Descriptive(**recipe["descriptive"]),
         plugin=plugin,
@@ -562,8 +570,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         protocol_version=recipe.get("protocol_version", source.protocol_version),
         layers=(tuple(_layer(d, i) for i, d in enumerate(recipe["layers"]))
                 if "layers" in recipe else default_layers(source)),
-        slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
-                 else default_slicing(source)),
+        slicing=slicing,
         space=space,
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
@@ -589,7 +596,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         profile=recipe.get("profile", default_profile(source)),
         version=_version_with_container(
             codex_mod.written_version(space, _version_for(space_version, image_shaped)),
-            recipe.get("slicing") or {}),
+            slicing),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)

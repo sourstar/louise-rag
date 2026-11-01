@@ -43,7 +43,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -133,6 +133,23 @@ TOKEN_CUT = "tokens"
 #: tokens); `annotates` is present exactly on an annotations Codex (the one
 #: whose `space` is null), a list of at least one target.
 GRAPH_VERSION = 9
+
+#: THE EXACTNESS AMENDMENT (operator, 2026-11-01: "if it useful add a parameter
+#: in the codex specifying if the collection requires bit exactness or near bit
+#: exactness, we don't know yet what the futures will bring"; CLAUDE.md
+#: invariant 12, docs/notes/near-exact-runs.md). Invariant 12 admits a run that
+#: reproduces itself within the near-exact bound, and that is the rule for every
+#: collection; a space may REQUIRE more: `space.exactness` `"exact"`, every
+#: contributing run giving back its own bytes (and batched answers equal to the
+#: single-text ones). ABSENT means the rule, never null, so no Codex, space or
+#: `collection_id` already written moves. Outside `space_id` (it admits runs, it
+#: does not change the function, like the engine), inside `collection_id`.
+#: Written for a Codex that declares it ALONE, and required there: a version-10
+#: Codex is version 9 plus `space.exactness` (so its `slicing.container` is
+#: required too, and its cut present where declared).
+EXACTNESS_VERSION = 10
+#: The one value `space.exactness` takes; its absence is the near-exact rule.
+EXACT_REQUIRED = "exact"
 #: The two containers (09 §9.5); absent below GRAPH_VERSION means JSONL.
 JSONL, PARQUET = "jsonl", "parquet"
 CONTAINERS = (JSONL, PARQUET)
@@ -496,6 +513,9 @@ class Space:
     #: TOKEN_CUT from CUT_VERSION; None — absent — below it: the platform's
     #: character cut every space before 2026-10-18 was calibrated through
     cut: str | None = None
+    #: EXACT_REQUIRED at EXACTNESS_VERSION; None — absent — the near-exact rule
+    #: (CLAUDE.md invariant 12): what a run must reproduce to be admitted
+    exactness: str | None = None
 
     @property
     def has_engine(self) -> bool:
@@ -528,6 +548,10 @@ class Space:
         if self.cut is not None:
             # ABSENT, never null, where the space declares none (CUT_VERSION)
             out["cut"] = self.cut
+        if self.exactness is not None:
+            # ABSENT, never null, where the space requires no more than the
+            # rule (EXACTNESS_VERSION)
+            out["exactness"] = self.exactness
         return out
 
 
@@ -1048,6 +1072,8 @@ def written_version(space: Space, version: int) -> int:
     Raising a version below INPUT_VERSION to 6 would add `input` to the
     layers and so move `space_id`; the callers that promise to keep a
     space (`derive` in her mother's space) refuse that case themselves."""
+    if space.exactness is not None:
+        return EXACTNESS_VERSION            # bit-exactness required makes a Codex 10
     if space.cut is not None:
         return CUT_VERSION                  # the token cut alone makes a Codex 8
     if space.has_backend:
@@ -1484,6 +1510,15 @@ def _validate_encoder_shape(codex: Codex) -> None:
             f"{'declares it' if sp.cut is not None else 'does not'}")
     if sp.cut is not None and sp.cut != TOKEN_CUT:
         raise CodexError(f"space.cut is \"{TOKEN_CUT}\" (09 §9.3), got {sp.cut!r}")
+    # THE EXACTNESS REQUIRED (09 §9.3, EXACTNESS_VERSION): declared exactly at
+    # version 10, which is written for it alone; one value
+    if (sp.exactness is not None) != (codex.version >= EXACTNESS_VERSION):
+        raise CodexError(
+            f"space.exactness is declared exactly in a version {EXACTNESS_VERSION} Codex, which "
+            f"is written for a space that requires bit-exact runs (09 §9.3, §9.18); this version "
+            f"{codex.version} Codex {'declares it' if sp.exactness is not None else 'does not'}")
+    if sp.exactness is not None and sp.exactness != EXACT_REQUIRED:
+        raise CodexError(f"space.exactness is \"{EXACT_REQUIRED}\" (09 §9.3), got {sp.exactness!r}")
     if sp.cut is not None and not sp.has_backend:
         raise CodexError(
             "a space that cuts by tokens has the ENCODER cut, with the model's own "
@@ -1944,8 +1979,15 @@ def from_dict(d: dict[str, Any]) -> Codex:
         sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
                                 "normalise", "query", "tolerance", "calibration",
                                 "envelope", "epoch", "evaluation")
-                   + (("cut",) if version == CUT_VERSION or (graph and "cut" in d["space"]) else ()),
+                   + (("cut",) if version == CUT_VERSION or (graph and "cut" in d["space"]) else ())
+                   + (("exactness",) if version >= EXACTNESS_VERSION else ()),
                    "space")
+        # 09 §9.3: `exactness` from version 10, required there, one value;
+        # below it an unknown key, which `_only` has refused
+        if version >= EXACTNESS_VERSION and sp.get("exactness") != EXACT_REQUIRED:
+            raise CodexError(f"a version {EXACTNESS_VERSION} Codex's space requires bit-exact runs, "
+                             f"\"exactness\": \"{EXACT_REQUIRED}\" (09 §9.3); this one says "
+                             f"{sp.get('exactness')!r}")
         # 09 §9.3: `cut` from version 8, required there; below it an unknown
         # key, which `_only` has refused; at GRAPH_VERSION present where declared
         if "cut" in sp and sp.get("cut") != TOKEN_CUT:
@@ -2103,7 +2145,7 @@ def _space(sp: dict[str, Any]) -> Space:
         calibration=Calibration(ca["set"], ca["vectors"], qm["n"], qm["min_pass"],
                                 ca.get("query_vectors")),
         envelope=sp["envelope"], epoch=sp["epoch"], evaluation=sp["evaluation"],
-        cut=sp.get("cut"),
+        cut=sp.get("cut"), exactness=sp.get("exactness"),
     )
 
 
