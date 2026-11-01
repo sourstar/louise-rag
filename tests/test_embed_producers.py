@@ -259,3 +259,26 @@ def test_a_document_cut_to_nothing_is_marked_without_a_slot(tmp_path, monkeypatc
     assert sorted(loaded) == sorted([holding["uid"], stale["uid"]]), "the others: the normal path"
     done = {u for (u,) in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
     assert done == {r["uid"] for r in rows}, "all three end done"
+
+
+def test_a_refill_whose_group_was_all_cut_to_nothing_takes_the_next(tmp_path, monkeypatch):
+    """The node, 2026-11-01: wikipedia's embed producer raised `pop from empty
+    list` every few seconds. A refill fetched a group whose every document the
+    current chunker cut to nothing (its redirects); `settle_empty` marked them
+    all done and left nothing to queue, and the refill popped anyway. It takes
+    the next group instead, and every document ends done."""
+    c, con = _collection(tmp_path)
+    first = con.execute("SELECT uid FROM documents ORDER BY rowid LIMIT 1").fetchone()["uid"]
+    con.execute("UPDATE documents SET chunks=0, tokens=0, fts_version=? WHERE uid != ?",
+                (config.FTS_VERSION, first))
+    con.commit()
+    rows = con.execute("SELECT rowid AS rid, * FROM documents ORDER BY rowid").fetchall()
+    assert len(rows) == 3
+    groups = [[rows[0]], rows[1:]]                 # one to embed; then a group all cut to nothing
+    monkeypatch.setattr(worker, "_embed_candidates", lambda *a: groups.pop(0) if groups else [])
+    monkeypatch.setattr(embeddings, "held_chunks", lambda *a, **k: embeddings.HeldRead({}, 0, None))
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, collection: [])
+    monkeypatch.setattr(embeddings, "upsert_book", lambda book_id, *a, **k: 0)
+    assert worker._embed_parallel(con, c, RECIPE, slots=2)
+    done = {u for (u,) in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
+    assert done == {r["uid"] for r in rows}, "the one embedded and the two cut to nothing"

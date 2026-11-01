@@ -1822,6 +1822,11 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 seen.update(r["uid"] for r in fresh)
                 held = read_held(fresh)
                 fresh = settle_empty(fresh, held)
+                if not fresh:
+                    # every one was cut to nothing and is marked: the next group
+                    # (wikipedia's redirects, ~85 % of a stream: the node,
+                    # 2026-11-01, raised `pop from empty list` every few seconds)
+                    continue
                 cut = prepared(fresh)
                 queue = [(r, held, cut.get(r["uid"])) for r in fresh]
             row, held, cut = queue.pop(0)
