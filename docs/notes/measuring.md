@@ -20,6 +20,7 @@ quoted. The order matters; §1 saves the most time.
 | tolerance for cross-backend comparison | `tools/calibrate_space.py` |
 | scheduler cost and round timings | `louise dev schedule-report` (scheduling.md §7) |
 | the card's busy time, idle gaps with work waiting, who held each encoder | `louise dev schedule-report --gpu` (the worker's per-second record, app/card_record.py; the probe's GET /busy, app/gpu_busy.py — not `/root/measure/gpu_busy.py` any more) |
+| a person's search under corpus load: each step's wait, failures, what the corpus loses | `python -m tools.measure.query_under_load` (an idle run first, then `--baseline` under load; `--card-record` for the corpus side; gpu-saturation-plan.md I4) |
 
 **The incident.** An encoder A/B was run with a purpose-built harness while
 `llama-intel-arc-b70` sat unopened in the same workspace: numbers that could
