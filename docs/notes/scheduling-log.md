@@ -1984,3 +1984,24 @@ The same harness as window A (`prod_profile_tag.sh`, py-spy 60 s at minute 2, `l
 what is embedded. wikipedia's rate beside wikidata rose 1.5–2.4×. The per-document statement re-read
 fell from ~14.5 % of the pool to ~0.9 %. wikidata's first half was low: it was 35 minutes after its
 own re-gate and still beside wikipedia's catch-up.
+
+### 2026-11-01 — step 1 BEFORE: wikidata alone at batch 16 / concurrency 4 (5b83a25 deployed) — MEASURED, the new instrument blind
+
+**Scenario.** 17:41–17:56, wikidata alone; wikipedia, pubmed and normattiva paused for the window,
+gutenberg paused and held. 5b83a25 (#164 instruments, #165 GPU_PROBE_URL to the worker, #166 the gate fix)
+deployed at 17:33. Full-speed override in force (night profile, 12 cores). Nothing else on the card.
+
+| measure | value |
+|---|---|
+| wikidata chunks/s (worker log) | **62.3** (56,458 chunks, 53,203 documents in 15 min) |
+| card busy (`/root/measure/gpu_busy.py`, bge-m3 process) per min | 45, 44, 41, 43, 42, 43, 43, 42, 43, 43, 42, 43, 38, 37 % |
+| worker CPU (cgroup) | 0.77 cores |
+| `schedule-report --gpu`: held (gate's served seconds/min) | wikidata ~200/min (2,883 in 15 min) |
+| `schedule-report --gpu`: busy, gaps, lost | **invalid**: 0.0 % busy, gaps 60 s/min |
+
+**The instrument is blind.** The 5-minute cross-check read 31–37 % with gpu_busy.py and 0.0 % from the card
+record. gpu-probe (`pid: host`, root, `CAP_PERFMON` only) gets "Permission denied" on
+`/proc/<pid>/fdinfo` of the backend process. Reading another process's fdinfo needs ptrace-read access
+(`CAP_SYS_PTRACE`), so the probe counts no DRM client and reports `"engines": {}, "processes": []`.
+The host reads 2 DRM fds on the same process. Nothing was changed. The gaps at the 120 s stream
+boundaries cannot be seen until the probe can read fdinfo, so this row is redone once it can.
