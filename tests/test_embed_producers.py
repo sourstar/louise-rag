@@ -12,6 +12,7 @@ import shutil
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -282,3 +283,174 @@ def test_a_refill_whose_group_was_all_cut_to_nothing_takes_the_next(tmp_path, mo
     assert worker._embed_parallel(con, c, RECIPE, slots=2)
     done = {u for (u,) in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
     assert done == {r["uid"] for r in rows}, "the one embedded and the two cut to nothing"
+
+
+# ---------------------------------------------------------------- the stream renewed
+# gpu-saturation-plan.md, step 1 lever 1: at EMBED_STREAM_S a producer's
+# stream drained to zero and waited for the next one's selection, held read
+# and cut. Now it is renewed in place while nothing a new stream re-reads
+# has changed.
+
+def _endless(monkeypatch, con, n_groups: int):
+    """`n_groups` groups of the fixture's documents, under fresh uids each
+    time, then nothing: a selection that outlasts several deadlines."""
+    base = con.execute("SELECT rowid AS rid, * FROM documents").fetchall()
+    served = {"n": 0}
+
+    def candidates(_con, _scope, _limit, _collection):
+        if served["n"] >= n_groups:
+            return []
+        served["n"] += 1
+        return base if served["n"] == 1 else [
+            {**dict(r), "uid": f"{r['uid']}#{served['n']}"} for r in base]
+    monkeypatch.setattr(worker, "_embed_candidates", candidates)
+    monkeypatch.setattr(embeddings, "held_chunks", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, collection: [{"text": "x"}])
+    return served
+
+
+def test_a_renewed_stream_never_drains_between_periods(tmp_path, monkeypatch):
+    c, con = _collection(tmp_path)
+    _endless(monkeypatch, con, n_groups=4)
+    monkeypatch.setattr(config, "EMBED_STREAM_S", 0.0)       # every refill is past the deadline
+    lock = threading.Lock()
+    inside = {"n": 0, "zero_after_start": 0, "started": False}
+
+    def upsert(*a, **k):
+        with lock:
+            inside["n"] += 1
+            inside["started"] = True
+        time.sleep(0.05)
+        with lock:
+            inside["n"] -= 1
+        return 1
+    monkeypatch.setattr(embeddings, "upsert_book", upsert)
+    renewals = []
+    monkeypatch.setattr(worker, "_endpoint_answered", lambda *a: None)
+    worker._embed_parallel(con, c, RECIPE, slots=2, renew=lambda: renewals.append(1) or True)
+    assert renewals, "the deadline asked to renew"
+    logged = [m for (m,) in con.execute(
+        "SELECT message FROM events WHERE stage='embed' AND message LIKE 'embedded %'")]
+    total = sum(int(m.split()[1]) for m in logged)
+    assert total == 12, f"the period lines add up to every document, once: {logged}"
+    assert any(m.endswith("the stream goes on") for m in logged)
+
+
+def test_without_renewal_the_stream_drains_at_its_deadline_as_before(tmp_path, monkeypatch):
+    c, con = _collection(tmp_path)
+    served = _endless(monkeypatch, con, n_groups=4)
+    monkeypatch.setattr(config, "EMBED_STREAM_S", 0.0)
+    monkeypatch.setattr(embeddings, "upsert_book", lambda *a, **k: 1)
+    worker._embed_parallel(con, c, RECIPE, slots=2)
+    assert served["n"] == 1, "past the deadline: no second group taken"
+    worker._embed_parallel(con, c, RECIPE, slots=2, renew=lambda: False)
+    assert served["n"] == 2, "renew said no: drained after one group again"
+
+
+def test_a_deferral_ends_the_stream_whatever_renew_says(tmp_path, monkeypatch):
+    c, con = _collection(tmp_path)
+    served = _endless(monkeypatch, con, n_groups=4)
+    monkeypatch.setattr(config, "EMBED_STREAM_S", 0.0)
+
+    def down(*a, **k):
+        raise embeddings.EmbedInterrupted("stopped")
+    monkeypatch.setattr(embeddings, "upsert_book", down)
+    worker._embed_parallel(con, c, RECIPE, slots=2, renew=lambda: True)
+    assert served["n"] == 1, "deferred: no next group, the stream drains"
+
+
+def test_a_document_done_and_queued_again_is_taken_again_in_the_same_stream(
+        tmp_path, monkeypatch):
+    """`seen` keeps the documents in flight or awaiting their commit out of
+    the next selection; one that is done is out of it already, and is
+    dropped. A renewed stream lives for hours: a document re-queued meanwhile
+    (its text changed) must be taken again, and `seen` must not grow with
+    every uid the stream ever took."""
+    c, con = _collection(tmp_path)
+    base = con.execute("SELECT rowid AS rid, * FROM documents").fetchall()
+    calls = {"n": 0, "again": None}
+
+    def candidates(_con, _scope, _limit, _collection):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return base
+        if calls["again"] is None:
+            done = _con.execute("SELECT uid FROM documents WHERE embed_done=1 LIMIT 1").fetchone()
+            if done is None:
+                return []
+            calls["again"] = done[0]
+            _con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (done[0],))
+            return [r for r in base if r["uid"] == done[0]]
+        return []
+    monkeypatch.setattr(worker, "_embed_candidates", candidates)
+    monkeypatch.setattr(embeddings, "held_chunks", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, collection: [{"text": "x"}])
+    taken = []
+
+    def upsert(book_id, *a, **k):
+        taken.append(book_id)
+        time.sleep(0.02)
+        return 1
+    monkeypatch.setattr(embeddings, "upsert_book", upsert)
+    worker._embed_parallel(con, c, RECIPE, slots=1)
+    again = next(int(r["native_id"]) for r in base if r["uid"] == calls["again"])
+    assert taken.count(again) == 2, taken
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 3
+
+
+def test_the_producers_renewal_stops_for_a_changed_file_a_removed_collection_or_a_switch_off(
+        tmp_path, monkeypatch):
+    c, con = _collection(tmp_path)
+    got = {}
+
+    def run(con_, coll, recipe, *, slots, keep_going, renew):
+        got["renew"] = renew
+        return False
+    monkeypatch.setattr(worker, "_embed_parallel", run)
+    monkeypatch.setattr(worker, "_may_embed", lambda con_, coll: got.get("may", True))
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda coll: RECIPE)
+    me = threading.current_thread()
+    gone = threading.Event()
+    monkeypatch.setitem(worker._embed_producers, c.name, (me, gone))
+    try:
+        worker._producer_step(con, c)
+        renew = got["renew"]
+        assert renew() is True, "nothing changed: the stream goes on"
+        got["may"] = False
+        assert renew() is False, "switched off, unlicensed, under maintenance or failing"
+        got["may"] = True
+        monkeypatch.setattr(worker, "_live_collection",
+                            lambda coll: replace(coll, title="renamed"))
+        assert renew() is False, "its file changed: the next stream reads it"
+        monkeypatch.setattr(worker, "_live_collection", lambda coll: coll)
+        gone.set()
+        assert renew() is False, "removed: this producer stops"
+        gone.clear()
+        worker._embed_producers[c.name] = (threading.Thread(target=lambda: None), gone)
+        assert renew() is False, "another thread is its producer now"
+    finally:
+        worker._embed_producers.pop(c.name, None)
+
+
+def test_an_unchanged_collection_read_again_is_equal_so_its_stream_can_be_renewed(
+        isolated_config, data_dir, config_dir):
+    """The renewal compares the live collection with the one its stream
+    started from. A field that differed between two reads of the same file
+    would refuse every renewal, and the lever would silently do nothing."""
+    from tests.conftest import codex_collection
+    codex_collection("steady", louise_root=data_dir, config_dir=config_dir)
+    first = collections_mod.by_name("steady")
+    again = collections_mod.by_name("steady")
+    assert first is not again and first == again
+    assert collections_mod.recipe_for(first) == collections_mod.recipe_for(again)
+
+
+def test_a_renewal_refused_once_is_not_asked_again_while_the_stream_drains(
+        tmp_path, monkeypatch):
+    c, con = _collection(tmp_path)
+    _endless(monkeypatch, con, n_groups=4)
+    monkeypatch.setattr(config, "EMBED_STREAM_S", 0.0)
+    monkeypatch.setattr(embeddings, "upsert_book", lambda *a, **k: (time.sleep(0.02), 1)[1])
+    asked = []
+    worker._embed_parallel(con, c, RECIPE, slots=2, renew=lambda: asked.append(1) and False)
+    assert len(asked) == 1
