@@ -1840,3 +1840,11 @@ of that is warm-up), and not the filtered one.
   I/O-heavy pass; the next waits for it.
 - **wikidata-bge's first snapshot OOMed 18 times at 8 GiB.** `_first_delta` holds every uid as
   a str (75.9 M, ~11 GB) and serialises ~1.5 GB of canonical JSON. It passed at 20 GiB.
+
+**The filtered search's remaining cost** (the architecture session, measured on a 3 M-row
+stable-row-id table with IVF_PQ and the `lang` bitmap): prefilter `en` 20.7 ms, `tr` 18.1 ms,
+against 10.6 ms unfiltered. Postfilter with oversampling is slower (`en` 28.7 ms, `tr` 130.7 ms),
+and it would change the results (overlap@20 with the prefilter answer 0.72–0.78). What remains
+is the prefilter's row mask, about 58 M rows for `en` on wikipedia, which is Lance's own design.
+The only lever is one vector table or index per language, a storage-layout change not worth it
+at 202 ms. No action.
