@@ -122,3 +122,35 @@ def test_grow_still_ladders_for_incremental_sources(isolated_config, tmp_path):
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
     names = [o["name"] for o in web._grow_options(c)]
     assert names[0] == "starter" and "demo" not in names
+
+
+def _normattiva(tmp_path, profile):
+    return collections_mod.Collection(
+        name="normattiva", plugin="normattiva", profile=profile, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
+
+
+def test_grow_offers_nothing_beyond_what_all_names(isolated_config, tmp_path):
+    """Operator, 2026-11-01: "Normattiva grow data, the entries are weird".
+    `full` is what `slices = "all"` fetches; `archive` is normattiva-archive's
+    (2026-10-13) and was offered — preselected — to the live collection."""
+    opts = web._grow_options(_normattiva(tmp_path, "full"))
+    assert [o["name"] for o in opts] == ["full"]
+    assert opts[0]["label"].endswith("— current, re-sync")
+    assert [o["name"] for o in web._grow_options(_normattiva(tmp_path, "starter"))] == ["starter", "full"]
+    daughter = web._grow_options(_normattiva(tmp_path, "archive"))
+    assert [o["name"] for o in daughter] == ["archive"], "the daughter re-syncs its own"
+
+
+def test_a_profile_without_a_size_shows_none(isolated_config, tmp_path):
+    """Operator, 2026-11-01: wikidata's families showed "?" for their size;
+    where no size applies, nothing follows the entry's name."""
+    c = collections_mod.Collection(
+        name="wikidata", plugin="wikidata", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
+    labels = {o["name"]: o["label"] for o in web._grow_options(c)}
+    assert labels["person"] == "person — people"
+    assert labels["all"].startswith("all (~") and "?" not in "".join(labels.values())
+    assert web._sized("x", None, files=3) == "x (3 files)"

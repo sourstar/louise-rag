@@ -402,6 +402,8 @@ NORMATTIVA_SPEC = AcquisitionSpec(
         "demo": "the constitutional laws, every version (Leggi costituzionali)",
         "starter": "constitutional laws, codes and consolidated texts, every version",
         "full": "every precompiled collection, every version; the repealed acts in original",
+        "archive": "the whole body of state law: the 23 collections and every act's yearly "
+                   "export (the normattiva-archive collection's)",
     },
     license_class=LicenseClass.YELLOW,          # CC BY 4.0, after an NC window (TERMS.txt)
     terms_text_path=Path(__file__).parent.parent / "plugins" / "normattiva" / "TERMS.txt",
