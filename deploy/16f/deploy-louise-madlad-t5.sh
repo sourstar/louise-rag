@@ -215,7 +215,7 @@ grep -q "^def card_busy(engines: Mapping\[str, float\]) -> float:" "$ROOT/src.ne
 grep -q "^class Coalescer:" "$ROOT/src.new/app/embeddings.py"   # #174: step 1 lever 2, requests filled across documents
 grep -q "^def cpu_line_from(worst: float) -> float:" "$ROOT/src.new/app/hold/embedder.py"   # #175: a CPU review line per quantization level, computed
 grep -q '        if "batch" in stated or getattr(encoder, "batch", 0):' "$ROOT/src.new/app/collection_file.py"   # #180: a rewrite keeps [encoder] batch and exactness
-test ! -e "$ROOT/src.new/app/dispatch.py"   # #181: the model pool's dispatch is app/rage/dispatch.py
+test ! -e "$ROOT/src.new/app/dispatch.py"   # #181: dispatch is RAGE's, app/rage/dispatch.py
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
