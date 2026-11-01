@@ -206,6 +206,7 @@ grep -q "^def _profile_held(collection" "$ROOT/src.new/app/web.py"   # #156: hel
 grep -q "^def held(recipe, \*, holder: str" "$ROOT/src.new/app/encoder_use.py"   # #157 (103c22a): embedder commands hold the encoder lease for their whole run
 grep -q '    exactness: str = "near"' "$ROOT/src.new/app/collections.py"   # #160 (55840ac): invariant 12 amended, near-exact the default (operator's choice B)
 grep -q "^CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)" "$ROOT/src.new/app/hold/codex.py"   # #161 (5b2698e): Codex 10, space.exactness
+grep -q "^def unchanged_books(table, rows, natives) -> set\[int\]:" "$ROOT/src.new/app/bundles/genesis.py"   # #162 (b50a3be): genesis skips byte-identical re-imports; own statements first
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
