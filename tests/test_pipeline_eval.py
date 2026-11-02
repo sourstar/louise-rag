@@ -142,3 +142,46 @@ def test_typed_judges_every_pair_with_the_question_as_typed(run):
     titles = {(q, t.split("\n")[0]) for q, t in asked}
     assert ("white whale", "I Malavoglia") in titles or ("white whale", "Pinocchio") in titles
     assert len(asked) == len(set(asked)), "no pair asked twice"
+
+
+def test_the_vector_leg_run_with_each_translation_is_its_own_row(tmp_path, monkeypatch):
+    """The operator, 2026-11-02: "by using the translation model harrier is
+    supposed to have a better score?" — "<encoder> per-language" embeds the
+    plan's translations into the set's languages too, fused as variants of
+    the one vector leg; translated rows only."""
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    asked = []
+
+    def ranker(texts):
+        asked.extend(texts)
+        # a translation finds its book: "balena bianca" Moby-Dick, "wooden puppet" Pinocchio
+        return [RIGHT[0] if t == "balena bianca" else RIGHT[1] for t in texts]
+    plans = pe.PlanStore(tmp_path / "plans.jsonl", lambda text: dict(PLANS[text]))
+    typed = pe.PlanStore(tmp_path / "typed.jsonl", lambda text: _typed(text))
+    res = pe.evaluate(tmp_path / "out", "set", DOCS, QUESTIONS, {"a": [WRONG, WRONG]},
+                      recipe=RECIPE, plans=plans, typed=typed, query_rankers={"a": ranker},
+                      depths=[2], say=lambda m: None, call=_judge([]))
+    rows = res["rows"]
+    assert rows["a per-language [translated]"]["mrr@10"] > rows["a [translated]"]["mrr@10"]
+    assert "a per-language [typed]" not in rows
+    assert "a per-language + BM25 + rerank@2 [translated]" in rows
+    assert sorted(asked) == ["balena bianca", "wooden puppet"], "only translations into held languages"
+    assert "a per-language [translated]  vs  a [translated]" in res["pairs"]
+
+
+def test_a_query_side_that_does_not_reproduce_the_rows_vectors_is_refused(tmp_path):
+    import numpy as np
+    stored = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    ranker = pe.QueryRanker(tmp_path / "q.jsonl", lambda texts: [[0.0, 1.0]] * len(texts),
+                            np.eye(2), [(0, 0), (1, 0)], check=(["one", "two"], stored))
+    with pytest.raises(SystemExit, match="not the one the row was scored with"):
+        ranker(["uno"])
+    good = pe.QueryRanker(tmp_path / "g.jsonl",
+                          lambda texts: [{"one": [1.0, 0.0], "two": [0.0, 1.0]}.get(t, [0.0, 1.0])
+                                         for t in texts],
+                          np.eye(2), [(0, 0), (1, 0)], check=(["one", "two"], stored))
+    assert good(["uno"]) == [[(1, 0), (0, 0)]]
+    again = pe.QueryRanker(tmp_path / "g.jsonl", lambda texts: pytest.fail("embedded again"),
+                           np.eye(2), [(0, 0), (1, 0)])
+    assert again(["uno"]) == [[(1, 0), (0, 0)]], "kept by text"

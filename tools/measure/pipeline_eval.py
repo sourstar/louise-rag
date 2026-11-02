@@ -31,7 +31,12 @@ each of these after the reranker at every depth — each TWICE (the operator,
 language"): [translated], the search's plan with translation, and [typed],
 the API's translate false, where every language group is searched and every
 pair judged with the question as typed. The vector leg embeds the question
-as typed in both, as a search does. Scored per question on the
+as typed in both, as a search does; and, as a candidate the product does not
+have yet (the operator, 2026-11-02: "by using the translation model harrier
+is supposed to have a better score?"), "<encoder> per-language" also
+embeds each of the plan's translations into a language the set holds and
+fuses those vector lists as variants of the one vector leg, as the text
+leg's are (`_merge_rrf`: a record at its best rank across them). Scored per question on the
 rank of the first relevant record: MRR@5 and @10, hit@1/5/10, and what
 reached 40, 50 and 100 (the reranker's ceiling at that depth). Pairs, by
 Fisher's randomization test: the encoders against each other at each stage,
@@ -186,6 +191,64 @@ def call_reranker(recipe, query: str, texts: list[str], timeout: float) -> list[
     return [got[i] for i in range(len(texts))]
 
 
+class QueryRanker:
+    """Texts embedded as one encoder's query side (`encode`), kept by text
+    under `path`, each ranking the set's chunks: (doc, chunk) best first.
+    `check` = (typed questions, the vectors the row was scored with): before
+    the first embedding the first few are embedded again and must agree
+    (cosine ≥ CHECK_MIN), or the query side was not reproduced and nothing is
+    measured with it."""
+
+    CHECK_MIN = 0.999
+
+    def __init__(self, path: Path, encode: Callable[[list[str]], list[list[float]]], doc_unit,
+                 pairs: Sequence[tuple[int, int]], *, depth: int = 2_000, check=None) -> None:
+        import numpy as np
+        self.path, self.encode, self.doc, self.pairs = path, encode, doc_unit, list(pairs)
+        self.depth = min(depth, len(self.pairs))
+        self.check = check
+        self.vectors: dict[str, np.ndarray] = {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    x = json.loads(line)
+                    self.vectors[x["t"]] = np.asarray(x["v"], dtype=np.float32)
+
+    def _verify(self) -> None:
+        import numpy as np
+        texts, stored = self.check
+        self.check = None
+        n = min(4, len(texts))
+        got = np.asarray(self.encode(list(texts[:n])), dtype=np.float64)
+        ref = np.asarray(stored[:n], dtype=np.float64)
+        cos = (got * ref).sum(1) / (np.linalg.norm(got, axis=1) * np.linalg.norm(ref, axis=1))
+        if n and float(cos.min()) < self.CHECK_MIN:
+            raise SystemExit(f"{self.path.name}: the typed questions embed to cosine "
+                             f"{float(cos.min()):.6f} of the row's own vectors: the query side "
+                             f"is not the one the row was scored with")
+
+    def __call__(self, texts: list[str]) -> list[list[tuple[int, int]]]:
+        import numpy as np
+        missing = sorted({t for t in texts if t not in self.vectors})
+        if missing:
+            if self.check is not None:
+                self._verify()
+            got = self.encode(missing)
+            with self.path.open("a", encoding="utf-8") as fh:
+                for t, v in zip(missing, got):
+                    fh.write(json.dumps({"t": t, "v": [float(x) for x in v]}, ensure_ascii=False) + "\n")
+                    self.vectors[t] = np.asarray(v, dtype=np.float32)
+        out = []
+        for t in texts:
+            v = self.vectors[t].astype(np.float64)
+            sims = self.doc @ (v / np.linalg.norm(v))
+            best = np.argpartition(-sims, self.depth - 1)[:self.depth]
+            best = best[np.lexsort((best, -sims[best]))]
+            out.append([self.pairs[int(i)] for i in best])
+        return out
+
+
 # ---------------------------------------------------------------- the legs
 
 def build_index(where: Path, docs: Sequence[Doc], batch: int = 2000):
@@ -272,6 +335,8 @@ def metrics(ranks: Sequence[int], depths: Sequence[int] = DEPTHS) -> dict:
 #: the two forms of a question (the operator, 2026-11-02: "with/without
 #: query translation in the article/book language")
 TRANSLATED, TYPED = "translated", "typed"
+#: the vector leg run with each translation too (translated rows only)
+PER_LANGUAGE = "per-language"
 
 
 def row_name(leg: str, depth: int | None, mode: str) -> str:
@@ -281,13 +346,17 @@ def row_name(leg: str, depth: int | None, mode: str) -> str:
 def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Question],
              rankings: dict[str, Sequence[Sequence[tuple[int, int]]]], *,
              recipe, plans: PlanStore, typed: PlanStore | None = None,
+             query_rankers: dict[str, Callable[[list[str]], list[list[tuple[int, int]]]]] | None = None,
              depths: Sequence[int] = DEPTHS, k: int = K,
              call=None, timeout: float = 600.0, index=None, say=print) -> dict:
     """The module docstring's measurement. `rankings[encoder][q]` is that
     encoder's chunks for question q, best first, as (doc, chunk) pairs.
     `plans` the search's plans with translation, `typed` without (the API's
     translate false: every language group searched, and every pair judged,
-    with the question as typed); each gives its own rows. Writes
+    with the question as typed); each gives its own rows.
+    `query_rankers[encoder](texts)` embeds texts as that encoder's query
+    side and ranks the set's chunks, (doc, chunk) best first: given, the
+    translated rows gain "<encoder> per-language". Writes
     `out`/pipeline.json; returns it."""
     from app import retrieval
     call = call or call_reranker
@@ -315,7 +384,11 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
     def matched(h: dict) -> list[dict]:
         return (h.get(retrieval.MATCHED) or [h])[:retrieval.JUDGED_CHUNKS]
 
+    held_langs = {(d.lang or "").lower() for d in docs}
+    rankers = query_rankers or {}
     legs = ["BM25"] + [f"{e}{s}" for e in rankings for s in ("", " + BM25")]
+    per_lang = [f"{e} {PER_LANGUAGE}" for e in rankings if e in rankers]
+    legs_tr = legs + [f"{b}{s}" for b in per_lang for s in ("", " + BM25")]
     ranks: dict[tuple[str, str, int | None], list[int]] = {}
     langs: list[str | None] = []
     untranslated = 0
@@ -337,6 +410,14 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
                 merged[e] = retrieval._merge_rrf([vec], limit, query_lang=plan.query_lang)
                 merged[f"{e} + BM25"] = retrieval._merge_rrf(texts + [vec], limit, own=own,
                                                              query_lang=plan.query_lang)
+                if mode == TRANSLATED and e in rankers:
+                    variants = [t for lang, t in sorted(plan.translations.items())
+                                if lang in held_langs and t and t != plan.core]
+                    vecs = [vec] + [vector_list(r, docs, limit) for r in rankers[e](variants)]
+                    merged[f"{e} {PER_LANGUAGE}"] = retrieval._merge_rrf(
+                        vecs, limit, query_lang=plan.query_lang)
+                    merged[f"{e} {PER_LANGUAGE} + BM25"] = retrieval._merge_rrf(
+                        texts + vecs, limit, own=own, query_lang=plan.query_lang)
             lists[mode] = (plan, merged)
         # the reranker's pairs: every list's top records, their matched
         # chunks, each against its form of the question; the deepest list
@@ -358,7 +439,7 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
             cache.add(q, got)
             asked += len(todo)
         for mode, (plan, merged) in lists.items():
-            for leg in legs:
+            for leg in (legs_tr if mode == TRANSLATED else legs):
                 lst = merged[leg]
                 ranks.setdefault((mode, leg, None), []).append(_first_relevant(lst, question.relevant))
                 cand = lst[:top]
@@ -372,7 +453,7 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
         if q % 20 == 0:
             say(f"  question {q + 1}/{len(questions)}: {asked} pairs scored, "
                 f"{time.monotonic() - t0:.0f} s")
-    res = _report(ranks, langs, depths, list(rankings), list(modes))
+    res = _report(ranks, langs, depths, list(rankings), list(modes), per_lang)
     res |= {"collection": getattr(collection, "name", str(collection)), "documents": len(docs),
             "chunks": sum(len(d.chunks) for d in docs), "questions": len(questions),
             "untranslated_plans": untranslated, "pairs_scored": len(cache.scores),
@@ -386,7 +467,8 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
 
 
 def _report(ranks: dict[tuple[str, str, int | None], list[int]], langs: list[str | None],
-            depths: Sequence[int], encoders: list[str], modes: list[str]) -> dict:
+            depths: Sequence[int], encoders: list[str], modes: list[str],
+            per_lang: Sequence[str] = ()) -> dict:
     from tools.measure.fusion_calibration import randomization
     rows = {row_name(leg, d, mode): metrics(r, depths) for (mode, leg, d), r in ranks.items()}
     by_lang: dict[str, dict[str, float]] = {}
@@ -408,19 +490,25 @@ def _report(ranks: dict[tuple[str, str, int | None], list[int]], langs: list[str
 
     pairs: dict[str, dict] = {}
     stages = [None, *depths]
+
+    def add(ka: tuple, kb: tuple) -> None:
+        if ka in ranks and kb in ranks:
+            pairs[f"{row_name(*ka[1:], ka[0])}  vs  {row_name(*kb[1:], kb[0])}"] = pair(ka, kb)
     for mode in modes:
-        # the encoders against each other, alone and fused, at every stage
+        # the encoders against each other, alone and fused, at every stage;
+        # the per-language legs among themselves and against their own
         for fused in ("", " + BM25"):
             for d in stages:
-                for i, a in enumerate(encoders):
-                    for b in encoders[i + 1:]:
-                        ka, kb = (mode, a + fused, d), (mode, b + fused, d)
-                        pairs[f"{row_name(*ka[1:], mode)}  vs  {row_name(*kb[1:], mode)}"] = pair(ka, kb)
+                for group in (encoders, list(per_lang)):
+                    for i, a in enumerate(group):
+                        for b in group[i + 1:]:
+                            add((mode, a + fused, d), (mode, b + fused, d))
+                for b in per_lang:
+                    add((mode, b + fused, d), (mode, b.rsplit(" ", 1)[0] + fused, d))
         # the operator's question: does the encoder pay off once the rest runs?
-        for e in encoders:
+        for e in [*encoders, *per_lang]:
             for d in depths:
-                ka, kb = (mode, f"{e} + BM25", d), (mode, "BM25", d)
-                pairs[f"{row_name(*ka[1:], mode)}  vs  {row_name(*kb[1:], mode)}"] = pair(ka, kb)
+                add((mode, f"{e} + BM25", d), (mode, "BM25", d))
     # what the translation itself buys, stage by stage
     if TRANSLATED in modes and TYPED in modes:
         for leg in ["BM25"] + [f"{e}{s}" for e in encoders for s in ("", " + BM25")]:
