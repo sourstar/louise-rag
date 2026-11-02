@@ -332,3 +332,21 @@ exception's type and message, must match:
   are IDENTICAL. The same sources gave the same `.so` bytes twice.
 - **The node's entities:** tools/measure/textify_identity.py. It must say
   IDENTICAL on ≥ 100,000 of them, in the built image, before the swap.
+
+## D and E on the node's real data (München, 2026-11-02 21:0x–21:12)
+
+Both node gates read IDENTICAL. The speed-ups are smaller than the
+fixtures said. Run in louise-rag:cpuref-6b8745b; native/, chunking, layers,
+both plugins and the build files are byte-unchanged from 6b8745b to 59fa020.
+
+| | identity | per record, before → after | gain |
+|---|---|---|---|
+| D, `cdc_identity --collection wikipedia --records 100000` | IDENTICAL: 100,000 records, 26,551 parts, 40,810 boundaries, 0 differ | 15.9 → 10.6 µs | **1.5×** |
+| E, `textify_identity --collection wikidata --entities 100000` | IDENTICAL: 100,018 entities (dump 20261012, en), 200,036 calls, 0 differ | 354.8 → 323.9 µs | **1.1×** |
+
+- **D:** real wikipedia sections are short. The 44–178× was the long-text
+  loop alone.
+- **E:** real entities spend most of their time outside the compiled
+  modules: names, JSON, the label lookups. The 1.70× was on fixtures.
+- **Each is a fraction of its stage's time,** so the deploy's BEFORE/AFTER rows
+  should show modest stage gains.
