@@ -125,7 +125,7 @@ def sent_text(encoder: str, text: str, query: bool) -> str:
     from tools.measure import wikidata_encoder_ab as ab
     if query:
         return (ab._recipe(encoder).query_instruction or "") + text
-    if encoder in ("nemotron", "nemotron-m1024"):
+    if ab.is_nemotron(encoder):
         return ab.NEMOTRON_PASSAGE + text
     if encoder == "jina-gguf":
         return ab.JINA_INSTRUCTIONS[False] + text
