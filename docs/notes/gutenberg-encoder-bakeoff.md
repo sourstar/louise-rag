@@ -241,6 +241,15 @@ really in flight (`EMBED_CONCURRENCY`); card busy is read from the PMU.
     ≈ 59 h more, and drops what bge-m3 holds.
   The schedule's hours and the sharing with wikipedia and gutenberg come on
   top, for either model.
+- **The decision rule (operator, 2026-11-02: "Option C"):** wikidata's
+  encoder is decided on the whole-search score below. harrier if it is
+  still significantly better on MRR@10 after BM25 fusion and the reranker
+  (paired randomization test, p < 0.05); bge-m3 otherwise, with `embed`
+  restored. Applied when the score lands, without a further question.
+  The row that decides is fixed before the data: the encoder fused with
+  BM25, reranked over the top 100, the query translated (production's
+  search: "5 results reranked over 50 results, more likely over 100").
+  Depth 50 and the typed query are reported beside it and do not decide.
 - **Still owed before the decision:** wikidata's whole-search score
   (`wikidata_encoder_ab.py rerank`: BM25 fused, reranked at 10/40/50/100,
   translated and typed). It says whether the +0.146 survives the full
