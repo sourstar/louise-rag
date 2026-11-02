@@ -2104,3 +2104,24 @@ cores by day and restarts at 12 in quiet. Backups: `platform.toml.bak-20261102-c
 **For the rows.** Every row before 02:24 was read in the night profile (12 cores), so on this side of the
 change. The step-1 BEFORE rows still to come (gutenberg, pubmed, normattiva) and lever 3 are read after it.
 A window in a quiet or day period then has 12 cores, not 0 or 8.
+
+### 2026-11-02 — a CPU twin beside the card's embedding halves it — MEASURED
+
+**Scenario.** harrier-oss-v1-0.6b (f16, `vega-llama-cpp-p5`, `parallel:1`, threads 6) embedding the gutenberg
+bakeoff pool (G1, one request in flight, node acquire-only, the card to itself) while gutenberg's CPU reference
+ran on the CPU twin (`vega-qwen3-embedding-4b-cpu`, 416–540 % CPU) until it was docker-paused at 09:13:35.
+Rates from G1's timestamped progress lines; tokens counted with harrier's tokenizer.
+
+| window | CPU twin | texts/s | tokens/s | mean tokens a text |
+|---|---|---|---|---|
+| 08:02–09:00 (texts 512–19,968) | running | 5.63 | 5,152 | 914 |
+| 09:14–09:52 (texts 24,064–53,621) | paused | **12.84** | **10,931** | 851 |
+| raw backend, same model and env, one request in flight (10:06) | paused | 12.27 | 11,325 | 923 |
+
+**Reading.**
+- A CPU-twin pass on the node halves the card's embedding throughput. The SYCL backend's host threads, LocalAI
+  and the VeGa wrapper share the 12 cores with it.
+- VeGa's own cost against the raw backend is ~3–4 % (about 3 ms a text). An average over both windows had
+  suggested 35 %.
+- Every CPU reference is scheduled where the card's work does not matter (night, or with nothing embedding),
+  or the card's numbers taken beside it are not the card's.
