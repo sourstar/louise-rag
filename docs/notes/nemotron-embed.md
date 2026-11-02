@@ -166,6 +166,40 @@ under /data/bakeoff/nemotron/.
   show it first.
 - **Next:** 5b on the card, then 6–8, after the night's pipeline steps.
 
+## Wikidata W1, vector only (München, 2026-11-02 16:05–16:20)
+
+The operator narrowed the test: "a simple Nemotron test, without reranking
+… if it saturates the GPU, the throughput and if it fits a simple benchmark
+comparison like @10 @40 @50 @100", and "No dedicated translation model".
+So the questions are embedded as typed, with no translation and no
+reranker. The conversion check had passed first: 48 texts, worst cosine
+0.999999 (documents) and 1.0 (queries), on the node's c0fd786 engine.
+
+The set: 400 questions over 21,348 chunks of 19,998 entities.
+
+| encoder | MRR@10 | recall@1 | @10 | @40 | @50 | @100 |
+|---|---|---|---|---|---|---|
+| bge-m3 F16 (wikidata's) | 0.6496 | 0.575 | 0.795 | 0.900 | 0.9175 | 0.960 |
+| harrier-0.6b f16 | 0.7951 | 0.7525 | 0.880 | 0.9425 | 0.960 | 0.9825 |
+| **nemotron f16** | **0.8184** | **0.7625** | **0.920** | **0.9625** | **0.970** | **0.9875** |
+| nemotron, cut to 1,024 | 0.8098 | 0.750 | 0.920 | 0.9625 | 0.9675 | 0.985 |
+
+- **By question language (MRR@10):**
+  - en: bge 0.636, harrier 0.777, nemotron 0.776, the cut 0.777;
+  - it: bge 0.663, harrier 0.813, **nemotron 0.861**, the cut 0.843.
+- **Paired, MRR@10:**
+  - nemotron − bge-m3 = +0.169, p = 0.0001 (127 questions better, 20 worse);
+  - **nemotron − harrier = +0.023, p = 0.074** (53 better, 34 worse): not
+    significant;
+  - the cut − harrier = +0.015, p = 0.246;
+  - full − cut = +0.009, p = 0.165: the cut to 1,024 costs nothing
+    measurable.
+- **Speed:** 24.1 chunks/s at batch 16, one request in flight (wikidata's
+  recipe), with the card 59 % busy. At the same shape harrier did 43.3 and
+  bge-m3 57.7 (HARRIER-OPT), so nemotron runs at 0.56× harrier and 0.42×
+  bge-m3. One request in flight does not fill the card. The arms with 2 and
+  4 in flight follow.
+
 ## What the operator gets
 
 Per collection:
