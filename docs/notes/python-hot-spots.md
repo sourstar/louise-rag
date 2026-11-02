@@ -225,3 +225,56 @@ so its floor is the reliable figure.
 - **The build's wall clock does not move yet.** It waits on its parent
   (children 42–56 % busy). This waits for the "child writes its part"
   redesign.
+
+## D, done (2026-11-02; not deployed until the node's check passes)
+
+`_cdc_boundaries`' loop runs in `native/louise_cdc`: Rust through PyO3,
+a wheel built by maturin (FastCDC's normalized chunking over a Gear hash,
+Xia et al. 2016; the `fastcdc` crate cuts bytes with its own table, so it is
+not ours).
+- **The same arithmetic, not an equivalent.** The gear table and masks are
+  handed in from app/chunking.py (one table). The u64 wrapping hash equals
+  Python's masked unbounded one, proven in lib.rs's header; offsets count
+  code points (`char`, `ord & 0xFF`).
+- **The Python loop stays, unchanged,** and answers whenever the extension
+  cannot: a `str` with a lone surrogate (no UTF-8 form), a size past 64
+  bits, a text no longer than `min`, a tree without the wheel.
+- **The image:** stage `cdc-build` (rust 1.97.0 by tag and digest, maturin
+  1.15.0, PyO3 0.29.3 and Cargo.lock, `--locked`), one abi3 wheel for
+  CPython ≥ 3.12, installed under constraints.txt (`louise-cdc==0.1.0`). The
+  build fails unless `tools/measure/cdc_identity.py` says IDENTICAL on 300
+  seeded texts.
+
+**Measured** (perf_counter, median of 7 rounds; the 4-vCPU VM, Python 3.13;
+real prose: calibration/text.jsonl, Gutenberg in 18 languages):
+
+| input | Python loop | extension | |
+|---|---|---|---|
+| 4 KB section, 18 languages (179) | 552 µs | 8.8 µs | 63× |
+| 4 KB section, ASCII (16) | 499 µs | 2.8 µs | 178× |
+| 4 KB section, CJK (22) | 596 µs | 8.2 µs | 73× |
+| 20k-char page, one section (76) | 2,867 µs | 44 µs | 65× |
+| 20k-char page, 5 sections, `chunk_cdc` (76) | 2,531 µs | 58 µs | 44× |
+| SYNTHETIC wikipedia 20k page after `parse_all` (157 sections, 4,680 chars) | 66 µs | 69 µs | — |
+
+Non-ASCII text costs 3× ASCII: CPython encodes it to UTF-8 first. Sections
+no longer than `min` take the Python loop on purpose (0.25 µs against 0.44).
+
+**Identity.**
+- The version-1 cut is pinned by digest, from b1d6bc1's loop
+  (tests/test_cdc_native.py); both paths reproduce it.
+- The suite compares the two paths on every string of tests/, every
+  fixture file (as UTF-8 and as Latin-1), the calibration prose, 1,000
+  seeded texts at three sizes each, and `chunk_cdc`, `chunk_akn_article`
+  and `layers.chunks_for_document` on and off. The chunking suite passes
+  both ways.
+- Outside the suite, 20,000 seeded texts (342 M code points, 28.3 M
+  boundaries, 2,541 cuts declined to the Python loop) were IDENTICAL. So
+  were 2,000 on Python 3.12.3 with the same wheel.
+- Real records: `python -m tools.measure.cdc_identity --collection
+  wikipedia-v8 --records 100000`, in the new image. München deploys only
+  on IDENTICAL.
+
+**What it buys:** the ~10 % of a wikipedia record's CPU this loop was
+(estimated above, not re-measured on real records here). The records
+build's wall clock still waits on its parent (C).

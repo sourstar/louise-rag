@@ -21,6 +21,9 @@ venv/
 dist/
 build/
 
+# ── rust (native/: cargo's build tree; Cargo.lock IS committed) ──
+native/*/target/
+
 # ── editors / OS ──
 .vscode/
 .idea/

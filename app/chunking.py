@@ -9,6 +9,7 @@ import re
 
 from . import config
 
+
 def _est_tokens(s: str) -> int:
     return max(1, len(s) // 4)
 
@@ -289,12 +290,41 @@ def _cdc_boundaries(text: str, min_chars: int = CDC_MIN_CHARS,
         start = end
 
 
+# The loop above, COMPILED (docs/notes/python-hot-spots.md, "D"): the
+# extension native/louise_cdc (Rust, PyO3, built by maturin in the image's
+# `cdc-build` stage) runs it statement for statement, 50-100x faster. It is
+# handed THIS module's gear table and masks, so they are defined once, here.
+# It answers `list(_cdc_boundaries(...))`, or None where it cannot answer
+# exactly — a `str` holding a lone surrogate has no UTF-8 form, a size past
+# 64 bits — and then the loop above, unchanged, answers. A tree without the
+# wheel runs the loop above always. The two are compared on every chunking
+# test and thousands of generated texts (tests/test_cdc_native.py), and on
+# the node's real records before a deploy (tools/measure/cdc_identity.py).
+try:
+    import louise_cdc as _louise_cdc
+except ImportError:
+    _louise_cdc = None
+_NATIVE = None if _louise_cdc is None else _louise_cdc.Gear(_GEAR, _MASK_STRICT, _MASK_LOOSE)
+
+
+def _cdc_ends(text: str, min_chars: int, target_chars: int, max_chars: int):
+    """`_cdc_boundaries`' offsets: the extension's when it answers, the
+    loop's otherwise. A text no longer than the minimum is one piece, which
+    the loop says at once (0.25 µs) — the extension would first encode a
+    non-ASCII one to UTF-8 (0.44 µs), and many sections are that short."""
+    if _NATIVE is not None and len(text) > min_chars:
+        ends = _NATIVE.boundaries(text, min_chars, target_chars, max_chars)
+        if ends is not None:
+            return ends
+    return _cdc_boundaries(text, min_chars, target_chars, max_chars)
+
+
 def cdc_split(text: str, params=None) -> list[str]:
     """`text` cut into content-defined pieces. Pure function of the text
     and the layer's sizes (`_cdc_sizes`)."""
     pieces = []
     previous = 0
-    for end in _cdc_boundaries(text, *_cdc_sizes(params)):
+    for end in _cdc_ends(text, *_cdc_sizes(params)):
         piece = text[previous:end]
         if piece:
             pieces.append(piece)
