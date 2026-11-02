@@ -302,13 +302,14 @@ def test_the_sample_runs_through_the_whole_search_stage_by_stage(tmp_path, monke
     res = ab.rerank(out, "wikipedia", encoders=["bge", "harrier"], recipe=recipe,
                     plans=_plans(out, {"mountain snow": {"it": "neve montagna"},
                                        "castello torre": {"en": "castle tower"}}),
-                    depths=[2, 4], call=call)
+                    typed=_plans(out / "typed", {}), depths=[2, 4], call=call)
     rows = res["rows"]
-    assert rows["bge"]["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
-    assert rows["harrier"]["hit@1"] == 1.0
-    assert rows["BM25"]["hit@1"] == 1.0
-    assert rows["bge + rerank@4"]["hit@1"] == 1.0
-    assert "bge + BM25 + rerank@4  vs  BM25 + rerank@4" in res["pairs"]
+    assert rows["bge [translated]"]["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
+    assert rows["harrier [typed]"]["hit@1"] == 1.0
+    assert rows["BM25 [translated]"]["hit@1"] == 1.0
+    assert rows["bge + rerank@4 [translated]"]["hit@1"] == 1.0
+    assert "bge + BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [translated]" in res["pairs"]
+    assert "BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [typed]" in res["pairs"]
     variants = {q for q, _ in seen}
     assert {"neve montagna", "castle tower"} <= variants, "each record judged in its language"
     assert (out / "pipeline" / "pipeline.json").exists()

@@ -53,35 +53,43 @@ def run(tmp_path, monkeypatch):
     monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
     seen = []
     plans = pe.PlanStore(tmp_path / "plans.jsonl", lambda text: dict(PLANS[text]))
+    typed = pe.PlanStore(tmp_path / "typed.jsonl", lambda text: _typed(text))
     res = pe.evaluate(tmp_path / "out", "set", DOCS, QUESTIONS,
                       {"a": [WRONG, WRONG], "b": [RIGHT[0], RIGHT[1]]},
-                      recipe=RECIPE, plans=plans, depths=[2, 4], say=lambda m: None,
+                      recipe=RECIPE, plans=plans, typed=typed, depths=[2, 4], say=lambda m: None,
                       call=_judge(seen))
     return res, seen, tmp_path
 
 
-def test_every_stage_has_its_own_row(run):
+def _typed(text):
+    return {"core": text, "translations": {}, "query_lang": PLANS[text]["query_lang"], "only": [],
+            "main": None, "status": "off"}
+
+
+def test_every_stage_has_its_own_row_translated_and_typed(run):
     res, _seen, _ = run
     names = set(res["rows"])
-    for stage in ("BM25", "a", "b", "a + BM25", "b + BM25"):
-        assert stage in names
-        assert {f"{stage} + rerank@2", f"{stage} + rerank@4"} <= names
+    for mode in ("translated", "typed"):
+        for stage in ("BM25", "a", "b", "a + BM25", "b + BM25"):
+            assert f"{stage} [{mode}]" in names
+            assert {f"{stage} + rerank@2 [{mode}]", f"{stage} + rerank@4 [{mode}]"} <= names
 
 
 def test_the_better_encoder_wins_alone_and_the_reranker_closes_the_gap(run):
     res, _seen, _ = run
     rows = res["rows"]
-    assert rows["b"]["mrr@10"] == 1.0
-    assert rows["a"]["mrr@10"] < rows["b"]["mrr@10"]
+    assert rows["b [translated]"]["mrr@10"] == 1.0
+    assert rows["a [translated]"]["mrr@10"] < rows["b [translated]"]["mrr@10"]
     # the reranker over all four books finds each question's book first
-    assert rows["a + rerank@4"]["hit@1"] == 1.0
+    assert rows["a + rerank@4 [translated]"]["hit@1"] == 1.0
     # over two it cannot reach a book "a" ranks lower than that
-    assert rows["a + rerank@2"]["hit@2"] <= rows["a"]["hit@2"]
+    assert rows["a + rerank@2 [translated]"]["hit@2"] <= rows["a [translated]"]["hit@2"]
 
 
 def test_bm25_finds_by_words_in_each_language_group(run):
     res, _seen, _ = run
-    assert res["rows"]["BM25"]["hit@1"] == 1.0, "each question names its book's own words"
+    assert res["rows"]["BM25 [translated]"]["hit@1"] == 1.0, "each question names its book's own words"
+    assert res["rows"]["BM25 [typed]"]["hit@1"] == 1.0
 
 
 def test_each_pair_is_judged_in_its_records_language(run):
@@ -89,26 +97,29 @@ def test_each_pair_is_judged_in_its_records_language(run):
     by_variant = {}
     for q, texts in seen:
         by_variant.setdefault(q, set()).update(t.split("\n")[0] for t in texts)
-    assert by_variant["white whale"] <= {"Moby-Dick", "Walden"}
+    # translated: a record in another language meets the question in its own
     assert by_variant["balena bianca"] <= {"I Malavoglia", "Pinocchio"}
-    assert by_variant["burattino di legno"] <= {"I Malavoglia", "Pinocchio"}
     assert by_variant["wooden puppet"] <= {"Moby-Dick", "Walden"}
 
 
 def test_the_pairs_ask_whether_the_encoder_pays_off_after_the_pipeline(run):
     res, _seen, _ = run
-    assert "a + BM25 + rerank@4  vs  BM25 + rerank@4" in res["pairs"]
-    assert "a  vs  b" in res["pairs"] and "a + BM25 + rerank@2  vs  b + BM25 + rerank@2" in res["pairs"]
+    assert "a + BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [translated]" in res["pairs"]
+    assert "a [typed]  vs  b [typed]" in res["pairs"]
+    assert "a + BM25 + rerank@2 [translated]  vs  b + BM25 + rerank@2 [translated]" in res["pairs"]
+    assert "BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [typed]" in res["pairs"]
+    assert {"mrr@10", "p@10", "mrr@5", "p@5"} <= set(res["pairs"]["a [typed]  vs  b [typed]"])
     assert set(res["by_language"]) == {"en", "it"}
 
 
 def test_a_rerun_asks_neither_the_reranker_nor_the_plan_again(run, monkeypatch):
     res, _seen, tmp = run
     plans = pe.PlanStore(tmp / "plans.jsonl", lambda text: pytest.fail("planned again"))
+    typed = pe.PlanStore(tmp / "typed.jsonl", lambda text: pytest.fail("planned again"))
     again = []
     res2 = pe.evaluate(tmp / "out", "set", DOCS, QUESTIONS,
                        {"a": [WRONG, WRONG], "b": [RIGHT[0], RIGHT[1]]},
-                       recipe=RECIPE, plans=plans, depths=[2, 4], say=lambda m: None,
+                       recipe=RECIPE, plans=plans, typed=typed, depths=[2, 4], say=lambda m: None,
                        call=_judge(again))
     assert again == [] and res2["rows"] == res["rows"]
     assert json.loads((tmp / "out" / "pipeline.json").read_text())["depths"] == [2, 4]
@@ -121,3 +132,13 @@ def test_another_reranker_in_the_same_place_is_refused(run):
     with pytest.raises(SystemExit, match="different settings"):
         pe.evaluate(tmp / "out", "set", DOCS, QUESTIONS, {"a": [WRONG, WRONG]},
                     recipe=other, plans=plans, depths=[2], say=lambda m: None, call=_judge([]))
+
+
+def test_typed_judges_every_pair_with_the_question_as_typed(run):
+    """Without translation the Italian books meet "white whale" itself, and
+    a pair both forms ask is scored once."""
+    _res, seen, _ = run
+    asked = [(q, t) for q, texts in seen for t in texts]
+    titles = {(q, t.split("\n")[0]) for q, t in asked}
+    assert ("white whale", "I Malavoglia") in titles or ("white whale", "Pinocchio") in titles
+    assert len(asked) == len(set(asked)), "no pair asked twice"
