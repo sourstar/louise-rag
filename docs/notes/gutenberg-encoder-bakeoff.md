@@ -140,4 +140,29 @@ keeps the incumbent.
 
 ## Result
 
+### gutenberg (2026-11-02 ~10:10): Qwen3-4B Q4_K_M stays
+
+53,621 texts, 490 queries judged by work. Measured by München; harrier's
+document vectors are G1's (parallel:1, its repro check exact).
+
+| model | hit@1 | hit@10 | hit@40 | MRR@10 |
+|---|---|---|---|---|
+| Qwen3-4B Q4_K_M (stored vectors, gutenberg's instruction) | 0.7918 | 0.9776 | 0.9939 | **0.8630** |
+| harrier-0.6b f16, gutenberg's instruction | 0.7367 | 0.9061 | 0.9449 | 0.7934 |
+| harrier-0.6b f16, its own retrieval prompt | 0.7429 | 0.9041 | 0.9469 | 0.7989 |
+
+- **Qwen3 − harrier, MRR@10:**
+  - +0.070 [+0.037, +0.103], p = 0.0001 (104 queries better, 57 worse);
+  - against harrier's own prompt +0.064, p = 0.0001.
+- **Verdict by the rule:** harrier is significantly worse, so Qwen3 stays on
+  gutenberg. The "one model" clause does not apply. On wikipedia and
+  wikidata, harrier must be significantly better than bge-m3.
+- **Speed, card to itself:** harrier 7.97 texts/s, 7,199 tokens/s
+  (parallel:1, concurrency 2, card ~61–71 % busy). Qwen3's like-for-like
+  sample follows G3.
+- The pool is easier than the whole collection, so these are not the
+  search's own figures. A gap of 0.07 MRR@10 is well outside the noise.
+
+### wikidata, wikipedia
+
 *Pending.*
