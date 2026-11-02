@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Tue, 27 Oct 2026 21:44:03 +0000
+Date: Mon, 2 Nov 2026 21:06:12 +0000
 Subject: [PATCH] fix(llama-cpp): encode encoder-decoder slots together, in
  waves (T5, MADLAD)
 
@@ -16,6 +16,13 @@ Checked on CPU with a random-weight T5: a lone request byte-identical to
 late arrival is answered after the wave; an input over n_ubatch and n > 1
 are refused; 60 requests after a burst leave every slot empty.
 
+Rebased 2026-11-02 onto LocalAI 16acc89 (llama.cpp ddf48f8): two hunks
+re-placed by hand around upstream's new audio-stream and realtime conditions
+(release() and the loop that picks the generating slots), the code unchanged.
+The same CPU checks pass at ddf48f8: a lone request equal to the library's;
+4 arrival orders, the same 7 outputs; in-wave equal to alone on 7 of 7; over
+n_ubatch and n > 1 refused with 400; 60 requests leave every slot idle.
+
 Assisted-by: Claude Code
 ---
  .../0004-server-encoder-decoder-waves.patch   | 327 ++++++++++++++++++
@@ -24,7 +31,7 @@ Assisted-by: Claude Code
 
 diff --git a/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
 new file mode 100644
-index 00000000..5e6adb3e
+index 0000000..5bf20b0
 --- /dev/null
 +++ b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
 @@ -0,0 +1,327 @@
@@ -64,10 +71,10 @@ index 00000000..5e6adb3e
 +enc_dec; slot_order is the slot order for them).
 +
 +diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-+index 7fefa9058..cbb28dd60 100644
++index 1abec47..f11c533 100644
 +--- a/tools/server/server-context.cpp
 ++++ b/tools/server/server-context.cpp
-+@@ -27,6 +27,9 @@
++@@ -33,6 +33,9 @@
 + #include <random>
 + #include <utility>
 + #include <fstream>
@@ -77,7 +84,7 @@ index 00000000..5e6adb3e
 + 
 + // fix problem with std::min and std::max
 + #if defined(_WIN32)
-+@@ -355,6 +358,13 @@ struct server_slot {
++@@ -417,6 +420,13 @@ struct server_slot {
 +     // (llama_process ENCODE) when the slot starts; the task's own prompt is then
 +     // the decoder's start token
 +     llama_tokens enc_tokens;
@@ -91,14 +98,14 @@ index 00000000..5e6adb3e
 + 
 +     // sampling
 +     json json_schema;
-+@@ -600,9 +610,15 @@ struct server_slot {
++@@ -701,9 +711,15 @@ struct server_slot {
 + 
 +             // do not keep context of the child slots - the parent's context is enough
 +             // nor of the stateless slots - no task ever reuses it
-+-            if (task->is_child() || task->is_stateless()) {
++-            if (task->is_child() || task->is_stateless() || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME) {
 ++            // nor of an encoder-decoder slot: its decoder positions belong to one encoder
 ++            // input, and freeing them gives the next wave the same cells as the last
-++            if (task->is_child() || task->is_stateless() || enc_live) {
+++            if (task->is_child() || task->is_stateless() || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME || enc_live) {
 +                 prompt_clear();
 +             }
 ++            enc_live   = false;
@@ -106,9 +113,9 @@ index 00000000..5e6adb3e
 ++            t_enc_wait = 0;
 ++            enc_tokens.clear();
 + 
-+             callback_on_reset(*this);
-+ 
-+@@ -1249,11 +1265,11 @@ private:
++             // mtmd_helper always re-eval the whole prompt
++             if (task->type == SERVER_TASK_TYPE_TTS) {
++@@ -1368,11 +1384,11 @@ private:
 +                 && std::string(arch) == "t5";
 +         }
 + 
@@ -124,7 +131,7 @@ index 00000000..5e6adb3e
 +         }
 + 
 +         try {
-+@@ -1885,6 +1901,122 @@ private:
++@@ -2017,6 +2033,122 @@ private:
 +         return output;
 +     }
 + 
@@ -247,7 +254,7 @@ index 00000000..5e6adb3e
 +     bool launch_slot_with_task(server_slot & slot, server_task && task) {
 +         // process per-request lora adapters
 +         if (!task.params.lora.empty()) {
-+@@ -2009,7 +2141,14 @@ private:
++@@ -2175,7 +2307,14 @@ private:
 +                 send_error(task, "an encoder-decoder model takes text only", ERROR_TYPE_INVALID_REQUEST);
 +                 return false;
 +             }
@@ -262,7 +269,7 @@ index 00000000..5e6adb3e
 +             llama_token dec_start = llama_model_decoder_start_token(model_tgt);
 +             if (dec_start == LLAMA_TOKEN_NULL) {
 +                 dec_start = llama_vocab_bos(vocab);
-+@@ -3500,8 +3639,29 @@ private:
++@@ -4155,8 +4294,29 @@ private:
 +         std::vector<server_slot *> generating;
 +         std::vector<server_slot *> drafting;
 + 
@@ -290,10 +297,10 @@ index 00000000..5e6adb3e
 +         // determine which slots are generating and drafting
 +-        iterate(slots, [&](server_slot & slot) {
 ++        iterate(slot_order, [&](server_slot & slot) {
-+             if (slot.state != SLOT_STATE_GENERATING || slot.task->type == SERVER_TASK_TYPE_TTS) {
++             if (slot.state != SLOT_STATE_GENERATING || slot.task->type == SERVER_TASK_TYPE_TTS || slot.task->type == SERVER_TASK_TYPE_REALTIME) {
 +                 return;
 +             }
-+@@ -3639,7 +3799,7 @@ private:
++@@ -4298,7 +4458,7 @@ private:
 +         if (params_base.cont_batching || batch.size() == 0) {
 +             bool add_ok = true; // false means the batch is full, skip remaining slots
 + 
@@ -302,7 +309,7 @@ index 00000000..5e6adb3e
 +                 if (!add_ok || batch.size() >= n_batch) {
 +                     return; // batch is full, skip remaining slots
 +                 }
-+@@ -3648,6 +3808,12 @@ private:
++@@ -4307,6 +4467,12 @@ private:
 +                     return;
 +                 }
 + 
@@ -315,7 +322,7 @@ index 00000000..5e6adb3e
 +                 // check if we can batch this slot with the previous one
 +                 if (slot_batched && !slot_batched->can_batch_with(slot)) {
 +                     return;
-+@@ -3709,39 +3875,6 @@ private:
++@@ -4374,39 +4540,6 @@ private:
 +                             return;
 +                         }
 + 
