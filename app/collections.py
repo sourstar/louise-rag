@@ -72,6 +72,11 @@ class EmbedRecipe:
     # `space_id` while calibration and the gate prefixed with the Codex's:
     # the gate would have passed one function and search run another.
     query_instruction: str | None = None
+    # The Codex's `space.document.instruction` (09 §9.3, Codex version 11),
+    # prepended to every DOCUMENT input by embeddings._sent — the chunks, the
+    # calibration set, the gate's texts, a probe — as the query instruction is
+    # to a query. From the Codex only, like the query's: a node cannot state it.
+    document_instruction: str | None = None
     # HOW AN INPUT LONGER THAN `ctx` IS CUT, which is part of the function a
     # space's vectors are of (docs/notes/char-cut-truncation.md, 2026-10-18).
     # `characters`: the platform cuts to ~ctx x 4 characters, as every live
@@ -200,16 +205,18 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     messages, whichever file the operator is editing."""
     if not isinstance(raw, dict):
         return None
-    for key in ("query_prefix", "query_instruction", "instruction"):
+    for key in ("query_prefix", "query_instruction", "instruction",
+                "document_prefix", "document_instruction", "passage_prefix"):
         if key in raw:
             # 25b30f3 read `query_prefix` here, and the operator was told to
             # write one into a collection file. Refused rather than ignored:
             # ignored, it would look set while search ran without it.
             raise ValueError(
-                f"{where}: `{key}` is not a node's to state. A query's "
-                f"instruction is the space's — `space.query.instruction` in "
-                f"the Codex (02 §2.4, 09 §9.3), inside `space_id` — and "
-                f"`hold collection create` is where it is set")
+                f"{where}: `{key}` is not a node's to state. An instruction "
+                f"is the space's — `space.query.instruction` or "
+                f"`space.document.instruction` in the Codex (02 §2.4, 09 §9.3), "
+                f"inside `space_id` — and `hold collection create` is where it "
+                f"is set")
     if "model" in raw:
         # No alias (operator, 2026-10-08): one `model` named the document
         # side and the query side guessed — the guess is what sent the
@@ -962,6 +969,7 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
     # hold/embedder.py), so search runs the function the gate passed.
     # and the cut, the space's when it declares one (no live Codex does)
     return replace(recipe, query_instruction=space.query.instruction or None,
+                   document_instruction=getattr(space, "document_instruction", None) or None,
                    cut=getattr(space, "cut", None) or "characters")
 
 

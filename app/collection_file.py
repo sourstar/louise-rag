@@ -202,7 +202,9 @@ def _codex_toml_text(path: Path, *, codex: str, profile: str | None,
             lines.append(f"batch = {int(getattr(encoder, 'batch', 0) or 0)}")
         if "concurrency" in stated or getattr(encoder, "concurrency", 1) > 1:
             lines.append(f"concurrency = {encoder.concurrency}")
-        if getattr(encoder, "exactness", "near") != "near":
+        # the default is "exact" since 2026-11-02 (#244, collections._exactness):
+        # "near" is the off-default value a rewrite must keep
+        if "exactness" in stated or getattr(encoder, "exactness", "exact") != "exact":
             lines.append(f"exactness = {_toml_scalar(encoder.exactness)}")
         if getattr(encoder, "device", None):
             lines.append(f"device = {_toml_scalar(encoder.device)}")

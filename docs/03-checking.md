@@ -300,7 +300,11 @@ nor searched with.
 **The gate also measures what the answers depend on besides the run.**
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
 one at a time again in reverse order, then the way the peer contributes:
-its batching and its concurrency (*amended 2026-10-25*, operator's
+its batching and its concurrency — those sixteen and, besides them, the
+set's sixteen longest texts, cut where the space cuts them, which are also
+embedded one at a time to compare against (*amended 2026-11-02*: a batch
+of 16 answered window-long texts wrong while each alone was right, and
+the short fingerprint texts could not show it) (*amended 2026-10-25*, operator's
 choice A; *amended again 2026-11-01*, operator's choice B; CLAUDE.md
 invariant 12). A run whose every answer to one text — in either order,
 across three fresh loads, batched or alone — is the same byte string is

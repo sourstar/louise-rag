@@ -743,13 +743,50 @@ def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
     not another puts two kinds of query vector in one collection and nothing
     reports it: both are honest vectors of the right width.
 
-    Documents are never touched: "a document is embedded by space.encoder
-    and never prefixed". A prefix that leaked onto the document side would
-    move every vector in the collection together, so retrieval would still
-    look reasonable while no longer matching the space the Codex pins."""
+    Documents never get the QUERY instruction: a query prefix that leaked
+    onto the document side would move every vector in the collection
+    together, so retrieval would still look reasonable while no longer
+    matching the space the Codex pins. A document gets the space's own
+    DOCUMENT instruction where it declares one (`_documents`)."""
     if not (query and recipe.query_instruction):
         return texts
     return [f"{recipe.query_instruction}{t}" for t in texts]
+
+
+def _documents(texts: list[Item], recipe: "collections_mod.EmbedRecipe") -> list[Item]:
+    """The texts as the DOCUMENT side must receive them: the Codex's
+    `space.document.instruction` prepended (09 §9.3, Codex version 11) —
+    Nemotron's "passage: " — exactly as `_asked` prepends a query's, no
+    separator added or trimmed. Nothing where the space declares none, which
+    is every space before 2026-11-02.
+
+    Applied HERE ONLY, to every document input whatever path it came by —
+    a collection's chunks, the calibration set at `create`, the gate's and
+    the re-check's texts, a probe — so the reference, the gate and the
+    vectors written are one function. Nobody else prefixes a document, and
+    `asked` (the query side's "already prefixed") does not skip it: the
+    gate's document answers are asked with it set (run_check.answers).
+
+    A pair is refused: its documents are pairs (09 §9.3, input forms), and a
+    prefix on one half is a function no space names (`validate` refuses such
+    a Codex)."""
+    instruction = getattr(recipe, "document_instruction", None)
+    if not instruction:
+        return texts
+    if any(not isinstance(t, str) for t in texts):
+        raise InputFormError("a document instruction prefixes a text; a pair is a "
+                             "document of a pair layer (09 §9.3, input forms)")
+    return [f"{instruction}{t}" for t in texts]
+
+
+def _sent(texts: list[Item], recipe: "collections_mod.EmbedRecipe", query: bool,
+          asked: bool) -> list[Item]:
+    """What the encoder receives: a query with the space's query instruction
+    unless the caller `asked` it already, a document with the space's
+    document instruction always (`_asked`, `_documents`)."""
+    if query:
+        return texts if asked else _asked(texts, recipe, True)
+    return _documents(texts, recipe)
 
 
 def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRecipe",
@@ -767,7 +804,7 @@ def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRec
     to measure batch invariance (03 §3.3)."""
     side = _side(recipe, query)
     return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0]
-            for text in (texts if asked else _asked(texts, side, query))]
+            for text in _sent(texts, side, query, asked)]
 
 
 def _embed_texts(texts: list[Item], timeout: float = 300, *,
@@ -789,7 +826,7 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             "_embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
-    texts = texts if asked else _asked(texts, recipe, query)
+    texts = _sent(texts, recipe, query, asked)
     co = _coalescing.get()
     if co is not None and not query and co.serves(recipe):
         # the texts join other documents' in requests of the gated batch

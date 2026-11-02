@@ -167,6 +167,10 @@ EXACT, NEAR = "exact", "near"
 #: input of that shape, 2026-10-30)
 NEAR_LOADS = 3
 SWEEP = 32
+#: the set's longest texts the batch check sends besides the sixteen
+#: (2026-11-02, gutenberg): a batch of window-long texts is where batching
+#: went wrong, and the sixteen fingerprint texts are short
+LONG_PROBE = 16
 #: how far apart a near-exact run's answers to one text may be
 NEAR_VARIATION = 0.99999
 
@@ -326,8 +330,14 @@ def batch_invariant(single: Sequence[Sequence[float]], batched: Sequence[Sequenc
     own variation) is gone: under invariant 12 a run's single-text passes
     are equal, so the only band left was f32 rounding, and a batched vector
     that a checker embedding one text cannot reproduce is not admitted."""
-    from . import fingerprint
-    return len(batched) == len(single) and fingerprint.of(batched) == fingerprint.of(single)
+    # the fingerprint's own bytes (each vector little-endian f32, 09 §9.12),
+    # compared directly: the check carries the set's longest texts besides
+    # the sixteen (LONG_PROBE), and a fingerprint is over sixteen alone
+    import numpy as np
+    if len(batched) != len(single):
+        return False
+    a, b = np.asarray(single, dtype="<f4"), np.asarray(batched, dtype="<f4")
+    return a.shape == b.shape and a.tobytes() == b.tobytes()
 
 
 def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float]]) -> bool:
@@ -335,6 +345,16 @@ def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float
     (the caller sends it in reverse order), give the same bytes."""
     from . import fingerprint
     return len(again) == len(single) and fingerprint.of(again) == fingerprint.of(single)
+
+
+def longest(texts: Sequence, count: int) -> list:
+    """The `count` longest items of the set (a pair by its two segments),
+    longest first; ties in set order. What the batch check sends together."""
+    if count <= 0:
+        return []
+    size = [(len(t[0]) + len(t[1])) if isinstance(t, tuple) else len(t) for t in texts]
+    order = sorted(range(len(texts)), key=lambda i: (-size[i], i))
+    return [texts[i] for i in order[:count]]
 
 
 def sweep(texts: Sequence, count: int, window: int | None) -> list:
@@ -516,7 +536,15 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         variation = 1.0 if reproducible else min(
             (cosine(a, b) for a, b in zip(single, again)), default=0.0)
         if contribute is not None:
-            batched = contribute(sixteen)
+            # THE LONG TEXTS TOO (2026-11-02, München's gut-diag): gutenberg's
+            # batch 16 answered the five longest texts of the set wrong (cosine
+            # 0.91–0.99 to the member) while each alone was right, and this
+            # check — the sixteen fingerprint texts, all short — said "as one
+            # text at a time". So the batches also carry the set's longest
+            # texts, cut where the space cuts them, together in one request.
+            long = longest(texts, LONG_PROBE)
+            single = single + (embed_one(long) if long else [])
+            batched = contribute(sixteen + long)
             invariant = batch_invariant(single, batched)
             if not invariant and exactness == NEAR and len(batched) == len(single):
                 # BATCHES HELD TO THE RUN'S OWN BOUND (operator, 2026-11-01,

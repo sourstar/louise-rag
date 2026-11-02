@@ -822,7 +822,13 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
     recipe = collections_mod.EmbedRecipe(
         url=url, api=api, model=model,
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"],
-        cut=space.get("cut") or "characters")
+        cut=space.get("cut") or "characters",
+        # THE DOCUMENT INSTRUCTION IS THE SPACE'S (09 §9.3, Codex version 11):
+        # the document reference is made with it, as every document is
+        # embedded; the query side's own instruction is prefixed by
+        # calibration.build_query_member, never here
+        document_instruction=(None if query
+                              else ((space.get("document") or {}).get("instruction") or None)))
     # G5: an endpoint that states its runs — VeGa's receipts — is held to
     # the engine and weights the recipe names, checked before the Codex exists
     vouched = api == embeddings.VEGA
@@ -4114,8 +4120,12 @@ def cmd_embedder_calibrate(a) -> int:
         set_id, texts = calib.load_pairs(a.pairs)
     else:
         set_id, texts = calib.load_set(a.set_id)
+    instruction = getattr(a, "document_instruction", None) or None
+    if instruction and getattr(a, "pairs", None):
+        raise CodexError("--document-instruction prefixes a text; a pair space's documents "
+                         "are pairs (09 §9.3)")
     _print(calib.measure(reference, against, set_id=set_id, texts=texts,
-                         embed=calib.http_embed(a.ctx)))
+                         embed=calib.http_embed(a.ctx, document_instruction=instruction)))
     return 0
 
 
@@ -5293,6 +5303,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a PAIR space: its calibration set, the pairs "
                         "tools/build_pair_calibration_set.py drew, embedded as pairs "
                         "(09 §9.12); not with --set")
+    p.add_argument("--document-instruction", default=None, metavar="TEXT",
+                   help="the space's space.document.instruction (09 §9.3, Codex version 11), "
+                        "prepended to every text as the documents will be: Nemotron's "
+                        "\"passage: \"; not with --pairs")
     p.set_defaults(fn=cmd_embedder_calibrate)
 
     p = everbs.add_parser("run", help="the run an endpoint states now — engine, weights, driver, "

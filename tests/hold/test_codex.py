@@ -357,10 +357,11 @@ def test_an_unknown_version_is_refused(codex):
     # 7 is the annotations Codex since 2026-10-09 (02 §2.10), 8 the token
     # cut's since 2026-10-18 (tests/hold/test_cut.py), 9 the graph
     # amendment's since 2026-10-20 (tests/hold/test_annotations.py), 10 the
-    # exactness amendment's since 2026-11-01 (tests/hold/test_codex_exactness.py);
-    # 11 is unknown
-    d = dict(codex.to_dict(), version=11)
-    with pytest.raises(CodexError, match="unsupported Codex version 11"):
+    # exactness amendment's since 2026-11-01 (tests/hold/test_codex_exactness.py),
+    # 11 the document instruction's since 2026-11-02
+    # (tests/hold/test_codex_document_instruction.py); 12 is unknown
+    d = dict(codex.to_dict(), version=12)
+    with pytest.raises(CodexError, match="unsupported Codex version 12"):
         cx.from_dict(d)
 
 

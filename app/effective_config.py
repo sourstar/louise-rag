@@ -59,7 +59,8 @@ def _encoder(collection) -> dict[str, Any]:
             "encoder.query_model": _v(r.query_model, FILES),
             "encoder.dtype": _v(r.dtype, CODEX), "encoder.ctx": _v(r.ctx, CODEX),
             "encoder.dim": _v(r.dim, CODEX),
-            "encoder.query_instruction": _v(r.query_instruction, CODEX)}
+            "encoder.query_instruction": _v(r.query_instruction, CODEX),
+            "encoder.document_instruction": _v(r.document_instruction, CODEX)}
 
 
 def _reranker(collection) -> dict[str, Any]:
