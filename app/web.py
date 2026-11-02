@@ -762,7 +762,7 @@ async def ask_query(request: Request, body: AskQueryBody):
 # browser dropping a query. Also if the query is stuck or dropped I should
 # see a notification in the gui." The page starts a job here and listens to
 # it as Server-Sent Events; a connection the browser drops is picked up
-# again where it stopped (`Last-Event-ID`), a reload finds the job again, and
+# again where it stopped (the page's `?after=`, or `Last-Event-ID`), a reload finds the job again, and
 # a job that is stuck or dropped says so (app/relay.py). /ask/query and
 # /v1/chat/completions stay as they are for every other client.
 

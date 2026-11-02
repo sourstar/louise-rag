@@ -44,7 +44,10 @@ function script(id, bodies, status = 200) { jobs[id] = { bodies, status, served:
     let m = u.pathname.match(/^\/ask\/relay\/([^/]+)\/events$/);
     if (m) {
       const job = jobs[m[1]];
-      eventReqs.push({ id: m[1], last: (req.headers || {})['last-event-id'] || null });
+      // the last event a reconnect names: the page's OWN `?after=`, never the
+      // browser's Last-Event-ID (Chromium 154 sends none that is seen —
+      // München, 2026-11-02), so the check holds on every browser
+      eventReqs.push({ id: m[1], last: u.searchParams.get('after') || null });
       if (!job || job.status !== 200)
         return req.respond({ status: 404, contentType: 'application/json', body: '{"detail":"gone"}' });
       const body = job.bodies[Math.min(job.served++, job.bodies.length - 1)];
@@ -74,7 +77,7 @@ function script(id, bodies, status = 200) { jobs[id] = { bodies, status, served:
   await watchNotes();
 
   // 1. the connection drops mid-question while the node says it is stuck;
-  //    the browser reconnects naming the last event, and nothing is lost
+  //    the page reconnects naming the last event, and nothing is lost
   nextIds = ['s1'];
   script('s1', [
     ev(null, 'status', { state: 'running' }) + ev(1, 'stuck', { where: 'rerank', quiet_s: 61 }),
@@ -86,7 +89,7 @@ function script(id, bodies, status = 200) { jobs[id] = { bodies, status, served:
   const notes1 = await page.evaluate(() => __notes);
   check(ok1 === true, '1. the search ends done', ok1);
   check(s1.length === 2 && s1[0].last === null && s1[1].last === '1',
-        '1. the reconnect names the last event it saw (Last-Event-ID)', s1);
+        '1. the reconnect names the last event it saw (?after=)', s1);
   check(notes1.some(t => /no progress for 61 s \(last step: rerank\)/.test(t)), '1. stuck is said, with its step', notes1);
   check(notes1.some(t => /connection to the node lost — reconnecting/.test(t)), '1. the lost connection is said', notes1);
   check(await page.evaluate(() => __toasts.some(t => /reconnected/.test(t))), '1. and its return');
