@@ -104,6 +104,8 @@ def loads_an_embedder(pb: Any, raw: bytes) -> bool:
     except Exception:                                # noqa: BLE001 — protobuf's DecodeError
         return True
     return bool(opts.Embeddings) and not bool(getattr(opts, "Reranking", False))
+
+
 #: embedded once at load, never returned: its token count with and without
 #: the special tokens the backend adds says how many those are
 PROBE_TEXT = "VeGa counts the special tokens"
