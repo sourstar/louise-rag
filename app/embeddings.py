@@ -22,6 +22,7 @@ import httpx
 import lancedb
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from . import collections as collections_mod
 from . import config, httpc, model_load, vector_parts
@@ -1628,6 +1629,7 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
     if TABLE not in db.table_names():
         return {}
     want = set(ids)
+    wanted = pa.array(sorted(want), type=pa.string())
     out: dict = {}
     tbl = db.open_table(TABLE)
     columns = ["id", "text", "vector"] if with_text else ["id", "vector"]
@@ -1639,13 +1641,17 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
         try:
             rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({chunk})",
                                        prefilter=True)
-                    .select(columns).limit(_RESUME_SCAN_MAX).to_list())
+                    .select(columns).limit(_RESUME_SCAN_MAX).to_arrow())
         except Exception:                       # noqa: BLE001
             return out
-        for r in rows:
-            if r["id"] in want:
-                v = list(r["vector"])
-                out[r["id"]] = (r["text"], v) if with_text else v
+        # The ids are kept in Arrow before any row becomes Python: the
+        # filter returns every chunk of 500 books (gutenberg's: ~65,000
+        # rows of 2,560 floats), and turned into lists first they took
+        # 8 GB to give back a few (the bakeoff's pool, 2026-11-02, OOM).
+        rows = rows.filter(pc.is_in(rows.column("id"), value_set=wanted))
+        for r in rows.to_pylist():
+            v = list(r["vector"])
+            out[r["id"]] = (r["text"], v) if with_text else v
     return out
 
 
