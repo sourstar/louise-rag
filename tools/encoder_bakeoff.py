@@ -77,6 +77,34 @@ one set. A document is `title + " " + text` as MTEB embeds it; a query
 counts when the qrels give it a document with score > 0, as BEIR does. The
 metric code is the same for every set.
 
+A SET FROM A HELD COLLECTION (2026-11-02). The operator, on gutenberg:
+"Measure only, I am wondering if the quantization to 4 bits of qwen3 is
+putting it at the same level of bge at 16 bits". No published set asks
+gutenberg's question, and its own queries exist: the 451 descriptive and 39
+title queries of docs/notes/one-language-per-work.md, each judged by the WORK
+it names (tools/measure/one_language_*.tsv, the works from
+one_language_works.py). `pool` makes them a BEIR set over a POOL of the
+collection's own chunks, read from its vector table as they were embedded:
+every target work's books (the first `--head` chunks and an even spread up to
+`--per-book`), books named with `--negative-books`, and `--random` chunks of
+other books, seeded. A chunk of any book of the named work is relevant
+(binary qrels). The pool's distractors are chosen by no encoder, so no
+encoder's own confusions are favoured; a pool is easier than the whole
+collection, so its numbers compare encoders with each other, never with a
+search over every chunk. Chunk-level MRR@10 is the rank of the first chunk of
+the right work; with hundreds of relevant chunks per query, recall@k is not
+the measure here and `hit@k` (any relevant chunk in the top k) is: hit@40 is
+what reaches the reranker (measuring.md §5).
+
+`embed --from-collection C --stored-vectors` scores the vectors C already
+holds for the pool (RULE 1: bytes that exist are not recomputed) and embeds
+only the queries, with C's served encoder and instruction — the row is what
+C's vector leg serves. It first re-embeds `--check` pool chunks with that
+encoder and refuses the stored vectors if any falls below cosine 0.99 to its
+stored twin: a stored vector of another input or run is not this row.
+`--query-like C` gives another model C's query instruction, so a second
+quantization of C's encoder is asked exactly as C asks it.
+
 WHAT LOUISE SERVES IS THE HYBRID (2026-10-28). A search is never the vector
 leg alone: the word leg (tantivy, BM25, the language's stemmer) and the
 vector leg are fused by RRF (05 §5.1), then reranked. On German case law
@@ -229,6 +257,13 @@ def _adapt_lemur(raw: Path, out: Path) -> str:
 
 _ADAPTERS = {"eurlex_sum": _adapt_eurlex_sum, "lemur": _adapt_lemur}
 
+#: a set `pool` makes from a held collection: nothing to download
+POOL = "pool"
+SUITES[POOL] = {"repo": "(made by `pool` from a held collection)", "layout": "beir",
+                "files": _LOCAL, "made": True,
+                "licence": "the collection's own; its gate is checked when the pool is made",
+                "about": "a held collection's chunks, judged queries over named works"}
+
 # Every model in this bake-off declares ctx 8192, and llama.cpp REFUSES an
 # input past its context rather than truncating it, so the cut is ours to
 # make and must be identical for every model or the comparison is void.
@@ -296,6 +331,8 @@ def fetch(out: Path, suite: str = "jurifindit") -> int:
         raise SystemExit(f"{out} holds suite {suite_of(out)!r}: one directory, one set "
                          f"(the runs in it are scored against it)")
     spec = SUITES[suite]
+    if spec.get("made"):
+        raise SystemExit(f"suite {suite!r} is made from a held collection by `pool`, not fetched")
     out.mkdir(parents=True, exist_ok=True)
     adapter = spec.get("adapter")
     if spec["layout"] == "jurifindit":
@@ -397,6 +434,214 @@ def _load_beir(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
                     relevant=[sorted(relevant[qid]) for qid in keep]))
 
 
+# ---------------------------------------------------------------- the pool
+
+#: works whose books overlap in content, so a query for one is answered by the
+#: other (tools/measure/one_language_score.py's, kept identical here)
+ALSO = {"WQ4509219": {"WQ40185"}, "WQ40185": {"WQ4509219"}, "WQ58190302": {"WQ8258"}}
+#: the pool's stored-vector check: a stored vector below this cosine to its
+#: re-embedded twin was made from another input or by another function
+STORED_MIN_COSINE = 0.99
+
+
+def _book_number(book) -> int:
+    """works.json names a book `gutenberg:1342`; the vector table's
+    `book_id` is the number."""
+    return int(str(book).rsplit(":", 1)[-1])
+
+
+def read_works(path: Path) -> dict[str, list[int]]:
+    """work -> its books, from one_language_works.py's works.json (a list of
+    {"work", "books"}) or a plain {work: [books]}."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows = raw.items() if isinstance(raw, dict) else ((w["work"], w["books"]) for w in raw)
+    return {str(w): [_book_number(b) for b in books] for w, books in rows}
+
+
+def read_queries(paths: list[Path]) -> list[tuple[str, str, str]]:
+    """(query id, work, text) from one_language's TSVs: `work<TAB>lang<TAB>text`,
+    a title query's work written `WQ480#T`. The id is `<work field>-<lang>`,
+    as one_language_score.py keys them."""
+    out = []
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            work, lang, text = line.split("\t")
+            out.append((f"{work}-{lang}", work.split("#")[0], text))
+    return out
+
+
+def spread(n: int, keep: int, head: int) -> list[int]:
+    """Which of a book's `n` chunks (by seq order) enter the pool: the first
+    `head` (title page, preface, opening) and an even spread of the rest up
+    to `keep` in all; every chunk when the book has no more than `keep`."""
+    if n <= keep:
+        return list(range(n))
+    first = list(range(min(head, keep)))
+    rest = keep - len(first)
+    if rest <= 0:
+        return first
+    span = n - len(first)
+    picks = sorted({len(first) + (i * span) // rest for i in range(rest)})
+    return first + picks
+
+
+def _book_rows(table, book: int) -> list[dict]:
+    rows = (table.search().where(f"book_id = {int(book)}", prefilter=True)
+            .select(["id", "book_id", "lang", "seq", "text"]).limit(10_000_000).to_list())
+    return sorted(rows, key=lambda r: (int(r["seq"]), str(r["id"])))
+
+
+def pool(out: Path, collection: str, query_files: list[Path], works_file: Path, *,
+         per_book: int = 40, head: int = 4, random_n: int = 20_000, seed: int = 0,
+         negative_books: Path | None = None) -> int:
+    """A BEIR set over a pool of `collection`'s chunks, judged by work (the
+    module docstring, "A SET FROM A HELD COLLECTION"). Read-only on the
+    collection; writes corpus/queries/qrels.jsonl and SOURCE.json in `out`."""
+    from app import collections as collections_mod, embeddings, licensing, vector_parts
+    if (out / "SOURCE.json").exists():
+        raise SystemExit(f"{out} already holds a set; one directory, one set "
+                         f"(delete it to make another pool)")
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    if licensing.state_for(c) == licensing.MISSING:
+        # invariant 9: a measurement USES the corpus too
+        raise SystemExit(f"{collection}: its licence is not acknowledged here (invariant 9)")
+    if vector_parts.is_split(c):
+        raise SystemExit(f"{collection}: its vectors are split into parts; `pool` reads one table")
+    works = read_works(works_file)
+    asked = read_queries(query_files)
+    judged = [(qid, w, t) for qid, w, t in asked if w in works]
+    if len(judged) < len(asked):
+        print(f"{len(asked) - len(judged)} of {len(asked)} queries name a work not in "
+              f"{works_file.name}: left out")
+    relevant_books = {qid: {b for x in {w} | ALSO.get(w, set()) for b in works.get(x, [])}
+                      for qid, w, _ in judged}
+    targets = sorted({b for books in relevant_books.values() for b in books})
+    table = embeddings.table_of_book(c, targets[0]) if targets else None
+    if table is None:
+        raise SystemExit(f"{collection}: no vector table")
+    picked: dict[str, dict] = {}
+    absent = []
+
+    def take_book(book: int) -> int:
+        rows = _book_rows(table, book)
+        if not rows:
+            absent.append(book)
+        for i in spread(len(rows), per_book, head):
+            picked[rows[i]["id"]] = rows[i]
+        return len(rows)
+    for b in targets:
+        take_book(b)
+    n_target = len(picked)
+    negatives = []
+    if negative_books:
+        negatives = sorted({_book_number(x) for x in negative_books.read_text(encoding="utf-8").split()
+                            if x.strip()} - set(targets))
+        for b in negatives:
+            take_book(b)
+    n_negative = len(picked) - n_target
+    # random chunks of OTHER books: seeded positions in the table, the
+    # target books' rows skipped, until `random_n` are drawn
+    ds = table.to_lance()
+    total = ds.count_rows()
+    rng = np.random.default_rng(seed)
+    forbidden = set(targets)
+    drawn = 0
+    tries = 0
+    while drawn < random_n and tries < 20:
+        tries += 1
+        want = min(total, int((random_n - drawn) * 1.2) + 16)
+        at = np.unique(rng.integers(0, total, size=want))
+        got = ds.take(at.tolist(), columns=["id", "book_id", "lang", "seq", "text"]).to_pylist()
+        for r in got:
+            if drawn >= random_n:
+                break
+            if int(r["book_id"]) in forbidden or r["id"] in picked:
+                continue
+            picked[r["id"]] = r
+            drawn += 1
+    out.mkdir(parents=True, exist_ok=True)
+    ids = list(picked)
+    book_of = {i: int(picked[i]["book_id"]) for i in ids}
+    with (out / "corpus.jsonl").open("w", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"_id": i, "title": "", "text": picked[i]["text"] or ""},
+                                ensure_ascii=False) + "\n")
+    with (out / "queries.jsonl").open("w", encoding="utf-8") as fh:
+        for qid, _, text in judged:
+            fh.write(json.dumps({"_id": qid, "text": text}, ensure_ascii=False) + "\n")
+    ids_of_book: dict[int, list[str]] = {}
+    for i in ids:
+        ids_of_book.setdefault(book_of[i], []).append(i)
+    unanswerable = []
+    with (out / "qrels.jsonl").open("w", encoding="utf-8") as fh:
+        for qid, _, _ in judged:
+            hits = [i for b in sorted(relevant_books[qid]) for i in ids_of_book.get(b, ())]
+            if not hits:
+                unanswerable.append(qid)
+            for i in hits:
+                fh.write(json.dumps({"query-id": qid, "corpus-id": i, "score": 1}) + "\n")
+    digests = {name: _sha256(out / name) for name in _LOCAL.values()}
+    settings = {"collection": collection, "table_version": int(table.version),
+                "table_rows": int(total), "per_book": per_book, "head": head,
+                "random": random_n, "seed": seed,
+                "queries": [str(p) for p in query_files], "works": str(works_file),
+                "negative_books": str(negative_books) if negative_books else None}
+    counts = {"chunks": len(ids), "target_chunks": n_target, "negative_chunks": n_negative,
+              "random_chunks": drawn, "target_books": len(targets),
+              "target_books_without_rows": len(absent), "negative_books": len(negatives),
+              "queries": len(judged), "queries_without_a_relevant_chunk": len(unanswerable)}
+    (out / "LICENCE.txt").write_text(SUITES[POOL]["licence"] + "\n", encoding="utf-8")
+    (out / "SOURCE.json").write_text(json.dumps(
+        {"suite": POOL, "dataset": f"collection {collection}", "licence": SUITES[POOL]["licence"],
+         "about": SUITES[POOL]["about"], "pool": settings, "counts": counts,
+         "sha256": digests}, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(counts, indent=2))
+    if absent:
+        print(f"target books with no rows in the table: {absent[:20]}"
+              + (" …" if len(absent) > 20 else ""))
+    if unanswerable:
+        # a query no pool chunk answers scores 0 for every encoder: `load`
+        # leaves it out (no relevant document), so the counts above say it
+        print(f"{len(unanswerable)} queries have no relevant chunk in the pool and are not scored")
+    return 0
+
+
+def stored_vectors(out: Path, collection: str) -> np.ndarray:
+    """The vectors `collection` holds for the pool's chunks, in corpus order;
+    every chunk must have one."""
+    from app import collections as collections_mod, embeddings
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    ids = [_id(r) for r in _rows(out / "corpus.jsonl")]
+    got: dict = {}
+    for i in range(0, len(ids), 5000):
+        got.update(embeddings.vectors_by_chunk_id(ids[i:i + 5000], c))
+    missing = [i for i in ids if i not in got]
+    if missing:
+        raise SystemExit(f"{len(missing)} pool chunks have no stored vector in {collection} "
+                         f"(first: {missing[:3]}); the row would not be the collection's")
+    return np.asarray([got[i] for i in ids], dtype=np.float32)
+
+
+def check_stored(stored: np.ndarray, fresh: np.ndarray) -> tuple[float, float]:
+    """(worst, median) cosine of stored vectors to their re-embedded twins;
+    refused below STORED_MIN_COSINE."""
+    a = stored / np.linalg.norm(stored, axis=1, keepdims=True)
+    b = fresh / np.linalg.norm(fresh, axis=1, keepdims=True)
+    cos = (a * b).sum(axis=1)
+    worst, median = float(cos.min()), float(np.median(cos))
+    if worst < STORED_MIN_COSINE:
+        raise SystemExit(f"stored vectors are not this encoder's on this input: worst cosine "
+                         f"{worst:.6f} to the re-embedded twin (median {median:.6f}), below "
+                         f"{STORED_MIN_COSINE}")
+    return worst, median
+
+
 def api_for(model: str, api: str | None = None) -> str:
     """The client the endpoint needs. A VeGa-wrapped model (the node serves
     every GPU encoder as `vega-<name>`) refuses an untagged input, so it is
@@ -480,7 +725,8 @@ def slug_of(query_prefix: str) -> str:
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
           query_prefix: str = "", limit: int | None = None, api: str | None = None,
-          from_collection: str | None = None) -> int:
+          from_collection: str | None = None, stored: bool = False, check: int = 32,
+          query_like: str | None = None) -> int:
     from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
@@ -498,6 +744,15 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         # and the questions too: GerDaLIRSmall's 12,234 made a "smoke" that
         # embedded every one of them (München, 2026-10-29)
         queries = Queries(texts=queries.texts[:limit], relevant=queries.relevant[:limit])
+    if stored and not from_collection:
+        raise SystemExit("--stored-vectors reads a collection's vectors: it needs --from-collection")
+    if stored and limit:
+        raise SystemExit("--stored-vectors embeds no corpus: --limit has nothing to shorten")
+    if query_like:
+        if from_collection or query_prefix:
+            raise SystemExit("--query-like gives ANOTHER model a collection's instruction; "
+                             "not with --from-collection or --query-prefix")
+        query_prefix = served_recipe(query_like).query_instruction or ""
     if from_collection:
         if query_prefix:
             raise SystemExit("--from-collection serves the collection's own query instruction; "
@@ -516,13 +771,28 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     run = out / name
     # a smoke run's shards are not the real run's (its first shard is short)
     _same_settings(run, {"url": url, "model": model, "api": api, "ctx": ctx, "dim": dim,
-                         "max_chars": max_chars, "limit": limit})
+                         "max_chars": max_chars, "limit": limit,
+                         **({"stored_vectors": from_collection} if stored else {})})
     slug = slug_of(query_side)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
     # The corpus side never carries the prefix, so every variant of a model
     # shares these vectors and only the cheap side is re-embedded.
-    doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
+    checked = None
+    if stored:
+        doc = stored_vectors(out, from_collection)
+        n = min(check, len(corpus.texts))
+        at = np.random.default_rng(0).choice(len(corpus.texts), size=n, replace=False) if n else []
+        if n:
+            from app import embeddings
+            fresh = np.asarray(embeddings.embed_calibration(
+                recipe, [corpus.texts[i] for i in at], query=False), dtype=np.float32)
+            worst, median = check_stored(doc[np.asarray(at)], fresh)
+            checked = {"n": n, "worst": round(worst, 6), "median": round(median, 6)}
+            print(f"  stored vectors checked: {n} re-embedded, worst cosine {worst:.6f}, "
+                  f"median {median:.6f}")
+    else:
+        doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
     qry = _embed_sharded([query_prefix + t for t in queries.texts],
                          run / f"queries-{slug}", recipe, query=True)
     np.save(run / "corpus.npy", doc)
@@ -530,7 +800,8 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     (run / f"run-{slug}.json").write_text(json.dumps(
         {"name": name, "slug": slug, "url": url, "model": model, "api": api, "ctx": ctx,
          "max_chars": max_chars, "query_prefix": query_side,
-         "from_collection": from_collection,
+         "from_collection": from_collection, "query_like": query_like,
+         "stored_vectors": bool(stored), "stored_check": checked,
          "limit": limit, "dim": int(doc.shape[1]),
          "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
@@ -554,6 +825,10 @@ def metrics_for(ranking: list[int], relevant: set[int], ks) -> dict[str, float]:
         hits = [d in relevant for d in top]
         found = sum(hits)
         out[f"recall@{k}"] = found / len(relevant) if relevant else 0.0
+        # success@k: any relevant document in the top k — the measure where a
+        # query has hundreds of relevant chunks (a `pool` set: every chunk of
+        # the named work), and what reaches a reranker at its depth
+        out[f"hit@{k}"] = 1.0 if found else 0.0
         out[f"ndcg@{k}"] = (
             _dcg([1.0 if h else 0.0 for h in hits], k)
             / _dcg([1.0] * len(relevant), k)) if relevant else 0.0
@@ -598,7 +873,7 @@ def metrics_of(rankings: list[list[int]], queries: Queries, ks=KS) -> dict[str, 
 
 
 #: the per-query metrics kept beside each row, for the paired test
-PAIRED = ("mrr@10", "ndcg@10")
+PAIRED = ("mrr@10", "ndcg@10", "hit@40")
 
 
 def per_query(rankings: list[list[int]], queries: Queries,
@@ -767,8 +1042,8 @@ def score(out: Path, max_chars: int) -> int:
             json.dumps(result, indent=2) + "\n", encoding="utf-8")
         (run / f"perquery-{slug}.json").write_text(
             json.dumps(per_query(dense, queries)) + "\n", encoding="utf-8")
-        print(f"{label_of(meta)}: mrr@100 {result['mrr@100']:.4f}  "
-              f"recall@10 {result['recall@10']:.4f}")
+        print(f"{label_of(meta)}: mrr@10 {result['mrr@10']:.4f}  mrr@100 {result['mrr@100']:.4f}  "
+              f"recall@10 {result['recall@10']:.4f}  hit@40 {result['hit@40']:.4f}")
         if lexical_rankings is not None:
             fused_rankings = [fuse(t, v) for t, v in zip(lexical_rankings, dense)]
             fused = metrics_of(fused_rankings, queries)
@@ -839,8 +1114,9 @@ def report(out: Path) -> int:
         print(f"{out}: no scored run yet (`embed`, then `score`)")
         return 0
     # nDCG@10 and MRR@10: what MTEB, MLEB and the legal papers report
-    shown = ["recall@3", "recall@5", "recall@10", "recall@100",
-             "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"]
+    shown = (["hit@1", "hit@10", "hit@40", "mrr@10", "mrr@100"] if suite_of(out) == POOL else
+             ["recall@3", "recall@5", "recall@10", "recall@100",
+              "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"])
     width = max(len(name) for name in rows)
     print("| " + "model".ljust(width) + " | "
           + " | ".join(m.rjust(10) for m in shown) + " |")
@@ -867,9 +1143,21 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("fetch", "embed", "lexical", "score", "report"):
+    for cmd in ("fetch", "pool", "embed", "lexical", "score", "report"):
         p = sub.add_parser(cmd)
         p.add_argument("--out", type=Path, required=True)
+        if cmd == "pool":
+            p.add_argument("--collection", required=True)
+            p.add_argument("--queries", type=Path, action="append", required=True,
+                           help="a TSV of work<TAB>lang<TAB>text; repeat for several")
+            p.add_argument("--works", type=Path, required=True,
+                           help="works.json: each work's books (one_language_works.py)")
+            p.add_argument("--per-book", type=int, default=40)
+            p.add_argument("--head", type=int, default=4)
+            p.add_argument("--random", type=int, default=20_000)
+            p.add_argument("--seed", type=int, default=0)
+            p.add_argument("--negative-books", type=Path, default=None,
+                           help="book ids, whitespace-separated, to add as distractors")
         if cmd == "fetch":
             p.add_argument("--suite", default="jurifindit", choices=sorted(SUITES),
                            help="the set; one directory holds one")
@@ -897,6 +1185,13 @@ def main(argv=None) -> int:
                                 "documents; recorded in the run's JSON. "
                                 "Qwen3-Embedding documents "
                                 "'Instruct: <task>\\nQuery: '")
+            p.add_argument("--stored-vectors", action="store_true",
+                           help="with --from-collection: score the vectors the collection "
+                                "holds for the pool; only the queries are embedded")
+            p.add_argument("--check", type=int, default=32,
+                           help="pool chunks re-embedded to check the stored vectors")
+            p.add_argument("--query-like", default=None,
+                           help="this collection's query instruction for another model")
             p.add_argument("--limit", type=int, default=None,
                            help="embed only the first N documents, to prove "
                                 "the endpoint in minutes. Marks the run "
@@ -905,12 +1200,15 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "fetch":
         return fetch(a.out, a.suite)
+    if a.cmd == "pool":
+        return pool(a.out, a.collection, a.queries, a.works, per_book=a.per_book, head=a.head,
+                    random_n=a.random, seed=a.seed, negative_books=a.negative_books)
     if a.cmd == "embed":
         if not a.from_collection and not (a.url and a.model):
             ap.error("embed needs --url and --model, or --from-collection")
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
                      a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api,
-                     a.from_collection)
+                     a.from_collection, a.stored_vectors, a.check, a.query_like)
     if a.cmd == "lexical":
         return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":
