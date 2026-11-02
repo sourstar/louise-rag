@@ -120,3 +120,39 @@ def test_the_reference_step_imports_nothing_of_the_app():
     names = {a.name.split(".")[0] for n in top if isinstance(n, ast.Import) for a in n.names} | \
         {(n.module or "").split(".")[0] for n in top if isinstance(n, ast.ImportFrom)}
     assert names <= {"__future__", "argparse", "json", "sys", "pathlib"}
+
+
+# ---- step 0: every text's tokens (2026-11-02: 71 of 40,931 texts differed on the
+# live engine, 4 then fell under 0.99, and the 48-text sample had none of them) ----
+
+def test_tokens_finds_every_text_the_engine_splits_otherwise():
+    texts = [{"side": "document", "text": "O'Donnell"}, {"side": "document", "text": "plain"},
+             {"side": "query", "text": "who"}]
+    model = {"passage: O'Donnell": [1, 2], "passage: plain": [3], "query: who": [4, 5]}
+    engine = {"passage: O'Donnell": [1, 9, 8, 7], "passage: plain": [3], "query: who": [4, 5]}
+    sent = lambda text, query: ("query: " if query else "passage: ") + text
+    res = st_parity.tokens(texts, engine=engine.__getitem__, reference=model.__getitem__, sent=sent)
+    assert res["texts"] == 3 and res["tokens"] == 5
+    assert res["differ_texts"] == 1 and res["differing"] == [texts[0]]
+    assert res["differ_tokens"] == 3, "1 of 4 engine tokens matches the model's 2"
+    assert res["examples"][0]["engine"] == [1, 9, 8, 7]
+
+
+def test_the_string_tokenized_is_the_string_embedded(monkeypatch):
+    from app import collections as collections_mod
+    from tools.measure import wikidata_encoder_ab as ab
+    base = collections_mod.EmbedRecipe(url="http://x", api="vega", model="m", dtype="f16", ctx=1024)
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: object())
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda c: base)
+    assert st_parity.sent_text("nemotron", "t", False) == "passage: t"
+    assert st_parity.sent_text("nemotron", "t", True) == "query: t"
+    assert st_parity.sent_text("harrier", "t", True) == ab.HARRIER_QUERY + "t"
+    assert st_parity.sent_text("harrier", "t", False) == "t"
+    assert st_parity.sent_text("bge", "t", True) == "t"
+
+
+def test_sample_texts_are_every_chunk_and_question(tmp_path):
+    _sample(tmp_path)
+    got = st_parity.sample_texts(tmp_path)
+    assert sum(t["side"] == "document" for t in got) == 40
+    assert sum(t["side"] == "query" for t in got) == 30
