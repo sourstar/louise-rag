@@ -330,3 +330,65 @@ def test_wikidata_records_need_their_language_said(tmp_path):
     (out / "corpus.jsonl").write_text("".join(json.dumps(r | {"family": "person"}) + "\n" for r in rows))
     with pytest.raises(SystemExit, match="--doc-lang"):
         ab.rerank(out, "wikidata", encoders=["bge"], recipe=object(), plans=None, depths=[4])
+
+
+# ---- nemotron (operator, 2026-11-02: "Do the same exercise of harrier with Nemotron 1b") ----
+
+def test_nemotron_is_the_base_recipe_with_its_model_and_query_prefix(monkeypatch):
+    from app import collections as collections_mod
+    base = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega", model="vega-bge-m3",
+                                       dtype="f16", ctx=1024, dim=1024, cut="tokens")
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: object())
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda c: base)
+    for enc in ("nemotron", "nemotron-m1024"):
+        r = ab._recipe(enc)
+        assert r.model == ab.NEMOTRON_MODEL == "vega-nemotron-3-embed-1b"
+        assert r.query_instruction == "query: "
+        assert (r.url, r.api, r.cut, r.ctx, r.dim, r.query_model) == (base.url, "vega", "tokens", 8191, None, None)
+
+
+def test_nemotron_documents_carry_the_passage_prefix_and_queries_the_recipes(tmp_path, monkeypatch):
+    from app import embeddings, encoder_use
+    (tmp_path / "corpus.jsonl").write_text(json.dumps({"uid": "u0", "family": "en", "label": "",
+                                                       "chunks": ["a", "b"]}) + "\n")
+    (tmp_path / "queries.jsonl").write_text(json.dumps({"uid": "u0", "family": "en", "lang": "en",
+                                                        "query": "q"}) + "\n")
+    sent = []
+
+    class Lease:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    monkeypatch.setattr(ab, "_recipe", lambda enc: object())
+    monkeypatch.setattr(encoder_use, "held", lambda recipe, holder: Lease())
+    monkeypatch.setattr(encoder_use, "holder", lambda cmd: cmd)
+
+    def fake(recipe, texts, *, query=False, **kw):
+        sent.append((query, list(texts)))
+        return [[1.0, 0.0]] * len(texts)
+    monkeypatch.setattr(embeddings, "embed_calibration", fake)
+    ab.embed(tmp_path, "nemotron")
+    assert sent == [(False, ["passage: a", "passage: b"]), (True, ["q"])], \
+        "documents prefixed here; the query prefix is the recipe's, put by the client"
+
+
+def test_the_1024_cut_is_nemotrons_own_vectors_cut_and_renormalised(tmp_path):
+    rng = np.random.default_rng(3)
+    doc = rng.normal(size=(5, 2048)).astype("float32")
+    q = rng.normal(size=(2, 2048)).astype("float32")
+    with pytest.raises(SystemExit, match="embed nemotron first"):
+        ab.embed(tmp_path, "nemotron-m1024")
+    np.save(tmp_path / "vec-nemotron-00000.npy", doc)
+    np.save(tmp_path / "qvec-nemotron.npy", q)
+    (tmp_path / "time-nemotron.json").write_text(json.dumps({"seconds": 2.0, "chunks": 5}))
+    got = ab.embed(tmp_path, "nemotron-m1024")
+    assert got == {"from": "nemotron", "dim": 1024, "blocks": 1}
+    cut = np.load(tmp_path / "vec-nemotron-m1024-00000.npy")
+    assert cut.shape == (5, 1024)
+    assert np.allclose(np.linalg.norm(cut, axis=1), 1.0, atol=1e-6)
+    want = doc[:, :1024] / np.linalg.norm(doc[:, :1024], axis=1, keepdims=True)
+    assert np.allclose(cut, want, atol=1e-6)
+    assert np.load(tmp_path / "qvec-nemotron-m1024.npy").shape == (2, 1024)
+    assert json.loads((tmp_path / "time-nemotron-m1024.json").read_text())["chunks"] == 5
+    # nemotron's own blocks are not taken for the cut's, nor the cut's for nemotron's
+    assert sorted(p.name for p in tmp_path.glob("vec-nemotron-[0-9]*.npy")) == ["vec-nemotron-00000.npy"]

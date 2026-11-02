@@ -732,7 +732,7 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
           query_prefix: str = "", limit: int | None = None, api: str | None = None,
           from_collection: str | None = None, stored: bool = False, check: int = 32,
-          query_like: str | None = None) -> int:
+          query_like: str | None = None, doc_prefix: str = "") -> int:
     from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
@@ -754,6 +754,12 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         raise SystemExit("--stored-vectors reads a collection's vectors: it needs --from-collection")
     if stored and limit:
         raise SystemExit("--stored-vectors embeds no corpus: --limit has nothing to shorten")
+    if doc_prefix and (stored or from_collection):
+        # a model whose card asks a document prefix (Nemotron-3-Embed's
+        # "passage: ", 2026-11-02); a collection's own documents were
+        # embedded as its recipe says, and that is what --from-collection reads
+        raise SystemExit("--doc-prefix is a candidate's document side; not with "
+                         "--from-collection or --stored-vectors")
     if query_like:
         if from_collection or query_prefix:
             raise SystemExit("--query-like gives ANOTHER model a collection's instruction; "
@@ -776,9 +782,12 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
                          f"cannot be read (docs/notes/vega.md); run in the worker's env")
     run = out / name
     # a smoke run's shards are not the real run's (its first shard is short)
+    # the document prefix keys the corpus shards (every query variant shares
+    # them); a run without one keeps the settings it always had
     _same_settings(run, {"url": url, "model": model, "api": api, "ctx": ctx, "dim": dim,
                          "max_chars": max_chars, "limit": limit,
-                         **({"stored_vectors": from_collection} if stored else {})})
+                         **({"stored_vectors": from_collection} if stored else {}),
+                         **({"doc_prefix": doc_prefix} if doc_prefix else {})})
     slug = slug_of(query_side)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
@@ -804,7 +813,8 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
                 print(f"  stored vectors checked: {n} re-embedded, worst cosine {worst:.6f}, "
                       f"median {median:.6f}")
         else:
-            doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
+            doc = _embed_sharded([doc_prefix + t for t in corpus.texts], run / "corpus",
+                                 recipe, query=False)
     with encoder_use.held(recipe, holder=holder, query=True):
         qry = _embed_sharded([query_prefix + t for t in queries.texts],
                              run / f"queries-{slug}", recipe, query=True)
@@ -812,7 +822,7 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     np.save(run / f"queries-{slug}.npy", qry)
     (run / f"run-{slug}.json").write_text(json.dumps(
         {"name": name, "slug": slug, "url": url, "model": model, "api": api, "ctx": ctx,
-         "max_chars": max_chars, "query_prefix": query_side,
+         "max_chars": max_chars, "query_prefix": query_side, "doc_prefix": doc_prefix,
          "from_collection": from_collection, "query_like": query_like,
          "stored_vectors": bool(stored), "stored_check": checked,
          "limit": limit, "dim": int(doc.shape[1]),
@@ -1333,6 +1343,9 @@ def main(argv=None) -> int:
             p.add_argument("--api", choices=("openai", "vega"), default=None,
                            help="the endpoint's client; by default `vega` for a "
                                 "`vega-…` model (tagged inputs, receipts), else openai")
+            p.add_argument("--doc-prefix", default="",
+                           help="put before every document (a card's document prompt, "
+                                "Nemotron-3-Embed's \"passage: \"); keys the corpus shards")
             p.add_argument("--query-prefix", default="",
                            help="prepended to QUERIES only, never to "
                                 "documents; recorded in the run's JSON. "
@@ -1361,7 +1374,8 @@ def main(argv=None) -> int:
             ap.error("embed needs --url and --model, or --from-collection")
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
                      a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api,
-                     a.from_collection, a.stored_vectors, a.check, a.query_like)
+                     a.from_collection, a.stored_vectors, a.check, a.query_like,
+                     a.doc_prefix)
     if a.cmd == "lexical":
         return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":

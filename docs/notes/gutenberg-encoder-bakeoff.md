@@ -1,5 +1,8 @@
 # harrier-oss-v1-0.6b against our encoders: gutenberg, wikidata, wikipedia
 
+*Nemotron-3-Embed-1B repeats this exercise on the same sets (operator,
+2026-11-02): [nemotron-embed.md](nemotron-embed.md).*
+
 *Extended 2026-11-02 (the operator): "Harrier may be the model of reference
 for all our non specialistic collections (gutenberg, wikipedia, wikidata,
 gutenberg-graph), compare the score also with bge-m3 and

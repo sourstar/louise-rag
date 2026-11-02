@@ -61,12 +61,26 @@ from typing import Callable
 TOP = 10
 BLOCK = 1000
 ENCODERS = {"jina": "wikidata", "bge": "wikipedia",     # the collection whose recipe embeds
-            "jina-gguf": "wikidata", "harrier": "wikidata"}
+            "jina-gguf": "wikidata", "harrier": "wikidata",
+            "nemotron": "wikidata", "nemotron-m1024": "wikidata"}
 #: microsoft/harrier-oss-v1-0.6b, converted by us (gutenberg-encoder-bakeoff.md)
 HARRIER_MODEL = "vega-harrier-oss-v1-0.6b"
 #: its card's retrieval prompt (`web_search_query`); documents take none
 HARRIER_QUERY = ("Instruct: Given a web search query, retrieve relevant passages that "
                  "answer the query\nQuery: ")
+#: nvidia/Nemotron-3-Embed-1B-BF16, converted by us to an f16 GGUF
+#: (operator, 2026-11-02: "Do the same exercise of harrier with Nemotron 1b
+#: embedder, I want it on llama.cpp with 16bit precision"; nemotron-embed.md).
+#: Its card's prefixes on BOTH sides, as sentence-transformers' saved prompts
+#: give them: the query side through the recipe's instruction, the document
+#: side put before each chunk here
+NEMOTRON_MODEL = "vega-nemotron-3-embed-1b"
+NEMOTRON_QUERY = "query: "
+NEMOTRON_PASSAGE = "passage: "
+#: its Matryoshka cut (the card: "keeping the first 1024 or 512 dimensions
+#: … re-normalized"): bge-m3's and harrier's 1,024, so the same vector size
+#: is compared; made from nemotron's own vectors, no second embedding
+NEMOTRON_CUT = 1024
 #: jina-v3 on llama.cpp (operator, 2026-10-31: "Use jina gguf for the
 #: comparison so we can evaluate both speed and reliability"): the f16 GGUF
 #: with each task's LoRA MERGED in (llama-export-lora), one model a side —
@@ -308,6 +322,12 @@ def _recipe(encoder: str):
         # the instruction and the specials (its context_size is 2,048)
         return dataclasses.replace(recipe, model=GGUF_MODELS[False], query_model=GGUF_MODELS[True],
                                    ctx=2047)
+    if encoder in ("nemotron", "nemotron-m1024"):
+        # the base collection's server, api and cut; nemotron's model, its
+        # query prefix on queries, a window within its context_size 8,192
+        return dataclasses.replace(recipe, model=NEMOTRON_MODEL, query_model=None, query_url=None,
+                                   query_instruction=NEMOTRON_QUERY, dim=None,
+                                   ctx=max(int(recipe.ctx or 0), 8191))
     if encoder == "harrier":
         # the base collection's server, api and cut; harrier's model, its
         # retrieval prompt on queries, a window within its context_size 8,192
@@ -325,6 +345,18 @@ def matryoshka(vectors, dim: int = JINA_DIM):
 
 
 def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
+    if encoder == "nemotron-m1024":
+        return cut_from(out, "nemotron", encoder, NEMOTRON_CUT)
+    encode, lease = encoder_fn(encoder, encode)
+    with lease:
+        return _embed(out, encoder, encode)
+
+
+def encoder_fn(encoder: str, encode: Callable | None = None):
+    """`(encode, lease)`: `encode(texts, query)` as this tool embeds for
+    `encoder` — the production client, the model's prefixes and cut — and the
+    lease to hold while it runs. The conversion check embeds through it too
+    (tools/measure/st_parity.py), so the vectors it judges are these."""
     import contextlib
     lease = contextlib.nullcontext()
     if encode is None:
@@ -344,8 +376,31 @@ def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
         inner = encode
         encode = lambda texts, query: matryoshka(   # noqa: E731
             inner([JINA_INSTRUCTIONS[query] + t for t in texts], query))
-    with lease:
-        return _embed(out, encoder, encode)
+    if encoder == "nemotron":
+        # the query prefix is the recipe's instruction (the client puts it);
+        # the document prefix is put here: the recipe has no document side
+        inner_n = encode
+        encode = lambda texts, query: inner_n(   # noqa: E731
+            texts if query else [NEMOTRON_PASSAGE + t for t in texts], query)
+    return encode, lease
+
+
+def cut_from(out: Path, source: str, name: str, dim: int) -> dict:
+    """`name`'s vectors as `source`'s first `dim` components, renormalised
+    (the Matryoshka cut its card states), block by block; its time is
+    `source`'s, since nothing is embedded again."""
+    import numpy as np
+    blocks = sorted(out.glob(f"vec-{source}-[0-9]*.npy"))
+    qpath = out / f"qvec-{source}.npy"
+    if not blocks or not qpath.exists():
+        raise SystemExit(f"{name} is cut from {source}'s vectors: embed {source} first")
+    for b in blocks:
+        np.save(out / b.name.replace(f"vec-{source}-", f"vec-{name}-"), matryoshka(np.load(b), dim))
+    np.save(out / f"qvec-{name}.npy", matryoshka(np.load(qpath), dim))
+    timing = out / f"time-{source}.json"
+    if timing.exists():
+        (out / f"time-{name}.json").write_text(timing.read_text())
+    return {"from": source, "dim": dim, "blocks": len(blocks)}
 
 
 def _embed(out: Path, encoder: str, encode: Callable) -> dict:
@@ -489,12 +544,16 @@ CHUNK_DEPTH = 2_000
 
 def _query_encoder(encoder: str):
     """Texts through `encoder`'s query side as `embed` asked its questions
-    (`_recipe`, the production client, the encoder leased)."""
+    (`_recipe`, the production client, the encoder leased); a cut encoder's
+    as its source's, cut the same way."""
     def encode(texts: list[str]) -> list[list[float]]:
         from app import embeddings, encoder_use
         recipe = _recipe(encoder)
         with encoder_use.held(recipe, holder=encoder_use.holder(f"pipeline {encoder}"), query=True):
-            return embeddings.embed_calibration(recipe, texts, query=True, asked=False)
+            got = embeddings.embed_calibration(recipe, texts, query=True, asked=False)
+        if encoder == "nemotron-m1024":
+            return matryoshka(got, NEMOTRON_CUT).tolist()
+        return got
     return encode
 
 

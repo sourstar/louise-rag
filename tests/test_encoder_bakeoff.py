@@ -168,6 +168,40 @@ def test_query_prefix_reaches_queries_and_never_documents(tmp_path, monkeypatch)
     assert _np.load(tmp_path / "m" / "corpus.npy").shape[0] == 2
 
 
+def test_a_document_prefix_reaches_documents_and_keys_the_corpus(tmp_path, monkeypatch) -> None:
+    """Nemotron-3-Embed asks "passage: " before every document and "query: "
+    before every question (its card, 2026-11-02). The document prefix keys
+    the corpus shards: the same run name under another one is refused, not
+    silently mixed; a run without one keeps the settings it always had."""
+    from tools import encoder_bakeoff as bake
+
+    corpus = bake.Corpus(ids=[1, 2], texts=["doc one", "doc two"])
+    queries = bake.Queries(texts=["how?"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    seen: list[str] = []
+
+    def fake_embed_texts(texts, **kw):
+        seen.extend(texts)
+        return [[1.0, 0.0] for _ in texts]
+    monkeypatch.setattr("app.embeddings._embed_texts", fake_embed_texts)
+
+    bake.embed(tmp_path, "n", "http://x/upstream/n", "n", None, 8192, 1, 20_000,
+               query_prefix="query: ", doc_prefix="passage: ")
+    assert {"passage: doc one", "passage: doc two", "query: how?"} <= set(seen)
+    assert "passage: how?" not in seen and "query: doc one" not in seen
+    meta = json.loads((tmp_path / "n" / f"run-{bake.slug_of('query: ')}.json").read_text())
+    assert meta["doc_prefix"] == "passage: "
+    assert json.loads((tmp_path / "n" / "settings.json").read_text())["doc_prefix"] == "passage: "
+    with pytest.raises(SystemExit, match="different settings"):
+        bake.embed(tmp_path, "n", "http://x/upstream/n", "n", None, 8192, 1, 20_000,
+                   query_prefix="query: ")
+    bake.embed(tmp_path, "bare-run", "http://x/upstream/n", "n", None, 8192, 1, 20_000)
+    assert "doc_prefix" not in json.loads((tmp_path / "bare-run" / "settings.json").read_text())
+    with pytest.raises(SystemExit, match="--doc-prefix"):
+        bake.embed(tmp_path, "c", None, None, None, 8192, 1, 20_000,
+                   from_collection="gutenberg", doc_prefix="passage: ")
+
+
 def test_variants_of_one_model_share_the_corpus_vectors(tmp_path, monkeypatch) -> None:
     """A second query-side variant must not re-embed 23,617 documents — that
     is the whole reason the prefix keys only the query shards."""
