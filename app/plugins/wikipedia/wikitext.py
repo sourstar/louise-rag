@@ -29,11 +29,35 @@ source of §6.5 canonical ids (viaf:, isni:, lccn:) and carries NONE: 573
 of 574 occurrences in an 800-page sample have zero parameters, because
 the identifiers live in Wikidata and the template merely points at them.
 Its PRESENCE is recorded and nothing more, since nothing more is there.
+
+ONE WALK A PASS (2026-11-02, docs/notes/python-hot-spots.md "A"). Every
+pass below used to call `Wikicode.replace`/`remove` once per node, and
+each call searches the whole tree again from the top for the node it was
+given (`_do_strong_search`): quadratic, ~70 % of a 20,000-character
+page's parse. And `parse_all` walked every template of the page 13 times,
+once per `named_template`. Now a pass walks the tree ONCE (`_walk`),
+decides every node in that walk's order, and splices each decision into
+the node list that holds it (`_rewrite`) with the same list operations
+`replace`/`remove` use. The bytes are the same — invariant 3: a changed
+byte is a new cleaning version and 52.9 M pages re-embedded. Proven
+against the code before, kept verbatim in tools/measure/wikitext_reference.py:
+tests/test_wikitext_identity.py, and tools/measure/wikitext_identity.py over
+the node's held dumps.
 """
 import re
+from operator import itemgetter
 
 import mwparserfromhell
-from mwparserfromhell.nodes import Text
+from mwparserfromhell.nodes import (
+    Comment,
+    ExternalLink,
+    HTMLEntity,
+    Node,
+    Tag,
+    Template,
+    Text,
+    Wikilink,
+)
 
 # section titles that carry citations/navigation, not content. Their text
 # still leaves the PROSE — it is citation noise in a chunk — but it is
@@ -54,6 +78,95 @@ _INLINE_DATA = {"convert", "cvt", "val", "nowrap", "nobr", "abbr", "frac", "sup"
 #: quotations: their text is the article's, and `strip_code` deleted it
 #: (608 instances on 205 of 1,132 sampled enwiki articles, parser 3)
 _QUOTES = {"quote", "blockquote", "cquote", "quotation", "quote box"}
+
+
+def _walk(code) -> list[tuple]:
+    """Every node under `code` as `(the Wikicode whose list holds it, the
+    node, the walk position of the node it is inside or -1)`, in the order
+    and over the children of the library's own walk — `Wikicode._get_children`,
+    which `filter(recursive=True)` and `replace`'s search both go through:
+    a node, then each `Node.__children__()` Wikicode's nodes in turn.
+    Depth is bounded by the tokenizer's (MAX_DEPTH 100)."""
+    out: list[tuple] = []
+
+    def visit(ctx, parent: int) -> None:
+        for node in ctx.nodes:
+            me = len(out)
+            out.append((ctx, node, parent))
+            if type(node) not in _LEAVES:
+                for sub in node.__children__():
+                    visit(sub, me)
+
+    visit(code, -1)
+    return out
+
+
+#: node types with no children — the base `Node.__children__`, which yields
+#: nothing: most of a page's nodes are Text, so the walk skips the call
+_LEAVES = frozenset(c for c in (Text, Comment, HTMLEntity)
+                    if c.__children__ is Node.__children__)
+
+
+#: a `_rewrite` pick's answer for a node left where it is, and for one removed
+_KEEP = object()
+_DROP = object()
+
+
+def _rewrite(code, kind: type, pick, *, inside_too: bool = False) -> None:
+    """What `for n in list(code.filter(recursive=True, forcetype=kind)):
+    try: code.replace(n, pick(n))  # or code.remove(n) for _DROP
+    except ValueError: pass` did, without searching the tree once per node.
+
+    The rules that loop followed, kept: the nodes are the walk's, taken
+    BEFORE anything changes, in its order; a node inside one already
+    replaced or removed is gone from the tree, and its `replace` raised
+    ValueError — it is left alone (and its pick is still called when
+    `inside_too`, for picks that record what they see); a replacement
+    string is PARSED into nodes (`Wikicode.insert`), so "[[X]]" in it is a
+    link again; nodes a replacement brings are not visited in this pass.
+    Within one node list the splices run from the last position to the
+    first, so each position is still the one the walk found; distinct
+    lists never share a node, so their order does not matter. Each splice
+    is `nodes.pop(i)` then `Wikicode.insert(i, value)`: `replace`'s own."""
+    walk = _walk(code)
+    if len({id(node) for _, node, _ in walk}) != len(walk):
+        # A node reachable twice (the parser never builds one; a library
+        # change could): the old loop itself, whose search rules decide it
+        for _, node, _ in walk:
+            if isinstance(node, kind):
+                value = pick(node)
+                if value is _KEEP:
+                    continue
+                try:
+                    if value is _DROP:
+                        code.remove(node)
+                    else:
+                        code.replace(node, value)
+                except ValueError:
+                    pass
+        return
+    gone = bytearray(len(walk))          # replaced or removed, or inside one that was
+    edits: dict[int, tuple] = {}         # id(list holder) -> (holder, [(node, value)])
+    for i, (ctx, node, parent) in enumerate(walk):
+        if parent >= 0 and gone[parent]:
+            gone[i] = 1
+            if inside_too and isinstance(node, kind):
+                pick(node)
+            continue
+        if not isinstance(node, kind):
+            continue
+        value = pick(node)
+        if value is _KEEP:
+            continue
+        gone[i] = 1
+        edits.setdefault(id(ctx), (ctx, []))[1].append((node, value))
+    for ctx, todo in edits.values():
+        at = {id(node): k for k, node in enumerate(ctx.nodes)}
+        for k, value in sorted(((at[id(node)], value) for node, value in todo),
+                               key=itemgetter(0), reverse=True):
+            ctx.nodes.pop(k)
+            if value is not _DROP:
+                ctx.insert(k, value)
 
 
 def _render(name: str, positional: list[str], named: dict[str, str]) -> str:
@@ -88,29 +201,30 @@ def _render(name: str, positional: list[str], named: dict[str, str]) -> str:
     return " ".join(positional)
 
 
+def _inline_value(tpl):
+    """An inline data template's value, a quotation's paragraph — or
+    `_KEEP` for any other template."""
+    name = str(tpl.name).strip().lower()
+    if name not in _INLINE_DATA and name not in _QUOTES \
+            and not name.startswith("lang-"):
+        return _KEEP
+    positional = [str(p.value).strip() for p in tpl.params if not p.showkey]
+    positional = [p for p in positional if p]
+    named = {str(p.name).strip().lower(): str(p.value).strip()
+             for p in tpl.params if p.showkey}
+    if name in _QUOTES:
+        said = named.get("text") or named.get("quote") or (positional[0] if positional else "")
+        who = named.get("author") or named.get("sign") or \
+            (positional[1] if len(positional) > 1 else "")
+        return f"\n\n{said}" + (f" — {who}" if who else "") + "\n\n" if said else ""
+    return _render(name, positional, named)
+
+
 def _render_inline(code) -> None:
     """Replace inline data templates with their values, and quotations with
-    their text as a paragraph of its own, in place."""
-    for tpl in list(code.filter_templates(recursive=True)):
-        name = str(tpl.name).strip().lower()
-        if name not in _INLINE_DATA and name not in _QUOTES \
-                and not name.startswith("lang-"):
-            continue
-        positional = [str(p.value).strip() for p in tpl.params if not p.showkey]
-        positional = [p for p in positional if p]
-        named = {str(p.name).strip().lower(): str(p.value).strip()
-                 for p in tpl.params if p.showkey}
-        if name in _QUOTES:
-            said = named.get("text") or named.get("quote") or (positional[0] if positional else "")
-            who = named.get("author") or named.get("sign") or \
-                (positional[1] if len(positional) > 1 else "")
-            value = f"\n\n{said}" + (f" — {who}" if who else "") + "\n\n" if said else ""
-        else:
-            value = _render(name, positional, named)
-        try:
-            code.replace(tpl, value)
-        except ValueError:
-            pass          # already replaced with an enclosing template
+    their text as a paragraph of its own, in place. One inside a template
+    already replaced stays as it is: it went with its enclosing template."""
+    _rewrite(code, Template, _inline_value)
 
 
 #: Image options a caption is not: the rendering's size, frame and float.
@@ -158,10 +272,11 @@ def _take_images(code) -> list[dict]:
     articles, parser 3). The caption stays in the prose as a paragraph —
     it is the article's text — and the options go."""
     out = []
-    for link in list(code.filter_wikilinks(recursive=True)):
+
+    def pick(link):
         title = str(link.title).strip()
         if not title.lower().startswith(_FILE_NS):
-            continue
+            return _KEEP
         parts = _split_top(str(link.text)) if link.text is not None else []
         caption = next((p.strip() for p in reversed(parts)
                         if p.strip() and not _IMG_OPTION.match(p.strip())), "")
@@ -170,12 +285,14 @@ def _take_images(code) -> list[dict]:
             cc = mwparserfromhell.parse(caption)
             _render_inline(cc)
             cap = _text(cc)
+        # recorded even for a file link inside a caption already replaced
         out.append({"file": title.split(":", 1)[1].strip(), "caption": cap})
-        try:
-            code.replace(link, f"\n\n{cap}\n\n" if cap else "")
-        except ValueError:
-            pass
-    for tag in list(code.filter_tags(recursive=True)):
+        return f"\n\n{cap}\n\n" if cap else ""
+
+    _rewrite(code, Wikilink, pick, inside_too=True)
+    for _, tag, _ in _walk(code):
+        if not isinstance(tag, Tag):
+            continue
         if str(tag.tag).strip().lower() != "gallery" or tag.contents is None:
             continue
         for line in str(tag.contents).splitlines():
@@ -193,21 +310,18 @@ def _take_links(code) -> list[str]:
     1/4 of sampled pages); both are kept elsewhere — categories as
     `subjects`, interlanguage links returned here."""
     inter = []
-    for link in list(code.filter_wikilinks(recursive=True)):
+
+    def pick(link):
         title = str(link.title).strip()
         low = title.lower()
         if low.startswith("category:"):
-            drop = True
-        elif link.text is None and _INTERLANG.match(title) and not low.startswith(_FILE_NS):
-            inter.append(title)
-            drop = True
-        else:
-            drop = False
-        if drop:
-            try:
-                code.remove(link)
-            except ValueError:
-                pass
+            return _DROP
+        if link.text is None and _INTERLANG.match(title) and not low.startswith(_FILE_NS):
+            inter.append(title)       # recorded even inside a link already removed
+            return _DROP
+        return _KEEP
+
+    _rewrite(code, Wikilink, pick, inside_too=True)
     return list(dict.fromkeys(inter))
 
 
@@ -216,20 +330,18 @@ def _render_math(code) -> None:
     `<pre>`/`<syntaxhighlight>` as the block it is; `strip_code` treats
     all of them as invisible and parser 2 dropped them (2,242 formulas on
     71 sampled pages)."""
-    for tag in list(code.filter_tags(recursive=True)):
-        name = str(tag.tag).strip().lower()
-        if tag.contents is None:
-            continue
-        if name in ("math", "chem", "ce"):
-            value = " ".join(str(tag.contents).split())
-        elif name in ("pre", "syntaxhighlight", "source"):
-            value = f"\n\n{str(tag.contents).strip()}\n\n"
-        else:
-            continue
-        try:
-            code.replace(tag, value)
-        except ValueError:
-            pass
+    _rewrite(code, Tag, _math_value)
+
+
+def _math_value(tag):
+    name = str(tag.tag).strip().lower()
+    if tag.contents is None:
+        return _KEEP
+    if name in ("math", "chem", "ce"):
+        return " ".join(str(tag.contents).split())
+    if name in ("pre", "syntaxhighlight", "source"):
+        return f"\n\n{str(tag.contents).strip()}\n\n"
+    return _KEEP
 
 
 def _text(node) -> str:
@@ -252,12 +364,11 @@ def _drop_refs(code) -> None:
     of them, which is promise 9's whole shape: hold what the origin said,
     in the place where it belongs.
     """
-    for tag in list(code.filter_tags(recursive=True)):
-        try:
-            if str(tag.tag).strip().lower() == "ref":
-                code.remove(tag)
-        except ValueError:
-            pass          # nested inside a tag already removed
+    _rewrite(code, Tag, _ref_out)        # one nested in a ref removed goes with it
+
+
+def _ref_out(tag):
+    return _DROP if str(tag.tag).strip().lower() == "ref" else _KEEP
 
 
 #: `<ref\nname="a">`: MediaWiki reads it as a ref, mwparserfromhell as text,
@@ -385,8 +496,12 @@ def to_sections(wikitext: str) -> list[tuple[str, str]]:
 def categories(code) -> list[str]:
     """`[[Category:X|sortkey]]` → "X". The sortkey is a collation hint for
     the category page, not a second subject — kept apart, below."""
+    return _categories(code.filter_wikilinks())
+
+
+def _categories(links) -> list[str]:
     out = []
-    for link in code.filter_wikilinks():
+    for link in links:
         title = str(link.title).strip()
         if title.lower().startswith("category:"):
             name = title.split(":", 1)[1].split("|")[0].strip()
@@ -399,8 +514,12 @@ def category_sortkeys(code) -> dict[str, str]:
     """`{category: sort key}` where the page gives one — often the
     entity's filing name ("Einstein, Albert"), found nowhere else
     (parser 3; "unsure" in the audit, kept by the operator's rule)."""
+    return _category_sortkeys(code.filter_wikilinks())
+
+
+def _category_sortkeys(links) -> dict[str, str]:
     out: dict[str, str] = {}
-    for link in code.filter_wikilinks():
+    for link in links:
         title = str(link.title).strip()
         if title.lower().startswith("category:") and link.text is not None:
             # `[[Category:X| ]]` — a SPACE is a sort key (it files the page
@@ -426,8 +545,12 @@ def infoboxes(code) -> list[dict]:
     parameters on enwiki. A value that is ALL template — `{{birth date and
     age|1974|6|1}}` — stripped to "" and was dropped (2,152 of 13,285
     sampled parameters): it is kept as its wikitext instead."""
+    return _infoboxes(code.filter_templates())
+
+
+def _infoboxes(templates) -> list[dict]:
     out = []
-    for tpl in code.filter_templates():
+    for tpl in templates:
         name = str(tpl.name).strip()
         if not name.lower().startswith(_BOXES):
             continue
@@ -447,8 +570,12 @@ def references(code) -> list[str]:
     is only a citation template: `{{cite web|…}}` stripped to "" and 53,969
     of 66,690 sampled citations were dropped (parser 3). A citation is what
     the article says its claim rests on."""
+    return _references(code.filter_tags())
+
+
+def _references(tags) -> list[str]:
     out = []
-    for tag in code.filter_tags():
+    for tag in tags:
         if str(tag.tag).strip().lower() != "ref":
             continue
         body = (_text(tag.contents) or str(tag.contents).strip()) if tag.contents else ""
@@ -458,8 +585,12 @@ def references(code) -> list[str]:
 
 
 def external_links(code) -> list[dict]:
+    return _external_links(code.filter_external_links())
+
+
+def _external_links(links) -> list[dict]:
     out = []
-    for link in code.filter_external_links():
+    for link in links:
         url = str(link.url).strip()
         if url:
             out.append({"url": url, "title": _text(link.title) if link.title else ""})
@@ -469,11 +600,22 @@ def external_links(code) -> list[dict]:
 def named_template(code, name: str) -> list[dict]:
     """Every instance of one template, with its parameters — positional
     ones keyed by their index as a string."""
+    return _named(_by_name(code.filter_templates()), name)
+
+
+def _by_name(templates) -> dict[str, list]:
+    """The page's templates by their name as `named_template` compares it,
+    each name's in page order: ONE pass over the templates answers every
+    lookup (parse_all made 13, each walking them all)."""
+    out: dict[str, list] = {}
+    for tpl in templates:
+        out.setdefault(str(tpl.name).strip().lower(), []).append(tpl)
+    return out
+
+
+def _named(by_name: dict[str, list], name: str) -> list[dict]:
     out = []
-    want = name.strip().lower()
-    for tpl in code.filter_templates():
-        if str(tpl.name).strip().lower() != want:
-            continue
+    for tpl in by_name.get(name.strip().lower(), ()):
         fields = {}
         for i, prm in enumerate(tpl.params, start=1):
             key = str(prm.name).strip() if prm.showkey else str(i)
@@ -504,11 +646,8 @@ def apparatus(wikitext: str) -> dict[str, str]:
     <ref>s `references` keeps."""
     code = mwparserfromhell.parse(_PLACEHOLDER.sub("", wikitext))
     _take_links(code)
-    for tpl in list(code.filter_templates(recursive=True)):
-        try:
-            code.replace(tpl, Text(str(tpl)))
-        except ValueError:
-            pass          # inside a template already kept whole
+    # each outermost template becomes its own text: one inside it goes with it
+    _rewrite(code, Template, _as_text)
     out: dict[str, str] = {}
     current: tuple[str, int] | None = None
     for section in code.get_sections(include_lead=False, flat=True):
@@ -537,6 +676,10 @@ def apparatus(wikitext: str) -> dict[str, str]:
     return out
 
 
+def _as_text(tpl) -> Text:
+    return Text(str(tpl))
+
+
 #: navigation the article asserts about itself: "Main article: X",
 #: "See also: Y", "For the film, see Z" (489, 322, 174, 185… sampled pages)
 _HATNOTES = ("main", "see also", "further", "about", "for", "distinguish",
@@ -547,27 +690,35 @@ def parse_all(wikitext: str) -> dict:
     """Sections for the chunker, and everything else for `extra`."""
     wikitext = _tags(wikitext)
     code = mwparserfromhell.parse(wikitext)
-    short = named_template(code, "short description")
+    # ONE WALK answers every read below — what `filter_templates()`,
+    # `filter_wikilinks()`, `filter_tags()` and `filter_external_links()`
+    # walked the page for, 18 times — in the same order (`code` is only
+    # read here; `_structured` and `apparatus` parse their own)
+    nodes = [node for _, node, _ in _walk(code)]
+    templates = [n for n in nodes if isinstance(n, Template)]
+    links = [n for n in nodes if isinstance(n, Wikilink)]
+    by_name = _by_name(templates)
+    short = _named(by_name, "short description")
     sections, levels, images, inter = _structured(wikitext)
     default_sort = _DEFAULTSORT.search(wikitext)
     return {
         "sections": sections,
         "section_levels": levels,
-        "categories": categories(code),
-        "category_sortkeys": category_sortkeys(code),
+        "categories": _categories(links),
+        "category_sortkeys": _category_sortkeys(links),
         "defaultsort": default_sort.group(1).strip() if default_sort else "",
-        "infoboxes": infoboxes(code),
-        "references": references(code),
-        "external_links": external_links(code),
+        "infoboxes": _infoboxes(templates),
+        "references": _references([n for n in nodes if isinstance(n, Tag)]),
+        "external_links": _external_links([n for n in nodes if isinstance(n, ExternalLink)]),
         "short_description": short[0]["fields"].get("1", "") if short else "",
-        "coordinates": [c["raw"] for c in named_template(code, "coord")],
+        "coordinates": [c["raw"] for c in _named(by_name, "coord")],
         "apparatus": apparatus(wikitext),
         "images": images,
         "interlanguage": inter,
         "hatnotes": [{"template": n, "fields": t["fields"]}
-                     for n in _HATNOTES for t in named_template(code, n)],
+                     for n in _HATNOTES for t in _named(by_name, n)],
         #: presence only — the identifiers are in Wikidata, not here
-        "has_authority_control": bool(named_template(code, "authority control")),
+        "has_authority_control": bool(by_name.get("authority control")),
     }
 
 

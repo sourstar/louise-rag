@@ -76,3 +76,85 @@ would change the space and force a re-embed (invariant 3).
 **Order:** A and B first: they are the largest and need no new language. C
 goes with the records-build redesign. D, E and F only after A and B are
 measured, since each saves ≤ 15 % of one path.
+
+## A, the walks: done 2026-11-02 (not deployed until the node's check passes)
+
+What changed in `app/plugins/wikipedia/wikitext.py`:
+- Each pass walks the tree once (`_walk`) and splices its edits into the
+  node lists that hold them (`_rewrite`). Before, every node was looked up
+  from the root again (`_do_strong_search`).
+- `parse_all` reads the page with one walk, and the templates are indexed
+  by name once. Before, it made 18 walks, 13 of them in `named_template`.
+- Nothing else moved. The same three `mwparserfromhell.parse` calls happen
+  per `parse_all`, and the rdf and fts stages still each parse.
+
+**Measured.** `parse_all`, perf_counter only. Reference and live rounds were
+interleaved, 11 rounds, and the median is shown. The 4-vCPU VM was shared
+with two other jobs, so read the ratios rather than the absolute times.
+
+| page | before | after | speed-up |
+|---|---|---|---|
+| test articles, mean of 4 (112–870 chars) | 2,916 µs | 1,987 µs | 1.47× |
+| SYNTHETIC 2k chars | 18.9 ms | 11.2 ms | 1.70× |
+| SYNTHETIC 5k chars | 49.7 ms | 21.2 ms | 2.34× |
+| SYNTHETIC 20k chars | 398 ms | 95 ms | 4.19× |
+
+- The cost per character is now flat at about 4.5 µs. Before, it rose
+  from 7 to 20 µs.
+
+**Identity.** The code before is kept verbatim in
+`tools/measure/wikitext_reference.py` and compared byte for byte by
+`json.dumps(sort_keys=True)`:
+- `tests/test_wikitext_identity.py` runs it on every string literal in
+  `tests/`, on 3,000 seeded adversarial pages and on 17 named edge cases.
+  It also compares the tree's shape after every pass.
+- A further 50,000 seeded pages (29.8 M chars) were compared once, outside
+  the suite: none differed.
+- Real pages go through `tools/measure/wikitext_identity.py`. Its verdict
+  must be IDENTICAL on ≥ 100,000 of the node's pages before this deploys.
+
+**What is left.** Of what remains, the three whole-page parses are about
+57 % on the 20k page (3 × 17 ms of ~88 ms) and about 80 % on a test page
+(3 × 1.1 ms of ~4 ms). Almost all of that is the library's Python tree
+builder: its C tokenizer is 10–18 %.
+- Two of the three parses are the same string. `parse_all` parses it, and
+  so does `_structured`, since `_tags` is idempotent. Sharing that one tree
+  would save a third, but it changes what a stage parses, so it belongs to
+  the "one parse" series. It was not done here.
+
+## B, done (2026-11-02)
+
+`citations` (app/refs/normattiva.py) tries its two patterns only where a
+citation can start: before a digit run whose tail is a citation's (one
+`\d`-led regex, which `re` skips to in C), within the reach back the
+patterns allow (at most 15 or 23 runs of white space, no `;`), on one of
+the two-letter openings (`ar`, `le`, `l.`, `de`, …). The month pre-check is
+gone: the run's tail holds the month. No new dependency; RE2 was not needed.
+
+The patterns are unchanged byte for byte, and the answer is unchanged byte
+for byte against the verbatim old scan (tests/citations_reference.py) on:
+the fixtures, 80,000 generated texts (122 M characters) and 240 long ones
+(30–300 KB, 34 M), 543,831 citations in all (43,648 dated). 239 texts
+raised the same KeyError in both: a month spelled with ſ, ı or İ, which
+`re.I` matches and `str.lower` does not map back — the document an fts
+error. Fixed in a commit of its own (`normattiva._month`: the month read as
+the pattern matched it); those 239 now answer, as the old scan does once
+its month table reads the folds. The suite keeps 2,000 of the texts
+(tests/test_citations_fast_path.py).
+
+Measured: perf_counter, the median of 5 runs, then the median of 3 such
+runs; the 4-vCPU VM had other jobs on it (load 2.5–3.5), so ±30 %.
+
+| input | before | after |
+|---|---|---|
+| 400 KB of book prose, no digit | 152 ms | 2.1 ms |
+| the same with a citation, date or number every 0.5–4 KB | 245 ms | 3.2 ms |
+| 1,500-character abstract | 545 µs | 9.2 µs |
+| 400-character text | 133 µs | 3.0 µs |
+| a normattiva act's XML, 223 KB, 71 citations | 117 ms | 9.8 ms |
+| 1,500 characters of it | 855 µs | 86 µs |
+| gutenberg ~400 KB txt book: entity tagging | 204 ms | 20 ms |
+| the same book: the whole fts child | 176–200 ms | 25–39 ms |
+
+Tagging's largest cost is now `DictResolver`'s token `findall` (~15 ms of
+those 20; unchanged).
