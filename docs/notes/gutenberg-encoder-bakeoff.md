@@ -150,10 +150,20 @@ document vectors are G1's (parallel:1, its repro check exact).
 | Qwen3-4B Q4_K_M (stored vectors, gutenberg's instruction) | 0.7918 | 0.9776 | 0.9939 | **0.8630** |
 | harrier-0.6b f16, gutenberg's instruction | 0.7367 | 0.9061 | 0.9449 | 0.7934 |
 | harrier-0.6b f16, its own retrieval prompt | 0.7429 | 0.9041 | 0.9469 | 0.7989 |
+| bge-m3 F16, as wikidata serves it (no query prefix; G3, 11:08) | 0.6939 | 0.9041 | 0.9653 | 0.7618 |
 
 - **Qwen3 − harrier, MRR@10:**
   - +0.070 [+0.037, +0.103], p = 0.0001 (104 queries better, 57 worse);
   - against harrier's own prompt +0.064, p = 0.0001.
+- **Qwen3 − bge-m3:** +0.101 [+0.069, +0.133], p = 0.0001.
+- **harrier − bge-m3** (informative here; the rule's verdicts on bge-m3 are
+  wikidata's and wikipedia's):
+  - with its own prompt +0.037 [+0.002, +0.072], p = 0.040 (102 better, 71
+    worse, 317 tied);
+  - with gutenberg's instruction +0.032 [−0.003, +0.066], p = 0.075.
+  - Two prompts were tried, so the better p is corrected for it (Holm):
+    0.080, not significant. harrier leads bge-m3 here by ~0.03–0.04, not
+    proven.
 - **Verdict by the rule:** harrier is significantly worse, so Qwen3 stays on
   gutenberg. The "one model" clause does not apply. On wikipedia and
   wikidata, harrier must be significantly better than bge-m3.
