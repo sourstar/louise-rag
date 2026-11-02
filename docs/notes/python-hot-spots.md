@@ -158,3 +158,47 @@ runs; the 4-vCPU VM had other jobs on it (load 2.5–3.5), so ±30 %.
 
 Tagging's largest cost is now `DictResolver`'s token `findall` (~15 ms of
 those 20; unchanged).
+
+## Done: C and F (2026-11-02, operator: "I want all the optimizations")
+
+- **C1:** a child's task compresses its lines in batches (64 lines or
+  256 KiB). Each record carries `(batch, start, end)`, and the part's writer
+  expands each batch once (`pack.build.ship_lines`, `_columns_of`).
+- **C2:** the plugin and the layers are resolved once a task
+  (`layers.Resolved`, `pack.build.compute_records`), not three times a
+  record.
+- **F:** held lines are parsed by orjson 3.13.0 (`pack.records.loads_line`).
+  - **Found:** orjson does NOT raise on an integer past 64 bits. It returns a
+    float (`18446744073709551616` → `1.8446744073709552e+19`).
+  - So a line with a run of 19 digits goes to json.loads, and so does any
+    line orjson refuses.
+  - `canonical_line` stays json.dumps.
+- **The held path also skips a `Path` per record.**
+
+**Identity.** Every staged part and every root the build database records
+are the bytes of a build by the book (`tests/pack/test_ship_batches.py`).
+This holds for wikidata, wikipedia, pubmed and gutenberg, parsed and held,
+in-process and in a pool, with a child SIGKILLed. Old commit against new,
+pooled, parsed and held: 144 parts of 946 records, all identical.
+
+**Measured** (profiler-free, µs a record, the held-record child on the p5
+inputs, the median of 3 rounds of 5 [the floor]; 4-vCPU VM, ±30 %):
+
+| collection | before | after | after, json.loads |
+|---|---|---|---|
+| gutenberg | 146 [135] | 54 [49] | 60 [55] |
+| pubmed | 121 [111] | 39 [32] | 39 [37] |
+| wikipedia, test pages | 147 [139] | 72 [57] | 79 [67] |
+| wikipedia, 20k-char page | 948 [833] | 822 [618] | 859 [755] |
+| wikidata, default layer* | 459 [387] | 289 [262] | 322 [284] |
+| wikidata, forced windows* | 1,044 [861] | 792 [697] | 1,018 [799] |
+
+\* the stand-in tokenizer. The 20k page is bimodal on this VM in both trees,
+so its floor is the reliable figure.
+
+- **The parse path** ("record") gains 14–18 % where the parse is cheap
+  (gutenberg, pubmed, wikidata's default layer). It is unchanged within noise where the parse
+  dominates (wikipedia).
+- **The build's wall clock does not move yet.** It waits on its parent
+  (children 42–56 % busy). This waits for the "child writes its part"
+  redesign.

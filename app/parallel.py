@@ -428,11 +428,6 @@ def _one(kind: str, collection, row: dict):
         return slicing.slice_hint(collection.plugin, row, _family_context(collection))
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
-    if kind in ("record", "held-record"):
-        # the line encoded here too, in the child (`with_line`)
-        from .pack.build import _record_of, held_or_parsed, with_line
-        return with_line(collection, (held_or_parsed if kind == "held-record" else _record_of)(
-            collection, plugin, row))
     if kind == "prepare":
         return plugin_io.prepare(plugin, row)
     if kind == "origin-line":
@@ -457,15 +452,14 @@ def _compute(kind: str, collection, rows: list[dict]) -> list[tuple[bool, object
     """Runs in a child (or inline): one (ok, value) per row, in order.
     A failure is (False, {"type", "msg"}) — never an exception out of the
     task, so one bad document never poisons its sub-batch."""
+    if kind in ("record", "held-record"):
+        # the records build's task: the line encoded here too, in the child
+        # (`with_line`), the task's lines shipped together and its layers
+        # resolved once (`compute_records`; held: the part's lookups in two
+        # queries, `prefetch_held`)
+        from .pack.build import compute_records
+        return compute_records(kind, collection, rows)
     out: list[tuple[bool, object]] = []
-    if kind == "held-record":
-        # the part's lookups in two queries, not two per record (prefetch_held)
-        from .pack.build import prefetch_held
-        rows = [dict(r) for r in rows]    # the caller's rows unchanged (inline, they are its own)
-        try:
-            prefetch_held(collection, rows)
-        except Exception:   # noqa: BLE001 — each row then looks itself up, as before
-            pass
     for row in rows:
         try:
             out.append((True, _one(kind, collection, row)))

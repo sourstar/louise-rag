@@ -363,8 +363,7 @@ def _rule_matches(rule: str, collection, native_id: int, row=None) -> bool:
     return False
 
 
-def layer_index(collection, native_id, row=None) -> int:
-    layers = layers_for(collection)
+def _index_among(layers: tuple[Layer, ...], collection, native_id, row=None) -> int:
     if len(layers) == 1:
         return 0
     for i, layer in enumerate(layers):
@@ -373,14 +372,55 @@ def layer_index(collection, native_id, row=None) -> int:
     return len(layers) - 1
 
 
+def layer_index(collection, native_id, row=None) -> int:
+    return _index_among(layers_for(collection), collection, native_id, row)
+
+
 def layer_of(collection, native_id, row=None) -> Layer:
     return layers_for(collection)[layer_index(collection, native_id, row)]
+
+
+class Resolved:
+    """A collection's layers resolved ONCE for a pass over many of its
+    documents: `layer_index` and `chunker_for_document` each resolve
+    `layers_for`, three times a document between them — 6-15 % of the
+    records build's child (docs/notes/python-hot-spots.md, "C"), and for a
+    collection without declared layers each one asks the plugin for its
+    chunker again.
+
+    The same answers, by construction: the layer is `_index_among` over the
+    same tuple, the chunker `_chunker_of` the same layer. Kept by its
+    CALLER for one task and dropped with it — no key, no name, nothing
+    shared between collections (CLAUDE.md: caches key on physical
+    identity). `collection` is the object it was resolved for; a holder
+    checks it by identity (`is`) before reusing it."""
+    __slots__ = ("_chunkers", "collection", "layers")
+
+    def __init__(self, collection):
+        self.collection = collection
+        self.layers = layers_for(collection)
+        self._chunkers: dict[int, object] = {}
+
+    def index(self, native_id, row=None) -> int:
+        return _index_among(self.layers, self.collection, native_id, row)
+
+    def chunker_at(self, index: int):
+        """`chunker_for_document`'s chunker for the layer at `index`."""
+        fn = self._chunkers.get(index)
+        if fn is None:
+            fn = self._chunkers[index] = _chunker_of(self.layers[index])
+        return fn
 
 
 def chunker_for_document(collection, native_id, row=None):
     """The chunker bound to this document's layer — the ONE way a stage
     should cut a document (worker, importer, genesis, contribute)."""
-    layer = layer_of(collection, native_id, row)
+    return _chunker_of(layer_of(collection, native_id, row))
+
+
+def _chunker_of(layer: Layer):
+    """The chunker a layer binds: its chunker function with its version and
+    params, a pair layer's chunks keeping their `fields`."""
     fn = chunking._CHUNKERS[layer.chunker]
     version = layer.version
     params = layer.params

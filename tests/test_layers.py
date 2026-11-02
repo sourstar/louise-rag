@@ -66,6 +66,36 @@ def test_a_document_belongs_to_one_layer_by_the_archive_rule(isolated_config, tm
     assert layers.layer_index(replace(c, layers=local), 5) == 0
 
 
+def test_layers_resolved_once_answer_as_each_call_does(isolated_config, tmp_path, monkeypatch):
+    """`Resolved` (python-hot-spots.md "C": `layers_for` three times a record
+    in the records build's child) gives `layer_index`'s layer and
+    `chunker_for_document`'s chunks for every document, resolving once."""
+    arc = genesis.GenesisArchive(archive_id="arc", base_url="", adapter="medcpt-npy",
+                                 shards=("0", "1"), uid_prefix="pubmed:", ids_per_shard=10)
+    monkeypatch.setitem(genesis.ARCHIVES, "arc", arc)
+    two = layers.parse_layers([{"chunker": "abstract", "rule": "archive:arc"},
+                               {"chunker": "book"}], where="t")
+    sections = [("Title", "T " * 50), ("Abstract", "a b c " * 400)]
+    real = layers.layers_for
+    for c in (_collection(isolated_config, tmp_path, plugin="pubmed", layers=two),
+              _collection(isolated_config, tmp_path, plugin="pubmed"),
+              _collection(isolated_config, tmp_path)):
+        nids = range(40)
+        want = [(layers.layer_index(c, nid),
+                 list(layers.chunker_for_document(c, nid)(f"pubmed:{nid}", nid, sections))) for nid in nids]
+        assert {i for i, _ in want} == ({0, 1} if c.layers else {0})
+        calls: list[int] = []
+        monkeypatch.setattr(layers, "layers_for", lambda col, calls=calls: calls.append(1) or real(col))
+        resolved = layers.Resolved(c)
+        got = []
+        for nid in nids:
+            i = resolved.index(nid)
+            got.append((i, list(resolved.chunker_at(i)(f"pubmed:{nid}", nid, sections))))
+        monkeypatch.setattr(layers, "layers_for", real)
+        assert resolved.collection is c and len(calls) == 1, "resolved once for forty documents"
+        assert got == want
+
+
 def test_space_id_is_unchanged_with_one_layer_and_moves_with_two(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a, **k: ("deadbeef", True))
     c = _collection(isolated_config, tmp_path, plugin="pubmed")
