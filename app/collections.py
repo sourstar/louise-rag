@@ -105,15 +105,18 @@ class EmbedRecipe:
     # Provenance, not a setting: two recipes that send the same are equal.
     stated: frozenset[str] = field(default=frozenset(), compare=False)
     # HOW EXACT A RUN OF THIS ENCODER MUST BE (docs/notes/near-exact-runs.md).
-    # "near", THE DEFAULT since the operator's choice B (2026-11-01: "it makes
-    # not much sense to enforce local bit exactness" — peers already accept
-    # each other at the space's tolerance): a run is admitted when it
-    # reproduces itself within NEAR_VARIATION across fresh loads, orders and
-    # batches, and reaches the stored CPU reference at CPU_NEAR_LINE; a run
-    # that gives back its own bytes is recorded exact either way. "exact"
-    # stays as a collection's stricter choice: bytes or nothing. Never in the
-    # space: the vectors are the same function within tolerance.
-    exactness: str = "near"
+    # "exact", THE DEFAULT again since 2026-11-02 (the operator: "check how
+    # much slower is the bit exact mode, if it is below 5%, bit exactness mode
+    # is the new default"; measured: every live llama.cpp encoder within
+    # +0.5 % of its speed mode at production's shape, and the speed mode not
+    # even near-exact for two of them; "bit exactness is at best a 5% to pay,
+    # it is worth the price"): bytes or nothing, batches by bytes.
+    # "near" is a collection's explicit opt-in (choice B, 2026-11-01): a run
+    # is admitted when it reproduces itself within NEAR_VARIATION across fresh
+    # loads, orders and batches, and reaches the stored CPU reference at
+    # CPU_NEAR_LINE. Never in the space: the vectors are the same function
+    # within tolerance.
+    exactness: str = "exact"
     # Which processor this endpoint spends: "gpu" | "cpu". DESCRIPTIVE
     # ONLY — it never enters the space id, because the same model on a
     # different device computes the same function (that is precisely what
@@ -173,7 +176,7 @@ def _agrees(url: str, key: str, value: str, url_key: str, where: str) -> None:
 
 
 def _exactness(raw: dict, where: str) -> str:
-    value = str(raw.get("exactness", "near"))
+    value = str(raw.get("exactness", "exact"))
     if value not in ("exact", "near"):
         raise ValueError(f"{where}: `exactness` is \"exact\" or \"near\" "
                          f"(docs/notes/near-exact-runs.md), got {value!r}")
