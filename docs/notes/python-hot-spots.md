@@ -117,10 +117,33 @@ with two other jobs, so read the ratios rather than the absolute times.
 57 % on the 20k page (3 × 17 ms of ~88 ms) and about 80 % on a test page
 (3 × 1.1 ms of ~4 ms). Almost all of that is the library's Python tree
 builder: its C tokenizer is 10–18 %.
-- Two of the three parses are the same string. `parse_all` parses it, and
-  so does `_structured`, since `_tags` is idempotent. Sharing that one tree
-  would save a third, but it changes what a stage parses, so it belongs to
-  the "one parse" series. It was not done here.
+- Two of the three parses were the same string: `parse_all` parsed it, and
+  so did `_structured`, since `_tags` is idempotent. Shared since the same
+  day (the coordinator: inside one `parse_all` call it is an internal
+  detail; the rdf and fts stages each calling it stays the "one parse"
+  series). Every read of the tree is taken into strings first, and the
+  prose passes then run on that tree (`_structured_code`). If `_tags`
+  would still change the string, the prose gets its own parse, as before.
+- `apparatus` keeps its own parse. Its string has the reference lists
+  taken out, and its passes change the tree differently. A deep copy
+  costs ~3× a parse (1,619 against 568 µs on a test article, 38.7 against
+  13.5 ms on 20k chars).
+
+The same measurement, the three versions interleaved per round (11
+rounds; another job on the VM):
+
+| page | before A | A | A + one parse for two | A → now | before → now |
+|---|---|---|---|---|---|
+| test articles, mean of 4 | 2,951 µs | 2,019 µs | 1,615 µs | 1.25× | 1.83× |
+| SYNTHETIC 2k chars | 19.9 ms | 11.4 ms | 8.9 ms | 1.28× | 2.23× |
+| SYNTHETIC 5k chars | 50.4 ms | 24.6 ms | 18.4 ms | 1.33× | 2.74× |
+| SYNTHETIC 20k chars | 358 ms | 87.6 ms | 66.8 ms | 1.31× | 5.36× |
+
+Identity, the same bar: the 32 tests of `tests/test_wikitext_identity.py`
+(new: two whole-page parses where there were three; every read done before
+the prose touches the tree, on a tree shaped as a fresh parse; the tree
+after the prose passes shaped as the old `_prose_code` leaves a fresh
+parse), and the same 50,000 seeded pages again: none differed.
 
 ## B, done (2026-11-02)
 
