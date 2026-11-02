@@ -38,8 +38,11 @@ page's parse. And `parse_all` walked every template of the page 13 times,
 once per `named_template`. Now a pass walks the tree ONCE (`_walk`),
 decides every node in that walk's order, and splices each decision into
 the node list that holds it (`_rewrite`) with the same list operations
-`replace`/`remove` use. The bytes are the same — invariant 3: a changed
-byte is a new cleaning version and 52.9 M pages re-embedded. Proven
+`replace`/`remove` use. And `parse_all` parses the page twice, not three
+times: the prose is cut from the tree it has read everything else from
+(`_structured_code`), once nothing is left to read. The bytes are the
+same — invariant 3: a changed byte is a new cleaning version and 52.9 M
+pages re-embedded. Proven
 against the code before, kept verbatim in tools/measure/wikitext_reference.py:
 tests/test_wikitext_identity.py, and tools/measure/wikitext_identity.py over
 the node's held dumps.
@@ -434,7 +437,12 @@ def _prose_code(wikitext: str):
     """`(code, images, interlanguage)` — the wikitext with everything that
     is not prose taken out of it, and the two things taken that need a
     home in the record."""
-    code = mwparserfromhell.parse(wikitext)
+    return _prose(mwparserfromhell.parse(wikitext))
+
+
+def _prose(code):
+    """`_prose_code` on a tree already parsed — which it CHANGES: nothing
+    may read `code` afterwards and expect the page."""
     _drop_refs(code)            # first: a caption's citation is not caption
     images = _take_images(code)
     inter = _take_links(code)
@@ -454,7 +462,13 @@ def _structured(wikitext: str) -> tuple[list[tuple[str, str]], list[int], list[d
     (References, Notes…) now takes its SUBSECTIONS with it: `===Citations`
     under `==Notes` used to land in the prose (167 of 1,132 pages).
     """
-    code, images, inter = _prose_code(_tags(wikitext))
+    return _structured_code(mwparserfromhell.parse(_tags(wikitext)))
+
+
+def _structured_code(code) -> tuple[list[tuple[str, str]], list[int], list[dict], list[str]]:
+    """`_structured` on the tree of `_tags(wikitext)`, already parsed — and
+    changed by it (`_prose`)."""
+    code, images, inter = _prose(code)
     sections: list[tuple[str, str]] = []
     levels: list[int] = []
     skip_below: int | None = None
@@ -690,35 +704,56 @@ def parse_all(wikitext: str) -> dict:
     """Sections for the chunker, and everything else for `extra`."""
     wikitext = _tags(wikitext)
     code = mwparserfromhell.parse(wikitext)
-    # ONE WALK answers every read below — what `filter_templates()`,
-    # `filter_wikilinks()`, `filter_tags()` and `filter_external_links()`
-    # walked the page for, 18 times — in the same order (`code` is only
-    # read here; `_structured` and `apparatus` parse their own)
+    # EVERYTHING READ FROM THE PAGE'S TREE FIRST, into strings: the prose
+    # below is cut from this same tree and changes it. ONE WALK answers
+    # every read — what `filter_templates()`, `filter_wikilinks()`,
+    # `filter_tags()` and `filter_external_links()` walked the page for, 18
+    # times — in the same order.
     nodes = [node for _, node, _ in _walk(code)]
     templates = [n for n in nodes if isinstance(n, Template)]
     links = [n for n in nodes if isinstance(n, Wikilink)]
     by_name = _by_name(templates)
     short = _named(by_name, "short description")
-    sections, levels, images, inter = _structured(wikitext)
+    read = {
+        "categories": _categories(links),
+        "category_sortkeys": _category_sortkeys(links),
+        "infoboxes": _infoboxes(templates),
+        "references": _references([n for n in nodes if isinstance(n, Tag)]),
+        "external_links": _external_links([n for n in nodes if isinstance(n, ExternalLink)]),
+        "coordinates": [c["raw"] for c in _named(by_name, "coord")],
+        "hatnotes": [{"template": n, "fields": t["fields"]}
+                     for n in _HATNOTES for t in _named(by_name, n)],
+        "has_authority_control": bool(by_name.get("authority control")),
+    }
+    # ONE PARSE FOR TWO (2026-11-02): `_structured` parsed `_tags(wikitext)`
+    # again — this very string, `_tags` being idempotent — to cut the prose
+    # from. It takes this tree now, once nothing is left to read from it.
+    # Checked, not assumed: a string `_tags` would still change gets its own
+    # parse, as before. (A deep copy instead costs ~3x a parse.)
+    if _tags(wikitext) == wikitext:
+        sections, levels, images, inter = _structured_code(code)
+    else:
+        sections, levels, images, inter = _structured(wikitext)
     default_sort = _DEFAULTSORT.search(wikitext)
     return {
         "sections": sections,
         "section_levels": levels,
-        "categories": _categories(links),
-        "category_sortkeys": _category_sortkeys(links),
+        "categories": read["categories"],
+        "category_sortkeys": read["category_sortkeys"],
         "defaultsort": default_sort.group(1).strip() if default_sort else "",
-        "infoboxes": _infoboxes(templates),
-        "references": _references([n for n in nodes if isinstance(n, Tag)]),
-        "external_links": _external_links([n for n in nodes if isinstance(n, ExternalLink)]),
+        "infoboxes": read["infoboxes"],
+        "references": read["references"],
+        "external_links": read["external_links"],
         "short_description": short[0]["fields"].get("1", "") if short else "",
-        "coordinates": [c["raw"] for c in _named(by_name, "coord")],
+        "coordinates": read["coordinates"],
+        # its own parse: `{{reflist}}`/`<references/>` taken out first make
+        # it another string, and its passes change its tree differently
         "apparatus": apparatus(wikitext),
         "images": images,
         "interlanguage": inter,
-        "hatnotes": [{"template": n, "fields": t["fields"]}
-                     for n in _HATNOTES for t in _named(by_name, n)],
+        "hatnotes": read["hatnotes"],
         #: presence only — the identifiers are in Wikidata, not here
-        "has_authority_control": bool(by_name.get("authority control")),
+        "has_authority_control": read["has_authority_control"],
     }
 
 

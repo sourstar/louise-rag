@@ -18,7 +18,7 @@ two exceptions: the same failure is the same answer).
 BEFORE ANY DEPLOY OF THE REWRITE, München runs it on at least 100,000 real
 pages, and deploys only on IDENTICAL:
 
-  python -m tools.measure.wikitext_identity --collection wikipedia-v8 --pages 100000
+  python -m tools.measure.wikitext_identity --collection wikipedia --pages 100000
   python -m tools.measure.wikitext_identity --dump PATH [--dump PATH …] --pages 100000
 
 THE VERDICT. IDENTICAL needs every compared page identical AND at least
@@ -144,7 +144,7 @@ def dumps_for(a) -> list[Path]:
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--collection", default="wikipedia-v8", help="whose dumps (its pinned snapshot)")
+    p.add_argument("--collection", default="wikipedia", help="whose dumps (its pinned snapshot)")
     p.add_argument("--dump", action="append", help="a pages-articles-multistream dump, instead")
     p.add_argument("--pages", type=int, default=100_000, help="pages to compare (default 100000)")
     p.add_argument("--seed", type=int, default=0)
