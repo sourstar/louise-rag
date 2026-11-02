@@ -1896,6 +1896,56 @@ def _issue_counts(con) -> dict[str, int]:
         return {}
 
 
+#: the prefix VeGa gives every model it serves (deploy/vega/stage/models/
+#: vega-*.yaml): the platform's, not the embedder's — the one part of the
+#: served name the Library's tag leaves out
+_SERVED_PREFIX = "vega-"
+
+
+def _shelf_recipe(collection) -> "collections_mod.EmbedRecipe | None":
+    """`collections.recipe_for`, the worker's own resolution (invariant 10),
+    or None where none resolves: a card is drawn whatever its recipe. It was
+    called bare for the device badge, so one collection whose recipe raised
+    answered the whole Library with a 500."""
+    try:
+        return collections_mod.recipe_for(collection)
+    except Exception:  # noqa: BLE001 — NoEncoder, or a recipe that does not resolve: no encoder shown
+        return None
+
+
+def _embedder_quant(collection) -> str | None:
+    """The weights' quantization where the collection's Codex STATES it: the
+    file its reference engine loaded (`space.encoder.engine.options.Model`,
+    Codex version 4 and later), read by the gate's own `quant_level`. The
+    weights are the space's (by digest), so every run admitted to it loads
+    the same file. None where the Codex names no file (an engine started by
+    `args` alone, `${WEIGHTS}`) or the name carries no type tag — never read
+    from the model server's YAML, never guessed."""
+    from .hold.embedder import quant_level
+    try:
+        engine = collection.codex.space.encoder.engine
+        return quant_level(engine.to_dict()) if engine is not None else None
+    except Exception:  # noqa: BLE001 — no Codex, no space (annotations), an older shape: nothing stated
+        return None
+
+
+def _embedder_tag(collection, recipe) -> dict | None:
+    """The Library's embedder tag (operator, 2026-11-02: "Library tab, add a
+    tag with the embedder used"): the document-side model `recipe_for`
+    resolves, without VeGa's prefix, and the quantization where the Codex
+    states it; the full served name(s) for the tooltip. None — no tag —
+    where no encoder resolves."""
+    model = getattr(recipe, "model", None) if recipe is not None else None
+    if not model:
+        return None
+    served = model
+    query = getattr(recipe, "query_model", None)
+    if query and query != model:
+        served += f" · queries: {query}"
+    return {"name": model.removeprefix(_SERVED_PREFIX), "quant": _embedder_quant(collection),
+            "served": served}
+
+
 def _collection_shelf(collection: collections_mod.Collection,
                        measured: dict | None = None,
                        worker_state: str = "running") -> dict:
@@ -2262,6 +2312,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                   "to indexing while a full batch is ready, and parsing "
                   "resumes when indexing catches up")
 
+    recipe = _shelf_recipe(collection)
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         # the file's word and the file's `share`, for the Library's two
@@ -2319,7 +2370,9 @@ def _collection_shelf(collection: collections_mod.Collection,
         "gate": backend_gate.gate_state(con),
         # which processor this collection's encoder spends — the GPU is the
         # scarce one, so "turn embedding on" means something different here
-        "embed_device": collections_mod.recipe_for(collection).spends,
+        "embed_device": recipe.spends if recipe is not None else None,
+        # the embedder, by the same resolution (operator, 2026-11-02)
+        "embedder": _embedder_tag(collection, recipe),
         "grow_options": _grow_options(collection),
         # EXTRA formats: what the source offers, what this collection holds
         "extras_offered": sorted(spec.extras) if spec is not None else [],

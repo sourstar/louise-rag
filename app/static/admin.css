@@ -221,3 +221,12 @@ button.ask{padding:6px 22px}
 details.settings{margin-top:10px}
 details.settings>summary{cursor:pointer;color:var(--muted);font-size:12px}
 details.settings[open]>summary{margin-bottom:8px}
+/* THE VERBOSE TEXT BEHIND ONE CLOSED LINE, on every page (operator,
+   2026-11-02: "Compact all the verbose text information as 'details' …, as
+   it is done for 'Settings' at the bottom of the Ask tab. A crowded
+   interface is a bad interface"): the same look as the Settings line, from
+   the theme's tokens only, so it reads the same in Slate and in Colmar */
+details.more{margin:8px 0}
+details.more>summary{cursor:pointer;color:var(--muted);font-size:12px}
+details.more[open]>summary{margin-bottom:4px}
+details.more>.note:first-of-type,details.more>p:first-of-type{margin-top:0}

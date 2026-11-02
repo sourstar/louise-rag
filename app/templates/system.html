@@ -34,7 +34,11 @@
 
 <div class="panel">
   <h2>Model pins</h2>
-  <div class="note">Encoders pinned in LocalAI while Louise processes with them, each restored to its state before (app/model_pins.py). A failed call should not happen: each is a defect to look into.</div>
+  {# the explanation behind one closed line (operator, 2026-11-02: "A crowded
+     interface is a bad interface"); the failures below stay in sight #}
+  <details class="more"><summary>About this</summary>
+    <div class="note">Encoders pinned in LocalAI while Louise processes with them, each restored to its state before (app/model_pins.py). A failed call should not happen: each is a defect to look into.</div>
+  </details>
   {% if model_pins.failures.count %}
   <div class="note" style="color:var(--err)">{{ model_pins.failures.count }} failed pin call(s) — the last {{ model_pins.failures.recent|length }}:</div>
   <table><tr><th>when</th><th>call</th><th>model</th><th>holder</th><th>collection</th><th>what failed</th></tr>
@@ -95,7 +99,10 @@
   {% if users is none %}
   <div class="note" style="color:var(--err)">users.toml does not read; nobody but the admin token gets in.</div>
   {% elif not users %}
-  <div class="note">No users: Ask is open to anyone on this network. <code>louise user add &lt;name&gt;</code> creates the first one, and from then on Ask needs a token.</div>
+  <div class="note">No users: Ask is open to anyone on this network.</div>
+  <details class="more"><summary>Command line</summary>
+    <div class="note"><code>louise user add &lt;name&gt;</code> creates the first one, and from then on Ask needs a token.</div>
+  </details>
   {% else %}
   <table><tr><th>name</th><th>role</th><th>state</th><th>expires</th><th>last seen</th><th>created</th></tr>
     {% for u in users %}
@@ -104,7 +111,9 @@
       <td>{{ u.expires or 'never' }}</td><td>{{ u.last_seen or '—' }}</td><td>{{ u.created }}</td></tr>
     {% endfor %}
   </table>
-  <div class="note">Changed from the command line: <code>louise user add | list | role | expire | reissue | revoke | remove</code>.</div>
+  <details class="more"><summary>Command line</summary>
+    <div class="note">Users are changed from the command line: <code>louise user add | list | role | expire | reissue | revoke | remove</code>.</div>
+  </details>
   {% endif %}
 </div>
 
