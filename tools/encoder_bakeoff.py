@@ -898,7 +898,7 @@ def metrics_of(rankings: list[list[int]], queries: Queries, ks=KS) -> dict[str, 
 
 
 #: the per-query metrics kept beside each row, for the paired test
-PAIRED = ("mrr@10", "ndcg@10", "hit@40")
+PAIRED = ("mrr@10", "ndcg@10", "hit@40", "mrr@5", "hit@5")
 
 
 def per_query(rankings: list[list[int]], queries: Queries,
@@ -1026,7 +1026,7 @@ def _lexical_rankings(out: Path, max_chars: int, n_queries: int) -> list[list[in
 RERANKED = "rerank"
 #: chunks ranked per row before records are formed: deep enough that the
 #: top RERANK_TOP_N records each find their JUDGED_CHUNKS chunks
-CHUNK_DEPTH = 1_000
+CHUNK_DEPTH = 2_000
 #: candidates per reranker call: ~one search's (50 records × 2 chunks)
 RERANK_BATCH = 100
 
@@ -1065,12 +1065,12 @@ def _record_relevance(queries: Queries, chunk_ids: list[str]) -> list[set[str]]:
 
 
 def _record_metrics(lists: list[list[str]], relevant: list[set[str]],
-                    depth: int = 0) -> tuple[dict, dict]:
+                    depths: list[int] = ()) -> tuple[dict, dict]:
     """Record-level metrics (mean, per query), records numbered per query;
     `hit@depth` is what reached the reranker, which it cannot change."""
     totals: dict[str, float] = {}
     perq: dict[str, list[float]] = {k: [] for k in PAIRED}
-    ks = sorted((set(KS) | {int(k.split("@")[1]) for k in PAIRED} | {depth}) - {0})
+    ks = sorted(set(KS) | {int(k.split("@")[1]) for k in PAIRED} | set(depths))
     for ranking, rel in zip(lists, relevant):
         num = {r: i for i, r in enumerate(dict.fromkeys(ranking + sorted(rel)))}
         m = metrics_for([num[r] for r in ranking], {num[r] for r in rel}, ks)
@@ -1143,15 +1143,20 @@ def _call_reranker(recipe, query: str, texts: list[str], timeout: float) -> list
     return [got[i] for i in range(len(texts))]
 
 
-def rerank(out: Path, max_chars: int, recipe, heads, *, depth: int | None = None,
+def rerank(out: Path, max_chars: int, recipe, heads, *, depths: list[int] | None = None,
            per_record: int | None = None, only: list[str] | None = None,
            timeout: float = 600.0, call=None) -> int:
     """The module docstring's "THE RERANKER AFTER THE LEGS". `heads(records)`
-    gives each record's `title — authors` line (`_attach_heads`' own)."""
+    gives each record's `title — authors` line (`_attach_heads`' own).
+    `depths`: how many records the reranker orders, one row each (the search's
+    RERANK_TOP_N by default; the operator, 2026-11-02: "5 results reranked
+    over 50 results, more likely over 100"). The deepest list's pairs cover
+    every shallower one, so the extra depths cost no request."""
     from app import retrieval
     if suite_of(out) != POOL:
         raise SystemExit("`rerank` reads records from chunk ids: a `pool` set only")
-    depth = depth or retrieval.RERANK_TOP_N
+    depths = sorted(set(depths or [retrieval.RERANK_TOP_N]))
+    depth = depths[-1]
     per_record = per_record or retrieval.JUDGED_CHUNKS
     call = call or _call_reranker
     corpus, queries = load(out, max_chars)
@@ -1192,23 +1197,27 @@ def rerank(out: Path, max_chars: int, recipe, heads, *, depth: int | None = None
     relevant = _record_relevance(queries, chunk_ids)
     for run, meta, kind, _ranks in rows:
         ls = lists[(str(run), kind)]
-        before = [[rec for rec, _ in qlist] for qlist in ls]
-        after = []
-        for q, qlist in enumerate(ls):
-            best = [max(cache.scores[(q, c)] for c in cs) for _rec, cs in qlist]
-            after.append([qlist[i][0] for i in retrieval._rerank_order(best, fuse=False)])
         tag = meta["slug"] if kind == "vector" else f"fused-{meta['slug']}"
-        for name, recs in (("records", before), ("reranked", after)):
-            mean, perq = _record_metrics(recs, relevant, depth)
-            (run / f"{name}-{tag}.json").write_text(json.dumps(mean, indent=2) + "\n",
-                                                    encoding="utf-8")
-            (run / f"perquery-{name}-{tag}.json").write_text(json.dumps(perq) + "\n",
-                                                             encoding="utf-8")
-        b = _record_metrics(before, relevant, depth)[0]
-        a = _record_metrics(after, relevant, depth)[0]
         label = label_of(meta) + (" + BM25 (RRF)" if kind == "fused" else "")
-        print(f"{label}: records mrr@10 {b['mrr@10']:.4f} -> reranked {a['mrr@10']:.4f}  "
-              f"(hit@1 {b['hit@1']:.4f} -> {a['hit@1']:.4f}; reached the reranker {b[f'hit@{depth}']:.4f})")
+        before = [[rec for rec, _ in qlist] for qlist in ls]
+        outputs = [(f"records-{tag}", before)]
+        for d in depths:
+            after = []
+            for q, qlist in enumerate(ls):
+                head_d = qlist[:d]
+                best = [max(cache.scores[(q, c)] for c in cs) for _rec, cs in head_d]
+                after.append([head_d[i][0] for i in retrieval._rerank_order(best, fuse=False)]
+                             + [rec for rec, _ in qlist[d:]])
+            outputs.append((f"reranked-d{d}-{tag}", after))
+        for name, recs in outputs:
+            mean, perq = _record_metrics(recs, relevant, depths)
+            (run / f"{name}.json").write_text(json.dumps(mean, indent=2) + "\n", encoding="utf-8")
+            (run / f"perquery-{name}.json").write_text(json.dumps(perq) + "\n", encoding="utf-8")
+            m = mean
+            what = "records" if name.startswith("records") else f"rerank@{name.split('-')[1][1:]}"
+            print(f"{label} {what}: mrr@5 {m['mrr@5']:.4f}  hit@1 {m['hit@1']:.4f}  "
+                  f"hit@5 {m['hit@5']:.4f}  mrr@10 {m['mrr@10']:.4f}  "
+                  + "  ".join(f"reached@{d} {m[f'hit@{d}']:.4f}" for d in depths))
     print(f"{asked} pairs asked this run, {len(cache.scores)} kept "
           f"({time.monotonic() - t0:.0f} s)")
     return 0
@@ -1343,20 +1352,27 @@ def report(out: Path) -> int:
         if fused.exists():
             rows[f"{label_of(meta)} + BM25 (RRF)"] = json.loads(fused.read_text(encoding="utf-8"))
             keep(f"{label_of(meta)} + BM25 (RRF)", run / f"perquery-fused-{meta['slug']}.json")
-        # `rerank`'s rows: the records before the reranker and after, record level
+        # `rerank`'s rows: the records before the reranker and after it at
+        # each depth, record level
         for tag, suffix in ((meta["slug"], ""), (f"fused-{meta['slug']}", " + BM25 (RRF)")):
-            for name, shown_as in (("records", " (records)"), ("reranked", " + rerank")):
-                path = run / f"{name}-{tag}.json"
+            found = [(f"records-{tag}", " (records)")] + sorted(
+                ((p.stem, f" + rerank@{p.stem.split('-')[1][1:]}")
+                 for p in run.glob(f"reranked-d*-{tag}.json")
+                 if p.stem == f"reranked-{p.stem.split('-')[1]}-{tag}"),
+                key=lambda x: int(x[0].split("-")[1][1:]))
+            for name, shown_as in found:
+                path = run / f"{name}.json"
                 if path.exists():
                     rows[f"{label_of(meta)}{suffix}{shown_as}"] = json.loads(path.read_text(encoding="utf-8"))
-                    keep(f"{label_of(meta)}{suffix}{shown_as}", run / f"perquery-{name}-{tag}.json")
+                    keep(f"{label_of(meta)}{suffix}{shown_as}", run / f"perquery-{name}.json")
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
     if not rows:
         print(f"{out}: no scored run yet (`embed`, then `score`)")
         return 0
     # nDCG@10 and MRR@10: what MTEB, MLEB and the legal papers report
-    shown = (["hit@1", "hit@10", "hit@40", "mrr@10", "mrr@100"] if suite_of(out) == POOL else
+    shown = (["hit@1", "hit@5", "mrr@5", "hit@10", "mrr@10", "hit@40", "hit@100"]
+             if suite_of(out) == POOL else
              ["recall@3", "recall@5", "recall@10", "recall@100",
               "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"])
     width = max(len(name) for name in rows)
@@ -1371,6 +1387,14 @@ def report(out: Path) -> int:
     for slug, text in sorted(prefixes.items()):
         print(f"\n[{slug}] query prefix: {text!r}")
     _print_paired(queried)
+    # `rerank`'s rows compared among themselves, at each depth, on what a
+    # reader sees: the first 5 results (the operator's setting, 2026-11-02)
+    groups = sorted({k[k.rindex(" + rerank@"):] for k in queried if " + rerank@" in k})
+    for g in [" (records)"] + groups:
+        same = {k: v for k, v in queried.items() if k.endswith(g)}
+        if len(same) > 1:
+            print(f"\n[{g.strip()}]", end="")
+            _print_paired(same, "mrr@5")
     if suite_of(out) == "jurifindit":
         print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
               "its truncation and corpus handling are unrecorded.")
@@ -1410,8 +1434,9 @@ def main(argv=None) -> int:
         if cmd == "rerank":
             p.add_argument("--from-collection", required=True,
                            help="the collection whose reranker and record titles are used")
-            p.add_argument("--depth", type=int, default=None,
-                           help="records reranked (the search's RERANK_TOP_N by default)")
+            p.add_argument("--depth", type=int, action="append", default=None,
+                           help="records reranked, repeatable: one row each "
+                                "(the search's RERANK_TOP_N by default)")
             p.add_argument("--only", action="append", default=None,
                            help="rerank only rows whose label contains this; repeatable")
         if cmd in ("embed", "lexical", "score", "rerank"):
@@ -1468,7 +1493,7 @@ def main(argv=None) -> int:
         recipe = collections_mod.reranker_for(c)
         if recipe is None:
             raise SystemExit(f"{a.from_collection} names no reranker and RERANK_URL is unset")
-        return rerank(a.out, a.max_chars, recipe, heads, depth=a.depth, only=a.only)
+        return rerank(a.out, a.max_chars, recipe, heads, depths=a.depth, only=a.only)
     return report(a.out)
 
 
