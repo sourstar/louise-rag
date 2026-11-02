@@ -69,7 +69,20 @@ score is read:
 | incumbent | harrier is chosen when | why |
 |---|---|---|
 | **Qwen3-4B Q4_K_M** (gutenberg) | it is **not significantly worse** on MRR@10: harrier ≥ Qwen, or Qwen's lead has p ≥ 0.05 (paired randomization test) | harrier is ~7× smaller, its vectors 2.5× smaller (1,024 against 2,560), exact on this card, and its card time is several times less. Equal quality is worth it |
-| **bge-m3 F16** (wikipedia, wikidata) | it is **significantly better** on MRR@10: harrier > bge-m3 with p < 0.05 | the same size class and the same 1,024 dimensions: a re-embed of tens of millions of chunks is paid for by quality only |
+| **bge-m3 F16** (wikipedia, wikidata) | it is **significantly better** on MRR@10: harrier > bge-m3 with p < 0.05; **or**, when harrier is chosen for gutenberg, it is **not significantly worse** (amended 2026-11-02, below) | the same size class and the same 1,024 dimensions: a re-embed of tens of millions of chunks is paid for by quality alone, unless it also leaves ONE model for every general collection |
+
+**Amended the same day, still before any score** (the operator: "Another
+reason to adopt harrier over bge is, in case it wins over qwen3, to have only
+one model loaded for generalistic collections, that is particularly important
+with a small VRAM amount"). Where harrier replaces Qwen3-4B on gutenberg,
+keeping bge-m3 for wikipedia and wikidata would hold two general encoders on
+the card. harrier for all three holds one. The gains:
+- one model's VRAM;
+- one query embedding per question across the three collections;
+- no swapping on a peer whose card holds one at a time.
+
+So there harrier needs only to be not significantly worse than bge-m3. The
+cost it accepts is the re-embed time, which comes with the numbers below.
 
 hit@10 / recall@10 and the per-language rows are reported beside it, but
 they do not decide.
