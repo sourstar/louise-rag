@@ -284,10 +284,14 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
   | arm | chunks/s | card busy | backend CPU | bit-identical |
   |---|---|---|---|---|
   | harrier c4 | 58.82 | 99.2 % | 339 % | 5,000/5,000 |
+  | nemotron c1 | 46.48 | 86.8 % | 304 % | 5,000/5,000 |
   | nemotron c4 | 55.03 | 98.6 % | 344 % | 5,000/5,000 |
+  | nemotron c8 | 54.98 | 98.3 % | 340 % | 5,000/5,000 |
 
   - **Nemotron saturates the card** at 4 in flight, and runs at **0.94×
-    harrier**.
+    harrier**. 8 in flight adds nothing; 1 → 4 adds 18 %.
+  - **What the CPU twin cost it:** 43 % at 1 in flight (26.74 → 46.48) and 28 %
+    at 4.
   - The rows above it, measured beside the CPU twin, are superseded for speed.
   - These are not comparable with HARRIER-OPT's 51.57: that was the full
     21,348-chunk W1, and this is its first 5,000.
