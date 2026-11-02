@@ -41,7 +41,8 @@ def test_each_profile_carries_its_cores_gpu_level_and_mode(profiles):
     for hhmm in ("07:00", "12:30", "18:00"):
         quiet = profiles.active(_at(hhmm))
         assert quiet.profile.name == "quiet" and quiet.profile.mode == "acquire-only"
-        assert quiet.profile.cpu_cores == 0 and quiet.level.power_limit == "max"
+        # "12 CPU cores always" (the operator, confirming decision 6)
+        assert quiet.profile.cpu_cores == 12 and quiet.level.power_limit == "max"
     day, night = profiles.active(_at("09:00")), profiles.active(_at("23:00"))
     assert (day.profile.cpu_cores, day.level.power_limit, day.profile.mode) == (12, "max", "running")
     assert (night.profile.cpu_cores, night.level.power_limit, night.profile.mode) == (12, "max", "running")
@@ -101,7 +102,7 @@ def test_platform_toml_carries_them_and_refuses_a_bad_one(tmp_path, monkeypatch)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     (tmp_path / "platform.toml").write_bytes(EXAMPLE.read_bytes())
     assert platform_config.load().profiles.active(_at("07:00")).profile.name == "quiet"
-    assert node_profile.cpu_cores(_at("23:00")) == 12 and node_profile.cpu_cores(_at("07:00")) == 0
+    assert node_profile.cpu_cores(_at("23:00")) == 12 and node_profile.cpu_cores(_at("07:00")) == 12
     (tmp_path / "platform.toml").write_text('[schedule]\nprofile = "else nowhere"\n[profiles.day]\n')
     with pytest.raises(schedule.ScheduleError):
         platform_config.load()
