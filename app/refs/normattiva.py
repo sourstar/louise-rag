@@ -343,6 +343,18 @@ def _matches(pattern: re.Pattern, runs: list[int], back: re.Pattern, text: str) 
         done = d
 
 
+def _month(name: str) -> int:
+    """The month `_MONTH_RE` matched, by the pattern's own case rule. `re.I`
+    folds ſ to s and ı, İ to i; `str.lower` leaves ſ and ı, and makes İ two
+    characters, so "3 ſettembre 1765, n. 5" after an act's type was a
+    KeyError: the whole document an fts error, the question a failed search
+    (2026-11-02)."""
+    got = _MONTHS.get(name.lower())
+    if got is None:
+        got = next(i for m, i in _MONTHS.items() if re.fullmatch(m, name, re.IGNORECASE))
+    return got
+
+
 def _type_token(text: str) -> str | None:
     for pattern, token in _TYPES:
         if re.fullmatch(pattern, text.strip(), re.I):
@@ -365,7 +377,7 @@ def citations(query: str) -> list[dict]:
                 continue
             data = None
             if pattern is _CITE_DATED:
-                month = _MONTHS[m.group("month").lower()]
+                month = _month(m.group("month"))
                 data = f"{int(m.group('year')):04d}-{month:02d}-{int(m.group('day')):02d}"
             num = _WS.sub("", m.group("num").replace(" ", "")).lower()
             key = (tipo, num, int(m.group("year")))

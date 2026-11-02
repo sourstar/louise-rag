@@ -90,9 +90,12 @@ The patterns are unchanged byte for byte, and the answer is unchanged byte
 for byte against the verbatim old scan (tests/citations_reference.py) on:
 the fixtures, 80,000 generated texts (122 M characters) and 240 long ones
 (30–300 KB, 34 M), 543,831 citations in all (43,648 dated). 239 texts
-raise the same KeyError in both: a month spelled with ſ, ı or İ, which
-`re.I` matches and `str.lower` does not map back. The suite keeps 2,000 of
-the texts (tests/test_citations_fast_path.py).
+raised the same KeyError in both: a month spelled with ſ, ı or İ, which
+`re.I` matches and `str.lower` does not map back — the document an fts
+error. Fixed in a commit of its own (`normattiva._month`: the month read as
+the pattern matched it); those 239 now answer, as the old scan does once
+its month table reads the folds. The suite keeps 2,000 of the texts
+(tests/test_citations_fast_path.py).
 
 Measured: perf_counter, the median of 5 runs, then the median of 3 such
 runs; the 4-vCPU VM had other jobs on it (load 2.5–3.5), so ±30 %.

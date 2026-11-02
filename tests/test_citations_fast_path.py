@@ -24,13 +24,35 @@ def _answer(citations, text: str) -> str:
         return f"raises {type(e).__name__}: {e}"
 
 
+class _FoldedMonths(dict):
+    """The reference's month table read as `re.I` matched the name: lowered,
+    İ is i and U+0307, while ſ and ı stay as they are."""
+
+    def __missing__(self, key: str) -> int:
+        plain = key.replace("\u0307", "").replace("\u017f", "s").replace("\u0131", "i")
+        if plain == key:
+            raise KeyError(key)
+        return self[plain]
+
+
 def _same(texts) -> int:
-    """Asserts both answers equal on every text; returns how many cite."""
+    """Asserts both answers equal on every text; returns how many cite. The
+    one exception the old scan raised — a KeyError on a month spelled with
+    ſ, ı or İ — is fixed (`normattiva._month`): there the new answer is the
+    old scan's with the month read as the pattern matched it."""
     citing = 0
     for t in texts:
         new, old = _answer(nref.citations, t), _answer(ref.citations, t)
+        if old.startswith("raises KeyError"):
+            months = ref._MONTHS
+            ref._MONTHS = _FoldedMonths(months)
+            try:
+                old = _answer(ref.citations, t)
+            finally:
+                ref._MONTHS = months
         assert new == old, t[:200]
-        citing += old != "[]" and not old.startswith("raises")
+        assert not new.startswith("raises"), new
+        citing += old != "[]"
     return citing
 
 
@@ -101,6 +123,18 @@ def test_a_citation_longer_than_the_first_look_back_is_found():
              f"{'parola ' * 400}legge n.{chr(10) * 600}306 del 7 marzo 2003"]
     assert _same(texts) == 4
     assert _same([t.replace(" t", " ;t", 1) for t in texts]) == 3, "no `;` in a title"
+
+
+def test_a_month_spelled_with_a_folded_letter_is_read():
+    """`re.I` matches ſettembre, gennaİo and dıcembre; the month's number was
+    looked up with `str.lower`, which does not give the name back — a
+    KeyError, the document an fts error (2026-11-02)."""
+    for text, data in (("legge 3 ſettembre 2003, n. 5", "2003-09-03"),
+                       ("legge 3 gennaİo 2003, n. 5", "2003-01-03"),
+                       ("legge 3 dıcembre 2003, n. 5", "2003-12-03"),
+                       ("LEGGE 3 DICEMBRE 2003, N. 5", "2003-12-03")):
+        assert nref.citations(text) == [
+            {"tipo": "legge", "numero": "5", "anno": 2003, "data": data, "art": None}], text
 
 
 # ---- the answer, compared ---------------------------------------------------------
