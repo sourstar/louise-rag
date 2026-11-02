@@ -103,3 +103,27 @@ scan reports each wiki as waiting and yields no document; documents already
 there keep their parser-4 locators and parse as before. A table landing in
 `/corpora/wikipedia` while the old collection scans would still move every
 signature, so step 4 runs with it paused (as normattiva's re-creation did).
+
+## Decision 2026-11-02: coverage stays as the source gives it
+
+The operator: "Wikidata link, keep as it is".
+
+Coverage measured by München on a sample of 33 of 26,551 record parts
+(51,809 records):
+- archive layer: 99.5 %;
+- dump-layer articles: 81 %;
+- redirects: 8 %.
+
+#64's archive gap is closed in the parts rewritten 2026-11-01. The exact
+figure is the `with_item` count of `louise dev embed-select wikipedia`.
+
+100 % is not reachable: a page with no Wikidata item has no QID to give.
+
+Not done, by this decision:
+- redirects inheriting their target's QID;
+- QIDs from the `wikidata` collection's sitelinks, which would reverse the
+  2026-10-18 rule;
+- the live API.
+
+The gap narrows at each new pinned run, as Wikidata links newer pages.
+The smart embedding keeps an article with no item, so no coverage is lost.
