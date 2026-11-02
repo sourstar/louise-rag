@@ -18,6 +18,24 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+### 2026-11-02 (morning): harrier evaluation under acquire-only; the web alone on 938c525
+
+- **The node is acquire-only for the harrier evaluation** (operator: "Suspend
+  normal embedding during harrier evaluation"), set 07:26 with a `by` naming
+  it. `/root/measure/harrier/harrier-card6.sh` restores running on every exit
+  and then writes `EVAL-OVER`; the gutenberg gate, the dataset rename, the
+  BEFORE rows and lever 3 wait for that file (`after-harrier.sh`). harrier
+  measured REPRODUCIBLE (528/528 bit-identical, 3 loads × 2 passes, window
+  5120). Before 2d2cf21 the measurement tools held no encoder lease and the
+  worker unloaded harrier every minute.
+- **The web runs its own image** `louise-rag:web-938c525` (06b12213, #199),
+  recreated alone with `docker compose … up --no-deps web` and an override
+  (`/root/staged-199/web-override.yaml`) that also sets its
+  LOUISE_PLATFORM_IMAGE. The worker, governor and probe stay on 692d4ea9
+  (b7b6357). The app's stored config is unchanged, so a TrueNAS restart of
+  the app puts the web back on `louise-rag:local`. The next full deploy
+  reconciles everything.
+
 ### 2026-10-31 (evening): wikidata on bge-m3; vector tables with stable row ids; two speed fixes
 
 - **wikidata's encoder is bge-m3** (#141, #142): 0.650 MRR@10 against
