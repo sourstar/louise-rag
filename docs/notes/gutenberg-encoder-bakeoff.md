@@ -1,4 +1,10 @@
-# gutenberg's encoder against harrier-oss-v1-0.6b: a measurement
+# harrier-oss-v1-0.6b against our encoders: gutenberg, wikidata, wikipedia
+
+*Extended 2026-11-02 (the operator): "Harrier may be the model of reference
+for all our non specialistic collections (gutenberg, wikipedia, wikidata,
+gutenberg-graph), compare the score also with bge-m3 and
+wikipedia/wikidata". The plan is in "Three collections" below. gutenberg-graph
+does not exist yet: it takes the reference model when it is created.*
 
 *Planned 2026-11-02; measure only. The question changed twice the same
 night:*
@@ -33,7 +39,26 @@ here):**
   fault passes every other check and makes the row wrong.
 - **Invariant 12.** `tools/vega_repro_check.py` on the model, once.
 
-## The set
+## Three collections
+
+| collection | its encoder today | the set | rows |
+|---|---|---|---|
+| gutenberg | Qwen3-4B Q4_K_M | the pool below: 490 queries judged by work | Q4 (stored, done); harrier with gutenberg's instruction AND with its own retrieval prompt (the query side only, the documents shared); bge-m3 F16 (the stopped row resumed, as wikidata serves it) |
+| wikidata | bge-m3 F16 | the known-item set of 2026-10-31 (wikidata-family-slices.md §10): 400 questions, en and it, over 21,348 chunks of 20,000 entities | bge-m3 (its vectors from 10-31, kept); harrier (`wikidata_encoder_ab.py embed --encoder harrier`) |
+| wikipedia | bge-m3 F16 | a NEW known-item set the same way (`sample-table`): 5,000 articles, en and it, their first 4 chunks from its own vector table, 400 questions by the chat model without the title (`queries --prompt wikipedia`) | bge-m3, harrier |
+
+- **harrier's queries** take its card's retrieval prompt (`web_search_query`:
+  "Instruct: Given a web search query, retrieve relevant passages that
+  answer the query\nQuery: "). bge-m3 takes none, as served. On gutenberg,
+  harrier also gets gutenberg's own instruction, for a like-for-like row
+  against Qwen.
+- **The verdict** for each collection is MRR@10 with a paired randomization
+  test, every pair. Speed (chunks a second) and vector size (1,024 for
+  both harrier and bge-m3, 2,560 for Qwen3-4B) are stated beside it.
+- **Normal embedding stays suspended** for the whole evaluation (the
+  operator: "Suspend normal embedding during harrier evaluation").
+
+## The gutenberg set
 
 - **Queries:** gutenberg's own, judged by the WORK they name. These are the
   451 descriptive queries in nine languages and the 39 title queries of
@@ -57,9 +82,12 @@ here):**
 
 ## Cost
 
-- **Card time:** about 1 h for the harrier corpus side (~40 M tokens, a
-  0.6 B model, about bge-m3's speed), in day or night periods outside the
-  step-1 windows.
+- **Card time, the card to itself:**
+  - gutenberg: harrier and bge-m3, about 1 h each (~40 M tokens each);
+  - wikidata: harrier, about 15 min;
+  - wikipedia: the questions by the chat model, then bge-m3 and harrier, about
+    30 min.
+  - Day and night periods only.
 - **Disk:** about 1.2 GB of GGUF and 2.4 GB of safetensors while converting,
   plus ~0.2 GB of vectors.
 
