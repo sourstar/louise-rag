@@ -73,12 +73,23 @@ def is_held(slice_name: str | None, slices: tuple[str, ...]) -> bool:
     return any(slice_name == s or slice_name.startswith(s + "/") for s in slices)
 
 
-def embedded(collection) -> tuple[str, ...] | None:
-    """The slices the node's encoder spends on (07 §7.8 `embed_slices`;
-    operator, 2026-10-31: wikidata "hold all 14 and embed 9"), or None for
-    every slice held. Any plugin: a slice is a slice."""
+def embedded_slices(collection) -> tuple[str, ...] | None:
+    """The file's `embed_slices` (07 §7.8; operator, 2026-10-31: wikidata
+    "hold all 14 and embed 9"), or None for every slice held. Any plugin: a
+    slice is a slice."""
     got = getattr(collection, "embed_slices", None)
     return None if got is None else tuple(sorted(str(s) for s in got))
+
+
+def embedded(collection) -> tuple[str, ...] | None:
+    """The slices THIS pass declines outside of: `embed_slices`, unless the
+    collection's embed selection is "smart" (app/embed_select.py), whose
+    pass owns the DECLINED marks and applies `embed_slices` itself — two
+    writers of one mark would undo each other's."""
+    from . import embed_select
+    if embed_select.owns_marks(collection):
+        return None
+    return embedded_slices(collection)
 
 
 def signature(slices: tuple[str, ...] | None, embed: tuple[str, ...] | None,

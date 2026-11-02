@@ -1463,6 +1463,11 @@ embed_slices = ["family=person", "family=work"]  # optional (2026-10-31): the sl
                                                # absent = every slice held. A document outside them is marked "not embedded
                                                # here" (embed_done = -1): never an embed candidate, never counted embedded,
                                                # back to 0 when the list grows; one already embedded keeps its vectors
+embed_select = "smart"                         # optional (2026-11-02): which documents held are embedded — "all", or "smart"
+                                               # (wikipedia's default): every English article, plus for each Wikidata item the
+                                               # longest article in another language when the English one is missing or shorter;
+                                               # the rest marked "not embedded here" as above (app/embed_select.py,
+                                               # docs/notes/wikipedia-smart-embedding.md); `louise dev embed-select` previews it
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all | p2p: what the node's encoder spends, never what search uses;
                                                # all = every part itself ("all local"), p2p = the parts rendezvous gives this node,
