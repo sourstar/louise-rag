@@ -250,17 +250,48 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
 
 - **Every arm is exact:** 5,000 of 5,000 vectors bit-identical to W1's.
 - **At 4 in flight:** nemotron runs at 0.77× harrier and 0.54× bge-m3.
-- **It does not saturate the card.** 8 in flight adds nothing: it
-  plateaus at ~39.5 chunks/s with the card ~85 % busy, where harrier and
-  bge-m3 reach 98–99 %. On P3's longer chunks it is level with harrier, so
-  the loss is per request or per text, not per token.
-  - The remaining ~15 % is NOT measured. VeGa states llama.cpp at
-    `parallel:1`, so requests are served one after another.
-  - The candidates are host-side work per batch (tokenization with the
-    `pixtral` pre-tokenizer, the non-causal mask) or ops this architecture
-    runs on the CPU.
-  - To find out: LocalAI's CPU share during a 4-in-flight run, then a
-    llama.cpp op trace. Not run; it matters only if nemotron is adopted.
+- **CORRECTED: the gap to harrier is mostly not nemotron's** (the
+  operator's choice B, München 17:04–17:10).
+  - **The cause:** every nemotron speed row above ran beside gutenberg's
+    CPU reference (the CPU twin, ~700 % CPU inside LocalAI, on 12 cores).
+    harrier's and bge-m3's HARRIER-OPT rows ran while it was paused. The
+    host is CPU-saturated: the backend's main thread waits to be scheduled
+    between submissions, and the card idles meanwhile.
+  - **Profiled pair, both beside the twin** (c4, the same 5,000 chunks):
+    harrier 36.38 chunks/s at 82.2 % busy, nemotron 33.60 at 78.2 %, both
+    bit-identical. **Nemotron is 0.92× harrier like for like**, not 0.77×.
+    Profiling itself costs ~15 %.
+  - **The CPU's time, the same for both:**
+    - 80 % of samples are ggml's CPU threadpool workers (`threads: 6`)
+      busy-polling while the card computes, ~200 % CPU spent waiting;
+    - the main thread's own time is mostly the kernel (syscalls, scheduling);
+    - no host thread at 100 %, so a feeding thread is not the ceiling.
+  - **Tokenization:** 11.3 ms a text (nemotron, `pixtral`) against 10.1
+    (harrier). 1.2 ms against 25–37 ms of card time a chunk: not the ceiling.
+  - **What follows:**
+    - card measurements only where no CPU twin runs (the scheduling-log rule,
+      broken today by the rerun's timing);
+    - `threads: 1` for fully offloaded embedding models, which removes ~2
+      cores of spinning (its bit-identity to be checked);
+    - the candidate engine below.
+- **Tokenizer correctness on our engine** (all of W1 and P3, the exact
+  strings, against `tokenizers` on the snapshot's tokenizer.json):
+  - 71 of 40,931 texts differ, all chunks, no question: W1 203 of 5.82 M
+    tokens, P3 137 of 2.32 M;
+  - the cases are contractions ("O'Donnell", "O'Reilly") and combining
+    marks in Devanagari and Gujarati;
+  - the cause: c0fd786 maps the `pixtral` pre-tokenizer to LLAMA3's rules.
+    Upstream e197cef (10-22) maps it to Tekken's, and d8d9297 (10-20) adds
+    `\p{M}` to the Tekken lookaheads;
+  - the 71 texts' cosines to a sentence-transformers reference are being
+    measured.
+- **The candidate engine:**
+  - LocalAI master (16acc89, 2026-11-02) pins llama.cpp ddf48f8 (10-31),
+    which carries both tokenizer fixes, the fattn-mkl host-wait removal
+    (0a9ef00), SYCL graph record/replay (7377bad, opt-in) and the SYCL
+    ordering and FA fixes (8115b4c, 36a0e2f);
+  - `deploy/localai/llama-cpp/build.sh` builds it beside the live engine with
+    `SERIES_FILE`; the live series and its tag are unchanged.
 - **A first run is superseded.** The node's scratch tool left out the
   `passage: ` prefix, so its bit-identity column compared different inputs.
   Arms embed through `wikidata_encoder_ab.encoder_fn` from now on.

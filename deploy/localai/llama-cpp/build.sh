@@ -16,6 +16,12 @@
 # Out: <out dir>/louise-llama-cpp-<variant>-<series digest>.tar, and the image
 # tagged louise-llama-cpp:<variant>-<series digest>.
 #
+# SERIES_FILE=<path> builds from another series file: a CANDIDATE engine on a
+# newer base, beside the live one (2026-11-02: LocalAI master, whose llama.cpp
+# carries the SYCL host-wait and Tekken tokenizer fixes). Its lines are read
+# as the series' are; patch names resolve in deploy/localai/patches. The live
+# series and its tag are unchanged when it is unset.
+#
 # Needs git, docker (BuildKit) and the network; nothing from Louise's image.
 # The engine it builds is a NEW engine (another tree than upstream's): each
 # model on it is a new run, gated once (docs/03 §3.3), measured for bitwise
@@ -25,8 +31,9 @@ VARIANT=${1:?variant: cpu | sycl_f16 | hipblas}
 OUT=${2:?out dir}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PATCHES=$HERE/../patches
-BASE=$(sed -n 's/^base //p' "$PATCHES/series")
-SERIES=$(grep -v '^#' "$PATCHES/series" | grep -v '^base ' | grep .)
+SERIES_FILE=${SERIES_FILE:-$PATCHES/series}
+BASE=$(sed -n 's/^base //p' "$SERIES_FILE")
+SERIES=$(grep -v '^#' "$SERIES_FILE" | grep -v '^base ' | grep .)
 
 case $VARIANT in
   cpu)      BUILD_TYPE=; BASE_IMAGE=ubuntu:24.04
@@ -48,7 +55,7 @@ for p in $SERIES; do
     am -q "$PATCHES/$p"
 done
 # the series' own digest names the build: the same patches, the same tag
-HEAD=$(cd "$PATCHES" && cat series $SERIES | sha256sum | cut -c1-12)
+HEAD=$(cd "$PATCHES" && cat "$SERIES_FILE" $SERIES | sha256sum | cut -c1-12)
 TAG=louise-llama-cpp:$VARIANT-$HEAD
 
 DOCKER_BUILDKIT=1 docker build --progress=plain -f "$WORK/backend/Dockerfile.llama-cpp" \
