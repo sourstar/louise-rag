@@ -16,6 +16,7 @@ quoted. The order matters; §1 saves the most time.
 | which inputs a `vega-` model refuses to cut at a window | `tools/vega_cut_scan.py` |
 | a collection's `vectors-sample` against a twin on another device | `tools/cross_device_check.py` |
 | embed endpoint concurrency, safe settings | `louise dev embedder-profile` (tools/profile_embed.py: production-shaped texts, rejects a setting that wins on speed but drifts on cosine) |
+| where one embedding request's time goes: VeGa's tag, the POST, the receipts read, the check, against a raw model server on the same texts | `louise dev embedder-profile --stages --model vega-X --model X-raw --pool <bakeoff dir>` (one request in flight, each model leased, worst cosine between the arms) |
 | whether stored vectors still match the endpoint | `tools/vector_compliance.py` |
 | tolerance for cross-backend comparison | `tools/calibrate_space.py` |
 | scheduler cost and round timings | `louise dev schedule-report` (scheduling.md §7) |

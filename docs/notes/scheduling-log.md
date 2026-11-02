@@ -2122,6 +2122,8 @@ Rates from G1's timestamped progress lines; tokens counted with harrier's tokeni
 - A CPU-twin pass on the node halves the card's embedding throughput. The SYCL backend's host threads, LocalAI
   and the VeGa wrapper share the 12 cores with it.
 - VeGa's own cost against the raw backend is ~3–4 % (about 3 ms a text). An average over both windows had
-  suggested 35 %.
+  suggested 35 %. The test harness agrees: 3.7 ms a request, 6.71 against 2.97 median, the wrapper's hop
+  ~1.8 and the receipts GET ~1.8 (`louise dev embedder-profile --stages` over tests/vega's real wrapper,
+  300 texts of ~4,080 characters).
 - Every CPU reference is scheduled where the card's work does not matter (night, or with nothing embedding),
   or the card's numbers taken beside it are not the card's.
