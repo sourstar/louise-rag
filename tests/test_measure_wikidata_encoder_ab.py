@@ -160,3 +160,97 @@ def test_bge_as_good_keeps_jina_and_the_two_jinas_are_compared(tmp_path):
     assert got["bge_minus_jina"]["against"] == "jina-gguf"
     assert got["verdict"].startswith("keep jina-v3")
     json.dumps(got)
+
+
+# ---- harrier and sample-table (operator, 2026-11-02) ---------------------------
+
+def test_harrier_is_the_base_recipe_with_its_model_and_retrieval_prompt(monkeypatch):
+    from app import collections as collections_mod
+    base = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega", model="vega-bge-m3",
+                                       dtype="f16", ctx=8191, dim=1024, cut="tokens")
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: object())
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda c: base)
+    r = ab._recipe("harrier")
+    assert r.model == ab.HARRIER_MODEL and r.query_instruction == ab.HARRIER_QUERY
+    assert r.query_instruction.startswith("Instruct: ") and r.query_instruction.endswith("\nQuery: ")
+    assert (r.url, r.api, r.cut, r.ctx, r.dim, r.query_model) == (base.url, "vega", "tokens", 8191, None, None)
+
+
+def test_embedding_leases_the_encoder_for_the_whole_run(tmp_path, monkeypatch):
+    from app import embeddings, encoder_use
+    (tmp_path / "corpus.jsonl").write_text(json.dumps({"uid": "u0", "family": "en", "label": "",
+                                                       "chunks": ["a", "b"]}) + "\n")
+    (tmp_path / "queries.jsonl").write_text(json.dumps({"uid": "u0", "family": "en", "lang": "en",
+                                                        "query": "q"}) + "\n")
+    events = []
+
+    class Lease:
+        def __enter__(self):
+            events.append("leased")
+
+        def __exit__(self, *exc):
+            events.append("released")
+
+    monkeypatch.setattr(ab, "_recipe", lambda enc: object())
+    monkeypatch.setattr(encoder_use, "held", lambda recipe, holder: Lease())
+    monkeypatch.setattr(encoder_use, "holder", lambda cmd: cmd)
+    monkeypatch.setattr(embeddings, "embed_calibration",
+                        lambda recipe, texts, **kw: events.append(len(texts)) or [[1.0, 0.0]] * len(texts))
+    ab.embed(tmp_path, "harrier")
+    assert events == ["leased", 2, 1, "released"], "every request inside the lease"
+
+
+def test_every_pair_of_encoders_is_compared(tmp_path):
+    rng = np.random.default_rng(1)
+    n, dim = 120, 16
+    corpus = [{"uid": f"u{i}", "family": "en", "label": "", "chunks": ["c"]} for i in range(n)]
+    (tmp_path / "corpus.jsonl").write_text("".join(json.dumps(e) + "\n" for e in corpus))
+    qs = [{"uid": f"u{i}", "family": "en", "lang": "en", "query": "q"} for i in range(60)]
+    (tmp_path / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    docs = rng.normal(size=(n, dim)).astype("float32")
+    targets = docs[:60]
+    for enc, noise in (("bge", 0.3), ("harrier", 0.05), ("jina", 1.5)):
+        np.save(tmp_path / f"vec-{enc}-00000.npy", docs)
+        np.save(tmp_path / f"qvec-{enc}.npy", targets + noise * rng.normal(size=targets.shape))
+    got = ab.score(tmp_path)
+    assert set(got["pairs"]) == {"bge - harrier", "bge - jina", "harrier - jina"}
+    hb = got["pairs"]["bge - harrier"]
+    assert hb["mrr10"] <= 0 and hb["worse"] >= hb["better"]
+    assert got["pairs"]["harrier - jina"]["p"] < 0.05
+    assert json.loads(json.dumps(got)) == got
+
+
+def test_wikipedia_questions_use_the_encyclopedia_prompt(tmp_path):
+    (tmp_path / "corpus.jsonl").write_text(json.dumps({"uid": "wikipedia:7", "family": "en",
+                                                       "label": "Colosseum",
+                                                       "chunks": ["The Colosseum is an amphitheatre"]}) + "\n")
+    asked = []
+    ab.queries(tmp_path, n=1, seed=0, prompt="wikipedia",
+               chat=lambda p: asked.append(p) or "ancient amphitheatre in Rome")
+    assert "encyclopedia article" in asked[0] and "The Colosseum is" in asked[0]
+    assert json.loads((tmp_path / "queries.jsonl").read_text())["query"] == "ancient amphitheatre in Rome"
+
+
+def test_sample_table_takes_documents_per_language_from_the_vector_table(tmp_path):
+    import lancedb
+    import pyarrow as pa
+    schema = pa.schema([pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+                        pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+                        pa.field("text", pa.string()), pa.field("vector", pa.list_(pa.float32(), 2))])
+    tables = {}
+    for lang, base in (("en", 100), ("it", 200)):
+        rows = [{"id": f"wikipedia:{b}:{s}:1", "book_id": b, "lang": lang, "seq": s,
+                 "text": f"{lang} {b} part {s}", "vector": [1.0, 0.0]}
+                for b in range(base, base + 30) for s in (3, 0, 2, 1)]
+        db = lancedb.connect(str(tmp_path / f"lance-{lang}"))
+        tables[lang] = db.create_table("chunks", data=pa.Table.from_pylist(rows, schema=schema))
+    got = ab.sample_table(tmp_path / "s", collection="wikipedia", langs=("en", "it"), docs=10,
+                          max_chunks=3, seed=0, tables=tables,
+                          titles=lambda books: {b: f"Title {b}" for b in books})
+    assert got["by_language"] == {"en": 5, "it": 5} and got["chunks"] == 30
+    rows = [json.loads(l) for l in (tmp_path / "s" / "corpus.jsonl").read_text().splitlines()]
+    r = rows[0]
+    b = int(r["uid"].split(":")[1])
+    assert r["family"] == "en" and r["label"] == f"Title {b}"
+    assert r["chunks"] == [f"en {b} part 0", f"en {b} part 1", f"en {b} part 2"], "the first chunks, in seq order"
+    assert len({x["uid"] for x in rows}) == 10

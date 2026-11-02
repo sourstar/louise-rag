@@ -13,7 +13,20 @@ one: MRR@10, recall@1 and @10, a paired randomization test (Smucker, Allan
 & Carterette 2007), by family and by the question's language (English, and
 Italian against English text: the reader's language).
 
+HARRIER (operator, 2026-11-02: "Harrier may be the model of reference for all
+our non specialistic collections (gutenberg, wikipedia, wikidata,
+gutenberg-graph), compare the score also with bge-m3 and wikipedia/wikidata").
+`--encoder harrier` is microsoft/harrier-oss-v1-0.6b (our f16 GGUF,
+`vega-harrier-oss-v1-0.6b`) with its card's retrieval prompt on the query
+side. `sample-table` makes the same known-item test for any collection from
+its own vector table: random documents per language, their first chunks as
+they were embedded, the title from the manifest. wikipedia is the case
+(`queries --prompt wikipedia`), since no judged set exists for it. `score`
+compares every pair of encoders it finds.
+
   sample   OUT_DIR [--entities 20000] [--families person,work,…] [--seed 0]
+  sample-table OUT_DIR --collection wikipedia [--langs en,it] [--docs 10000]
+           [--max-chunks 6] [--seed 0]
            records read from the SHARD's parts of those families (no
            snapshot needed: the parts the 10-30 build wrote), cut into
            chunks through `hold.land.cut` — the chunks the space embeds.
@@ -40,7 +53,12 @@ from typing import Callable
 TOP = 10
 BLOCK = 1000
 ENCODERS = {"jina": "wikidata", "bge": "wikipedia",     # the collection whose recipe embeds
-            "jina-gguf": "wikidata"}
+            "jina-gguf": "wikidata", "harrier": "wikidata"}
+#: microsoft/harrier-oss-v1-0.6b, converted by us (gutenberg-encoder-bakeoff.md)
+HARRIER_MODEL = "vega-harrier-oss-v1-0.6b"
+#: its card's retrieval prompt (`web_search_query`); documents take none
+HARRIER_QUERY = ("Instruct: Given a web search query, retrieve relevant passages that "
+                 "answer the query\nQuery: ")
 #: jina-v3 on llama.cpp (operator, 2026-10-31: "Use jina gguf for the
 #: comparison so we can evaluate both speed and reliability"): the f16 GGUF
 #: with each task's LoRA MERGED in (llama-export-lora), one model a side —
@@ -60,6 +78,21 @@ PROMPT = {
     "it": ("Ecco cosa dice Wikidata di un'entità. Scrivi UNA breve domanda di ricerca, in italiano, che "
            "una persona potrebbe digitare per trovarla. NON usare il suo nome, l'etichetta né alias; "
            "descrivila per ciò che è o ha fatto. Rispondi solo con la domanda. /no_think\n\n{text}"),
+}
+
+
+PROMPTS = {
+    "wikidata": PROMPT,
+    "wikipedia": {
+        "en": ("Here is the beginning of an encyclopedia article. Write ONE short search query, in "
+               "English, that a person looking for this article might type. Do NOT use its title or "
+               "the name of its subject; describe the subject by what it is or did. Answer with the "
+               "query only. /no_think\n\n{text}"),
+        "it": ("Ecco l'inizio di una voce di enciclopedia. Scrivi UNA breve domanda di ricerca, in "
+               "italiano, che una persona potrebbe digitare per trovarla. NON usare il titolo né il "
+               "nome del soggetto; descrivilo per ciò che è o ha fatto. Rispondi solo con la "
+               "domanda. /no_think\n\n{text}"),
+    },
 }
 
 
@@ -123,6 +156,84 @@ def sample(out: Path, *, entities: int, families: tuple[str, ...], seed: int,
     return {"entities": len(rows), "chunks": sum(len(r["chunks"]) for r in rows)}
 
 
+def _titles(collection, books: list[int]) -> dict[int, str]:
+    """book_id -> title, from the manifest read-only (the search's own lookup,
+    retrieval._attach_metadata_and_enqueue)."""
+    import sqlite3
+    out: dict[int, str] = {}
+    con = sqlite3.connect(f"file:{collection.manifest_path}?mode=ro", uri=True)
+    try:
+        for i in range(0, len(books), 500):
+            part = books[i:i + 500]
+            marks = ",".join("?" for _ in part)
+            for native, title in con.execute(
+                    f"SELECT native_id, title FROM documents WHERE source=? AND native_id IN ({marks})",
+                    [collection.plugin] + [str(b) for b in part]):
+                out[int(native)] = title or ""
+    finally:
+        con.close()
+    return out
+
+
+def sample_table(out: Path, *, collection: str, langs: tuple[str, ...], docs: int, max_chunks: int,
+                 seed: int, tables: dict | None = None, titles: Callable | None = None) -> dict:
+    """A known-item sample from a collection's OWN vector table: `docs`
+    documents spread over `langs`, drawn at random positions, each with its
+    first `max_chunks` chunks (by seq) as they were embedded, and its title
+    from the manifest. A table split by language is read part by part; an
+    unsplit one is filtered on its `lang` column. `family` is the language."""
+    import numpy as np
+    c = None
+    if tables is None or titles is None:
+        from app import collections as collections_mod, embeddings, vector_parts
+        c = collections_mod.by_name(collection)
+        if c is None:
+            raise SystemExit(f"no {collection} collection here")
+        split = vector_parts.key_of(c)
+        if split not in (None, "lang"):
+            raise SystemExit(f"{collection} is split by {split!r}; sample-table reads lang parts or one table")
+        tables = {lang: embeddings.table_of_book(vector_parts.view(c, lang) if split == "lang" else c, 0)
+                  for lang in langs}
+        titles = lambda books: _titles(c, books)   # noqa: E731
+    rng = np.random.default_rng(seed)
+    per = max(1, docs // len(langs))
+    out.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for lang in langs:
+        table = tables.get(lang)
+        if table is None:
+            continue
+        ds = table.to_lance()
+        total = ds.count_rows()
+        books: list[int] = []
+        seen: set[int] = set()
+        tries = 0
+        while len(books) < per and tries < 50 and total:
+            tries += 1
+            at = np.unique(rng.integers(0, total, size=min(total, 4 * per)))
+            for r in ds.take(at.tolist(), columns=["book_id", "lang"]).to_pylist():
+                b = int(r["book_id"])
+                if b in seen or (r.get("lang") and r["lang"] != lang):
+                    continue
+                seen.add(b)
+                books.append(b)
+                if len(books) >= per:
+                    break
+        named = titles(books)
+        for b in books:
+            got = (table.search().where(f"book_id = {b}", prefilter=True)
+                   .select(["id", "seq", "text"]).limit(100_000).to_list())
+            got.sort(key=lambda r: (int(r["seq"]), str(r["id"])))
+            texts = [r["text"] for r in got[:max_chunks] if r["text"]]
+            if texts:
+                rows.append({"uid": f"{collection}:{b}", "family": lang, "label": named.get(b, ""),
+                             "chunks": texts})
+    (out / "corpus.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                                      encoding="utf-8")
+    return {"documents": len(rows), "chunks": sum(len(r["chunks"]) for r in rows),
+            "by_language": {lang: sum(1 for r in rows if r["family"] == lang) for lang in langs}}
+
+
 # ---------------------------------------------------------------- queries
 
 
@@ -134,7 +245,8 @@ def leaks(query: str, label: str) -> bool:
     return bool(label) and (label.lower() in q or any(re.search(rf"\b{re.escape(w)}\b", q) for w in words))
 
 
-def queries(out: Path, *, n: int, seed: int, chat: Callable[[str], str] | None = None) -> dict:
+def queries(out: Path, *, n: int, seed: int, chat: Callable[[str], str] | None = None,
+            prompt: str = "wikidata") -> dict:
     if chat is None:
         from app import llm
         chat = lambda prompt: llm.chat([{"role": "user", "content": prompt}],   # noqa: E731
@@ -154,7 +266,7 @@ def queries(out: Path, *, n: int, seed: int, chat: Callable[[str], str] | None =
             if e["uid"] in done:
                 continue
             lang = "it" if kept % 2 else "en"
-            q = chat(PROMPT[lang].format(text=e["chunks"][0][:2000])).strip().strip('"').splitlines()[0:1]
+            q = chat(PROMPTS[prompt][lang].format(text=e["chunks"][0][:2000])).strip().strip('"').splitlines()[0:1]
             q = q[0].strip() if q else ""
             if not q or leaks(q, e["label"]):
                 dropped += 1
@@ -188,6 +300,12 @@ def _recipe(encoder: str):
         # the instruction and the specials (its context_size is 2,048)
         return dataclasses.replace(recipe, model=GGUF_MODELS[False], query_model=GGUF_MODELS[True],
                                    ctx=2047)
+    if encoder == "harrier":
+        # the base collection's server, api and cut; harrier's model, its
+        # retrieval prompt on queries, a window within its context_size 8,192
+        return dataclasses.replace(recipe, model=HARRIER_MODEL, query_model=None, query_url=None,
+                                   query_instruction=HARRIER_QUERY, dim=None,
+                                   ctx=max(int(recipe.ctx or 0), 8191))
     return dataclasses.replace(recipe, ctx=max(int(recipe.ctx or 0), 8191))
 
 
@@ -199,10 +317,15 @@ def matryoshka(vectors, dim: int = JINA_DIM):
 
 
 def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
-    import numpy as np
+    import contextlib
+    lease = contextlib.nullcontext()
     if encode is None:
-        from app import embeddings
+        from app import embeddings, encoder_use
         recipe = _recipe(encoder)
+        # LEASED while it embeds (München, 2026-11-02, 2d2cf21): the worker's
+        # sweep unloads every vega- model no held collection names unless a
+        # process leases it — harrier is named by none
+        lease = encoder_use.held(recipe, holder=encoder_use.holder(f"wikidata_encoder_ab {encoder}"))
         # embed_calibration: the client's door for inputs that are not a
         # collection's chunks ("a tool's sample"), the same `_embed_texts`
         # underneath, the model pinned while it works (invariant 7's guard,
@@ -213,7 +336,14 @@ def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
         inner = encode
         encode = lambda texts, query: matryoshka(   # noqa: E731
             inner([JINA_INSTRUCTIONS[query] + t for t in texts], query))
+    with lease:
+        return _embed(out, encoder, encode)
+
+
+def _embed(out: Path, encoder: str, encode: Callable) -> dict:
     import time
+
+    import numpy as np
     corpus = _jsonl(out / "corpus.jsonl")
     texts = [t for e in corpus for t in e["chunks"]]
     written = 0
@@ -318,6 +448,16 @@ def score(out: Path) -> dict:
         res["jina_gguf_vs_torch"] = {"worst": round(float(cos[0]), 6),
                                      "p01": round(float(cos[int(0.01 * len(cos))]), 6),
                                      "median": round(float(cos[len(cos) // 2]), 6)}
+    # EVERY PAIR (2026-11-02, harrier joins): the MRR@10 difference, its
+    # randomization p, and on how many questions each side wins
+    res["pairs"] = {}
+    names = sorted(rr)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            d = [x - y for x, y in zip(rr[a], rr[b])]
+            res["pairs"][f"{a} - {b}"] = {"mrr10": round(sum(d) / len(d), 4) if d else None,
+                                         "p": round(randomization(d), 4) if d else None,
+                                         "better": sum(x > 0 for x in d), "worse": sum(x < 0 for x in d)}
     # THE RULE (operator, 2026-10-31: "If bge is as good we switch to jina
     # because it's less disk space"): bge-m3 only if it finds entities BETTER
     # than jina-v3, on MRR@10 with p < 0.05; otherwise jina-v3 (512 dims)
@@ -341,10 +481,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--entities", type=int, default=20000)
     s.add_argument("--families", default=",".join(NINE))
     s.add_argument("--seed", type=int, default=0)
+    t = sub.add_parser("sample-table")
+    t.add_argument("out", type=Path)
+    t.add_argument("--collection", required=True)
+    t.add_argument("--langs", default="en,it")
+    t.add_argument("--docs", type=int, default=10000)
+    t.add_argument("--max-chunks", type=int, default=6)
+    t.add_argument("--seed", type=int, default=0)
     q = sub.add_parser("queries")
     q.add_argument("out", type=Path)
     q.add_argument("--n", type=int, default=400)
     q.add_argument("--seed", type=int, default=0)
+    q.add_argument("--prompt", choices=sorted(PROMPTS), default="wikidata")
     e = sub.add_parser("embed")
     e.add_argument("out", type=Path)
     e.add_argument("--encoder", choices=sorted(ENCODERS), required=True)
@@ -353,8 +501,11 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "sample":
         got = sample(a.out, entities=a.entities, families=tuple(a.families.split(",")), seed=a.seed)
+    elif a.cmd == "sample-table":
+        got = sample_table(a.out, collection=a.collection, langs=tuple(a.langs.split(",")),
+                           docs=a.docs, max_chunks=a.max_chunks, seed=a.seed)
     elif a.cmd == "queries":
-        got = queries(a.out, n=a.n, seed=a.seed)
+        got = queries(a.out, n=a.n, seed=a.seed, prompt=a.prompt)
     elif a.cmd == "embed":
         got = embed(a.out, a.encoder)
     else:
