@@ -219,9 +219,12 @@ function rememberCounts(){try{localStorage.setItem('ask.counts',JSON.stringify(c
 // browser dropping a query. Also if the query is stuck or dropped I should
 // see a notification in the gui." The page STARTS the search and the answer
 // on the node (POST /ask/relay) and LISTENS to them (EventSource). The job
-// runs whatever happens to the connection: the browser reconnects by itself
-// and names the last event it saw (Last-Event-ID), so nothing is lost; a
-// reload finds the question again (sessionStorage, this tab only). The
+// runs whatever happens to the connection: when the stream drops, the page
+// reconnects ITSELF and names the last event it saw (`?after=<id>`), so
+// nothing is lost. Not the browser's own reconnect and its Last-Event-ID:
+// Chromium 154 sends none that the node can be shown to receive (München,
+// 2026-11-02, the relay test on its image). A reload finds the question
+// again (sessionStorage, this tab only). The
 // notice bar says when the connection is lost, when the question makes no
 // progress, and when the node dropped it — with Cancel or Run again.
 const RELAY_STORE='ask.relay';
@@ -260,37 +263,52 @@ async function relayStart(kind,payload,replaces){
 }
 // listen to a job until its end; resolves with the end ({state, reason}),
 // never rejects. `on.result`, `on.delta` get the job's own events.
+// A dropped stream is reconnected here, with the last event id seen, after
+// RELAY_RETRY_MS doubling to RELAY_RETRY_MAX_MS (reset by any event).
+const RELAY_RETRY_MS=500, RELAY_RETRY_MAX_MS=8000;
 function relayListen(kind,id,on){
-  if(relays[kind]&&relays[kind].es)relays[kind].es.close();
+  const old=relays[kind];
+  if(old){clearTimeout(old.timer); if(old.es)old.es.close()}   // a newer question replaces it
   return new Promise(resolve=>{
-    const es=new EventSource('/ask/relay/'+encodeURIComponent(id)+'/events');
-    const rec={id,es,ended:false}; relays[kind]=rec; relaySave();
-    let lost=false;
-    const finish=d=>{if(rec.ended)return; rec.ended=true; es.close(); relaySave(); resolve(d)};
-    es.addEventListener('status',e=>{
-      const s=JSON.parse(e.data);
-      if(lost){lost=false; relayNote(''); toast('reconnected — the '+kind+' kept running on the node')}
-      if(s.stuck)relayStuck(kind,s);
-    });
-    es.addEventListener('result',e=>{on.result&&on.result(JSON.parse(e.data))});
-    es.addEventListener('delta',e=>{on.delta&&on.delta(JSON.parse(e.data).text)});
-    es.addEventListener('stuck',e=>relayStuck(kind,JSON.parse(e.data)));
-    es.addEventListener('moving',()=>relayNote(''));
-    es.addEventListener('end',e=>{
-      const d=JSON.parse(e.data);
-      if(d.state==='done')relayNote(''); else relayDropped(kind,d.reason);
-      finish(d);
-    });
-    es.onerror=()=>{
-      if(rec.ended)return;
-      if(es.readyState===EventSource.CLOSED){
-        // refused (404): the node no longer holds the question
-        relayDropped(kind,'the node no longer holds it (it restarted, or the question ended long ago)');
-        finish({state:'dropped'}); return;
-      }
-      lost=true;
-      relayNote('connection to the node lost — reconnecting; the '+kind+' keeps running there.');
+    const rec={id,es:null,ended:false,last:0,timer:null}; relays[kind]=rec;
+    let lost=false, wait=RELAY_RETRY_MS;
+    const finish=d=>{if(rec.ended)return; rec.ended=true; clearTimeout(rec.timer);
+                     if(rec.es)rec.es.close(); relaySave(); resolve(d)};
+    const seen=e=>{const n=parseInt(e.lastEventId,10); if(n>rec.last)rec.last=n; wait=RELAY_RETRY_MS};
+    const connect=()=>{
+      if(rec.ended||relays[kind]!==rec)return;
+      const es=new EventSource('/ask/relay/'+encodeURIComponent(id)+'/events'+(rec.last?'?after='+rec.last:''));
+      rec.es=es; relaySave();
+      es.addEventListener('status',e=>{
+        const s=JSON.parse(e.data); wait=RELAY_RETRY_MS;
+        if(lost){lost=false; relayNote(''); toast('reconnected — the '+kind+' kept running on the node')}
+        if(s.stuck)relayStuck(kind,s);
+      });
+      es.addEventListener('result',e=>{seen(e); on.result&&on.result(JSON.parse(e.data))});
+      es.addEventListener('delta',e=>{seen(e); on.delta&&on.delta(JSON.parse(e.data).text)});
+      es.addEventListener('stuck',e=>{seen(e); relayStuck(kind,JSON.parse(e.data))});
+      es.addEventListener('moving',e=>{seen(e); relayNote('')});
+      es.addEventListener('end',e=>{
+        seen(e);
+        const d=JSON.parse(e.data);
+        if(d.state==='done')relayNote(''); else relayDropped(kind,d.reason);
+        finish(d);
+      });
+      es.onerror=()=>{
+        if(rec.ended||rec.es!==es||relays[kind]!==rec)return;
+        if(es.readyState===EventSource.CLOSED){
+          // refused (404): the node no longer holds the question
+          relayDropped(kind,'the node no longer holds it (it restarted, or the question ended long ago)');
+          finish({state:'dropped'}); return;
+        }
+        // the stream dropped: our own reconnect, naming the last event seen
+        es.close();
+        lost=true;
+        relayNote('connection to the node lost — reconnecting; the '+kind+' keeps running there.');
+        rec.timer=setTimeout(connect,wait); wait=Math.min(wait*2,RELAY_RETRY_MAX_MS);
+      };
     };
+    connect();
   });
 }
 function placeReport(){

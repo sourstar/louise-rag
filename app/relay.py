@@ -12,9 +12,12 @@ lost the query and the page started over.
 Here the page STARTS a job and LISTENS to it. The job runs in the web
 process whatever happens to the connection; what it says is kept as
 numbered events, and a listener that comes back names the last one it saw
-and gets the rest. That is Server-Sent Events' own reconnection: the
-browser's `EventSource` reconnects by itself and sends `Last-Event-ID`
-(WHATWG HTML, "Server-sent events" §9.2) — the standard, used as it is.
+and gets the rest. Server-Sent Events (WHATWG HTML §9.2), with ONE
+departure: the standard's reconnection sends `Last-Event-ID` by itself, and
+the events route still reads it, but the Ask page reconnects itself and
+names the last event as `?after=` — Chromium 154 sends no Last-Event-ID
+that the node can be shown to receive (München, 2026-11-02), and a header
+the page cannot rely on would lose events silently.
 Each event names its kind; the page renders `result` and `delta`, and shows
 a notice for `stuck`, `moving` and an `end` that is not `done`.
 
