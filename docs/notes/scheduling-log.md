@@ -2091,3 +2091,16 @@ requests now fill across documents (6.6 texts on average, up to 16). On wikipedi
 (15.9 of 16). Busy rises 11 points, the whole-second gaps nearly vanish (2.5 → 0.3 s/min), and chunks/s rise
 37 % on the same CPU. wikipedia is still at 57 %, because the loss inside the seconds remains (25.6 s/min) with
 2 requests in flight. That is the request turnaround wikidata hides with 4 lanes. Lever 2 needs no CPU.
+
+### 2026-11-02 02:24 — CPU 12 cores in every profile (operator) — CONFIG
+
+The operator: "Use 12 CPU cores even in the quiet hours, I installed a new CPU cooler that is much more silent"
+(#190). The node's platform.toml now gives quiet 12 cores (was 0) and day 12 (was 8); night stays at 12 and the
+GPU levels are unchanged. The worker's applier read it within 30 s: `node_profile.cpu_cores()` gives 12 at
+07:00, 09:00, 12:30, 17:00 and 23:00. The cron's node-period.sh is the repo's copy: the build starts at 12
+cores by day and restarts at 12 in quiet. Backups: `platform.toml.bak-20261102-cpu12` and
+`node-period.sh.bak-20261102-cpu12`.
+
+**For the rows.** Every row before 02:24 was read in the night profile (12 cores), so on this side of the
+change. The step-1 BEFORE rows still to come (gutenberg, pubmed, normattiva) and lever 3 are read after it.
+A window in a quiet or day period then has 12 cores, not 0 or 8.
