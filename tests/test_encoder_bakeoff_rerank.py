@@ -74,9 +74,9 @@ def test_the_reranker_reorders_the_records_and_both_rows_are_record_level(tmp_pa
     monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
     monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
     calls = []
-    assert bake.rerank(out, 20_000, RECIPE, _heads, depth=50, call=_reranker(calls)) == 0
+    assert bake.rerank(out, 20_000, RECIPE, _heads, depths=[50], call=_reranker(calls)) == 0
     before = json.loads((out / "m" / "records-bare.json").read_text())
-    after = json.loads((out / "m" / "reranked-bare.json").read_text())
+    after = json.loads((out / "m" / "reranked-d50-bare.json").read_text())
     # records before: 1, 3, 2, 4 -> query 0's book 2 third, query 1's book 4 fourth
     assert before["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2)
     assert after["mrr@10"] == pytest.approx(1.0), "the reranker put each query's book first"
@@ -114,10 +114,27 @@ def test_the_report_shows_the_rows_before_and_after(tmp_path, monkeypatch, capsy
     capsys.readouterr()
     bake.report(out)
     shown = capsys.readouterr().out
-    assert "m (records)" in shown and "m + rerank" in shown
+    assert "m (records)" in shown and "m + rerank@50" in shown
 
 
 def test_rerank_reads_records_from_a_pool_only(tmp_path):
     (tmp_path / "SOURCE.json").write_text(json.dumps({"suite": "bsard"}))
     with pytest.raises(SystemExit, match="pool"):
         bake.rerank(tmp_path, 20_000, RECIPE, _heads)
+
+
+def test_a_shallower_depth_reranks_only_its_records_and_asks_nothing_more(tmp_path, monkeypatch):
+    """The operator, 2026-11-02: "5 results reranked over 50 results, more
+    likely over 100". Depth 2: the reranker sees books 1 and 3 only, so
+    query 0's book 2 (third) stays third; depth 4 brings it first. One
+    request per query serves both."""
+    out, _ids = _pool(tmp_path)
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    calls = []
+    bake.rerank(out, 20_000, RECIPE, _heads, depths=[4, 2], call=_reranker(calls))
+    assert len(calls) == 2, "one call per query, the deepest list's pairs"
+    d2 = json.loads((out / "m" / "reranked-d2-bare.json").read_text())
+    d4 = json.loads((out / "m" / "reranked-d4-bare.json").read_text())
+    assert d2["hit@2"] == 0.0 and d2["mrr@5"] == pytest.approx((1 / 3 + 1 / 4) / 2)
+    assert d4["mrr@5"] == pytest.approx(1.0) and d4["hit@4"] == 1.0
