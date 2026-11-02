@@ -166,6 +166,26 @@ under /data/bakeoff/nemotron/.
   show it first.
 - **Next:** 5b on the card, then 6–8, after the night's pipeline steps.
 
+## Language coverage (München, 2026-11-02 16:31, a read-only count)
+
+NVIDIA evaluated the model in 34 languages: English, Arabic, Assamese,
+Bengali, Bulgarian, Chinese, Danish, Dutch, Finnish, French, German, Hindi,
+Hinglish, Indonesian, Italian, Japanese, Korean, Malay, Marathi, Nepali,
+Norwegian, Persian, Portuguese, Romanian, Russian, Spanish, Swahili,
+Swedish, Tamil, Telugu, Thai, Ukrainian, Urdu, Vietnamese.
+
+- **wikipedia:** 44,266,030 documents selected for embedding.
+  - Outside the 34 is Turkish only: 546,237 documents (1.23 %), 0.6 % of the
+    selected tokens.
+- **gutenberg:** 79,760 books.
+  - Outside the 34: 1,474 books (1.85 %), 1.33 % of the tokens.
+  - Mostly Hungarian 654, Greek 216, Esperanto 124, Latin 108 and Catalan 97.
+- **wikidata:** English texts, nothing outside.
+
+Outside the 34 the quality is unknown, not absent: the base model is
+multilingual. A Turkish known-item set would measure it if it ever
+matters.
+
 ## Wikidata W1, vector only (München, 2026-11-02 16:05–16:20)
 
 The operator narrowed the test: "a simple Nemotron test, without reranking
@@ -197,8 +217,82 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
 - **Speed:** 24.1 chunks/s at batch 16, one request in flight (wikidata's
   recipe), with the card 59 % busy. At the same shape harrier did 43.3 and
   bge-m3 57.7 (HARRIER-OPT), so nemotron runs at 0.56× harrier and 0.42×
-  bge-m3. One request in flight does not fill the card. The arms with 2 and
-  4 in flight follow.
+  bge-m3. One request in flight does not fill the card.
+
+### By question language (200 questions each)
+
+| encoder | en MRR@10 | en @10 | en @100 | it MRR@10 | it @10 | it @100 |
+|---|---|---|---|---|---|---|
+| bge-m3 | 0.636 | 0.790 | 0.975 | 0.663 | 0.800 | 0.945 |
+| harrier | 0.777 | 0.870 | 0.990 | 0.813 | 0.890 | 0.975 |
+| nemotron | 0.776 | 0.890 | 0.985 | **0.861** | **0.950** | 0.990 |
+| nemotron, cut to 1,024 | 0.777 | 0.890 | 0.985 | 0.843 | 0.950 | 0.985 |
+
+- **English:**
+  - nemotron and harrier tie (−0.001, p = 0.96);
+  - both beat bge-m3 by 0.14 (p = 0.0001).
+- **Italian:**
+  - nemotron beats harrier by **0.047, p = 0.020** (better on 32 questions,
+    worse on 11);
+  - the cut keeps +0.029 over harrier (p = 0.12);
+  - the cut costs 0.018 against full nemotron (p = 0.028).
+- **Where the lead comes from:** nemotron's whole lead over harrier on W1 is
+  Italian questions about English texts, the cross-language case.
+
+### Speed with requests in flight (W1's first 5,000 chunks, batch 16, VeGa, the card to itself)
+
+| in flight | nemotron chunks/s | card busy | harrier | bge-m3 |
+|---|---|---|---|---|
+| 1 | 26.74 | 56.3 % | 43.29 | 57.71 |
+| 2 | 34.25 | 76.7 % | 50.28 | — |
+| 4 | 39.50 | 85.2 % | 51.57 | 72.49 |
+
+- **Every arm is exact:** 5,000 of 5,000 vectors bit-identical to W1's.
+- **At 4 in flight:** nemotron runs at 0.77× harrier and 0.54× bge-m3. The
+  card is at 85 %, where theirs was at 98–99 %, so 8 in flight is measured
+  next.
+- **A first run is superseded.** The node's scratch tool left out the
+  `passage: ` prefix, so its bit-identity column compared different inputs.
+  Arms embed through `wikidata_encoder_ab.encoder_fn` from now on.
+
+## Wikipedia P3, vector only (München, 2026-11-02 16:38–16:48)
+
+The set: 5,000 articles, 18,783 chunks, 400 questions (200 en, 200 it).
+
+| encoder | MRR@10 | recall@1 | @10 | @40 | @50 | @100 |
+|---|---|---|---|---|---|---|
+| bge-m3 (wikipedia's) | 0.9277 | 0.900 | 0.9775 | 0.9875 | 0.990 | 0.9975 |
+| harrier | 0.8650 | 0.820 | 0.950 | 0.9825 | 0.985 | 0.995 |
+| **nemotron** | **0.9720** | **0.9575** | **0.995** | 1.000 | 1.000 | 1.000 |
+| nemotron, cut to 1,024 | 0.9727 | 0.960 | 0.995 | 0.9975 | 0.9975 | 1.000 |
+
+- **All 400 questions:**
+  - nemotron − bge-m3 = +0.044, p = 0.0001 (32 questions better, 1 worse);
+  - nemotron − harrier = +0.107, p = 0.0001;
+  - the cut costs nothing (−0.0007, p = 0.86).
+- **English questions:**
+  - nemotron 0.972, harrier 0.944, bge-m3 0.917;
+  - nemotron beats bge-m3 by 0.055 (p = 0.0001) and harrier by 0.028
+    (p = 0.008).
+- **Italian questions:**
+  - nemotron 0.972, bge-m3 0.938, harrier 0.786;
+  - nemotron beats bge-m3 by 0.034 (p = 0.002);
+  - harrier's cross-language weakness is not nemotron's.
+- **By the article's language (MRR@10):**
+  - en articles: bge 0.949, harrier 0.796, nemotron 0.979;
+  - it articles: bge 0.907, harrier 0.933, nemotron 0.965.
+- **Speed on P3's longer chunks, one request in flight:** bge-m3 86.4,
+  harrier 34.0, nemotron 33.4 chunks/s. Level with harrier here, 0.39×
+  bge-m3.
+
+**Reading, the two general collections that ran:**
+- wikidata: nemotron ≈ harrier ≫ bge-m3 (ahead of harrier on Italian only);
+- wikipedia: nemotron > bge-m3 > harrier.
+
+It is the only model of the three that is best or tied-best on both.
+Gutenberg was not run (the operator narrowed the test). What it costs is
+speed: 0.39–0.54× bge-m3 at one in flight, about half at saturation on
+wikidata's chunks.
 
 ## What the operator gets
 
