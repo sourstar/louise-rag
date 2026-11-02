@@ -72,7 +72,7 @@ For each collection with an encoder, all three must hold:
 |---|---|---|
 | wikidata, wikipedia | bge-m3 | the CPU twin must run on our llama.cpp build (patch 0002, token ids); München is on it |
 | gutenberg | qwen3-embedding-4b | **closed (operator, 2026-11-01):** a CPU review line per quantization level, measured. Q4_K_M's, computed from gutenberg's own 0.989292, is 0.983 (near-exact-runs.md §2). The reference is made on our CPU engine, then the gate runs again |
-| pubmed | MedCPT article + query | the CPU twins' 503s; rerun on the #157 image |
+| pubmed | MedCPT article + query | **closed (2026-11-02 01:23):** the article twin moved to the card model's tree after measuring REPRODUCIBLE there (544/544 + 160/160 pairs, 3 fresh loads × 2 passes; approved-encoders.md, 1e6d21b); gate exact on both sides — document worst 0.999947 vs its CPU reference, query worst 0.999951; run ids unchanged, statements re-kept with the CPU line. The refused-load loop that held it (exit 1, retried every minute) fixed by #185–#187 |
 | normattiva | DAR-legal-it | to check |
 | deposit collections | as declared | to check |
 
