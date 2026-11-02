@@ -339,3 +339,164 @@ def test_a_role_this_run_already_kept_is_not_made_again(monkeypatch, tmp_path):
     a.again = True
     assert louise.cmd_embedder_cpu_reference(a) == 0
     assert any(t.startswith("document:") for t in embedded), "--again makes it again"
+
+
+# ---- the pass is resumable (invariant 2) --------------------------------------
+# gutenberg, 2026-11-02: the query role held 352 of 512 answers in memory when
+# one request came back after a 5 h `docker pause` with its VeGa receipt
+# expired; the pass exited 1 and the 352 answers (~4.6 h of CPU) were lost.
+
+def _pass(monkeypatch, tmp_path, n, ask):
+    """`hold embedder cpu-reference` on `n` items with the document role only;
+    `ask(texts)` answers or raises. Returns a function that runs the command."""
+    from types import SimpleNamespace
+    from app import encoder_use, louise, run_check
+    from app import collections as collections_mod
+    from app.hold import collection as col, embedder as emb, fingerprint
+    recipe = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega",
+                                         model="vega-q-cpu", dtype="f16", ctx=1024, batch=1)
+    codex = SimpleNamespace(space=SimpleNamespace(query=SimpleNamespace(encoder=None),
+                                                  calibration=SimpleNamespace(set="s")))
+    stated = SimpleNamespace(driver="cpu", run_id="sha256:" + "d" * 64, engine={}, weights="w")
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("gutenberg", codex))
+    monkeypatch.setattr(louise, "_recipe_for", lambda c, n: recipe)
+    monkeypatch.setattr(louise, "_as_candidate", lambda r, a: r)
+    monkeypatch.setattr(run_check, "calibration_items", lambda *a: [str(i) for i in range(n)])
+    monkeypatch.setattr(run_check, "probe_for", lambda *a: "louise")
+    monkeypatch.setattr(run_check, "stated_run", lambda *a, **k: stated)
+    monkeypatch.setattr(emb, "gate_texts", lambda c, role, items: [f"t{i}" for i in items])
+    monkeypatch.setattr(emb, "reproduces", lambda a, b: True)
+    # the fingerprint's sixteen are asked apart (`how="one"`): none here, so
+    # what is asked is the role's pass alone
+    monkeypatch.setattr(fingerprint, "indices", lambda texts: [])
+
+    def answers(r, **kw):
+        from app.hold import runs as runs_mod
+
+        def fn(texts, runs):
+            out = ask(texts)
+            runs.add(getattr(ask, "run", stated.run_id))
+            return out
+        return runs_mod.Answers(fn)
+    monkeypatch.setattr(run_check, "answers", answers)
+
+    class Held:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(encoder_use, "held", lambda *a, **k: Held())
+
+    def run(again=False):
+        return louise.cmd_embedder_cpu_reference(SimpleNamespace(
+            root=tmp_path, collection="gutenberg", model="vega-q-cpu", query_model=None,
+            again=again))
+    return run, stated
+
+
+def _vec(text):
+    # a float64 that float32 rounds: the journal must give back the bytes a
+    # whole pass would write
+    k = int(text[1:])
+    return [k / 3.0, 1.0 - k / 7.0]
+
+
+def test_a_pass_stopped_by_an_expired_receipt_resumes_where_it_stopped(monkeypatch, tmp_path):
+    from app import embeddings
+    asked: list[str] = []
+    fail_at = {"t21"}
+
+    def ask(texts):
+        for t in texts:
+            if t in fail_at:
+                fail_at.discard(t)
+                raise embeddings.ReceiptDeferred("no receipt for input 0: expired")
+        asked.extend(texts)
+        return [_vec(t) for t in texts]
+    run, stated = _pass(monkeypatch, tmp_path, 40, ask)
+    assert run() == 3, "a receipt that expired defers the pass, it does not fail it"
+    j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
+    assert len(j.read_text().splitlines()) == 16, "the two windows answered before it are kept"
+    asked.clear()
+    assert run() == 0
+    assert asked[0] == "t16" and "t0" not in asked, "only what the journal does not hold is asked"
+    assert not j.exists(), "the journal goes once the reference is kept"
+    resumed = cpu_ref.find(tmp_path, "gutenberg", "document", weights="w", set_id="s")
+    # the same bytes as one uninterrupted pass
+    whole = tmp_path / "whole"
+    run2, _ = _pass(monkeypatch, whole, 40, lambda texts: [_vec(t) for t in texts])
+    assert run2() == 0
+    once = cpu_ref.find(whole, "gutenberg", "document", weights="w", set_id="s")
+    assert resumed.vectors == once.vectors
+    assert resumed.path.read_bytes() == once.path.read_bytes()
+
+
+def test_a_window_from_another_run_is_not_journalled(monkeypatch, tmp_path):
+    calls = {"n": 0}
+
+    def ask(texts):
+        calls["n"] += 1
+        ask.run = "sha256:" + ("d" if calls["n"] == 1 else "e") * 64
+        return [_vec(t) for t in texts]
+    run, stated = _pass(monkeypatch, tmp_path, 20, ask)
+    assert run() == 3
+    j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
+    assert len(j.read_text().splitlines()) == cpu_ref.WINDOW, "only the first window's run is the pass's"
+
+
+def test_a_torn_line_is_asked_again_and_again_starts_over(monkeypatch, tmp_path):
+    asked: list[str] = []
+
+    def ask(texts):
+        asked.extend(texts)
+        return [_vec(t) for t in texts]
+    run, stated = _pass(monkeypatch, tmp_path, 10, ask)
+    j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
+    texts = [f"t{i}" for i in range(10)]
+    seen: list[str] = []
+
+    class Stop(Exception):
+        pass
+
+    def first(ts):
+        seen.extend(ts)
+        if len(seen) > 8:
+            raise Stop
+        return [_vec(t) for t in ts]
+    first.runs = {stated.run_id}
+    with pytest.raises(Stop):
+        cpu_ref.embed_resumable(tmp_path, "gutenberg", "document", run_id=stated.run_id,
+                                set_id="s", texts=texts, embed=first, window=4)
+    lines = j.read_text().splitlines()
+    assert len(lines) == 8
+    j.write_text("\n".join(lines[:-1]) + "\n" + lines[-1][:20])   # killed mid-line
+    assert run() == 0
+    assert asked == ["t7", "t8", "t9"], "the torn line's text is asked again, the rest kept"
+    asked.clear()
+    assert run(again=True) == 0
+    assert asked == texts, "--again makes the role again from nothing"
+
+
+def test_a_journal_line_answers_only_the_same_input_at_the_same_place(tmp_path):
+    run_id = "sha256:" + "d" * 64
+    one = lambda ts: [_vec(t) for t in ts]
+    one.runs = {run_id}
+    cpu_ref.embed_resumable(tmp_path, "g", "document", run_id=run_id, set_id="s",
+                            texts=["t0", "t1"], embed=one)
+    asked: list[str] = []
+
+    def again(ts):
+        asked.extend(ts)
+        return [_vec(t) for t in ts]
+    again.runs = {run_id}
+    got = cpu_ref.embed_resumable(tmp_path, "g", "document", run_id=run_id, set_id="s",
+                                  texts=["t1", "t0"], embed=again)
+    assert asked == ["t1", "t0"], "another order is another input at each place"
+    assert got == [_vec_f32("t1"), _vec_f32("t0")]
+    asked.clear()
+    cpu_ref.embed_resumable(tmp_path, "g", "document", run_id=run_id, set_id="other",
+                            texts=["t0", "t1"], embed=again)
+    assert asked == ["t0", "t1"], "another set is another journal"
+
+
+def _vec_f32(text):
+    import numpy as np
+    return np.asarray(_vec(text), dtype="<f4").astype(float).tolist()

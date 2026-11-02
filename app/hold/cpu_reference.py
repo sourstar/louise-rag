@@ -144,3 +144,89 @@ def find(root: Path, name: str, role: str, *, weights: str, set_id: str,
         if best is None or mtime > best[0]:
             best = (mtime, ref)
     return best[1] if best else None
+
+
+# ---- the pass, resumable (invariant 2) ---------------------------------------
+# gutenberg, 2026-11-02: the query role had 352 of 512 answers in memory when
+# one request came back after a 5 h `docker pause` with its VeGa receipt
+# expired; the pass exited and the 352 answers (~4.6 h of CPU) were lost. A
+# role is now journalled a window at a time, and a new start asks only what
+# the journal does not hold.
+
+#: TEXTS BETWEEN TWO JOURNAL WRITES: what a stop, a kill or a deferral can
+#: cost. The twin answers one text a request, minutes each on a long window,
+#: so a window of 8 loses minutes, never hours; and each text is its own
+#: request, so the windows change no byte (invariant 12).
+WINDOW = 8
+
+
+class Deferred(Exception):
+    """A window's answers came from another run than the pass's: nothing of
+    that window is kept, and the pass defers (the journal stays)."""
+
+
+def journal(root: Path, name: str, role: str, *, run_id: str, set_id: str) -> Path:
+    """The role's journal: this run's answers to this set, one line a text."""
+    tag = hashlib.sha256(set_id.encode("utf-8")).hexdigest()[:16]
+    return directory(root, name, role) / f"{run_id.split(':', 1)[-1]}.{tag}.partial.jsonl"
+
+
+def discard_journal(root: Path, name: str, role: str, *, run_id: str, set_id: str) -> None:
+    journal(root, name, role, run_id=run_id, set_id=set_id).unlink(missing_ok=True)
+
+
+def _digest(text: Any) -> str:
+    # a text, or a pair space's item: the journal answers only the same input
+    return hashlib.sha256(json.dumps(text, ensure_ascii=False, sort_keys=True)
+                          .encode("utf-8")).hexdigest()
+
+
+def _f32(raw: bytes) -> list[float]:
+    import numpy as np
+    return np.frombuffer(raw, dtype="<f4").astype(float).tolist()
+
+
+def embed_resumable(root: Path, name: str, role: str, *, run_id: str, set_id: str,
+                    texts: Sequence[Any], embed, window: int = WINDOW,
+                    say=None) -> list[list[float]]:
+    """`texts` as `embed` (a `runs.Answers`) answers them, a window at a time,
+    each window journalled once its answers are `run_id`'s and before the next
+    is asked. A journal line is taken back only for the same input at the
+    same index; a line torn by a kill is passed over and its text asked
+    again. The vectors are float32, as `write` keeps them, so a resumed pass
+    writes the bytes a whole pass would."""
+    import numpy as np
+    path = journal(root, name, role, run_id=run_id, set_id=set_id)
+    have: dict[int, list[float]] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                x = json.loads(line)
+                i = int(x["i"])
+                if 0 <= i < len(texts) and x["t"] == _digest(texts[i]):
+                    have[i] = _f32(base64.b64decode(x["v"], validate=True))
+            except (ValueError, KeyError, TypeError):
+                continue
+        if have and say:
+            say(f"resumed  {role}  {len(have)} of {len(texts)} answers journalled  {path}")
+    todo = [i for i in range(len(texts)) if i not in have]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for w in range(0, len(todo), max(1, window)):
+        idx = todo[w:w + max(1, window)]
+        got = embed([texts[i] for i in idx])
+        if embed.runs != {run_id}:
+            raise Deferred(f"{role}: answers came from {sorted(embed.runs)}, not "
+                           f"{run_id[:23]}…; this window is not kept")
+        if len(got) != len(idx):
+            raise Deferred(f"{role}: {len(got)} answers for {len(idx)} texts")
+        lines = []
+        for i, v in zip(idx, got):
+            raw = np.asarray(v, dtype="<f4").tobytes()
+            lines.append(json.dumps({"i": i, "t": _digest(texts[i]),
+                                     "v": base64.b64encode(raw).decode("ascii")}) + "\n")
+            have[i] = _f32(raw)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("".join(lines))
+            fh.flush()
+            os.fsync(fh.fileno())
+    return [have[i] for i in range(len(texts))]

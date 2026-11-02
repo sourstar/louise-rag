@@ -3985,7 +3985,9 @@ def cmd_embedder_cpu_reference(a) -> int:
     texts, one at a time, again in reverse order). Exit 0 when kept, 1 when
     the twin is not reproducible, 2 when it is not a CPU run, 3 when it could
     not be asked."""
-    from app import config, encoder_use, run_check
+    import httpx
+
+    from app import config, embeddings, encoder_use, run_check
     from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
     from app.hold import fingerprint
     name, codex = col.resolve(a.root, a.collection)
@@ -4021,9 +4023,13 @@ def cmd_embedder_cpu_reference(a) -> int:
                 # run on the same set gives the same bytes, invariant 12). Before
                 # this, a pass stopped in its query role redid the document role's
                 # 6.7 h on its next start (gutenberg, 2026-11-02)
+                set_id = codex.space.calibration.set
+                if getattr(a, "again", False):
+                    cpu_ref.discard_journal(a.root, name, role, run_id=stated.run_id,
+                                            set_id=set_id)
                 done = (None if getattr(a, "again", False) else
                         cpu_ref.kept(a.root, name, role, run_id=stated.run_id,
-                                     set_id=codex.space.calibration.set, count=len(items)))
+                                     set_id=set_id, count=len(items)))
                 if done is not None:
                     print(f"kept already  {role}  run {stated.run_id[:23]}…  {done}")
                     continue
@@ -4038,14 +4044,24 @@ def cmd_embedder_cpu_reference(a) -> int:
                 embed = run_check.answers(cpu, query=query, name=name, timeout=timeout)
                 one = run_check.answers(cpu, how="one", query=query, name=name,
                                         timeout=timeout)
-                vectors = embed(texts)
+                # journalled a window at a time: a stop, a kill or a receipt
+                # that expired costs the window in flight, never the role
+                # (gutenberg's query role lost 352 answers, 2026-11-02)
+                vectors = cpu_ref.embed_resumable(a.root, name, role, run_id=stated.run_id,
+                                                  set_id=set_id, texts=texts, embed=embed,
+                                                  say=print)
                 sixteen = [texts[i] for i in fingerprint.indices(texts)]
                 first = one(sixteen)
                 again = list(reversed(one(list(reversed(sixteen)))))
-        except emb.GateDeferred as e:
-            print(f"louise: deferred: {role}: {e}", file=sys.stderr)
+        except (emb.GateDeferred, cpu_ref.Deferred, embeddings.ReceiptDeferred,
+                embeddings.EndpointDeferred, httpx.TransportError) as e:
+            # not now: VeGa away, a receipt expired, the twin busy. The
+            # journal keeps every window already answered; exit 3 reruns
+            print(f"louise: deferred: {role}: {e}; the answers journalled so far are "
+                  f"kept", file=sys.stderr)
             return 3
-        if any(fn.runs != {stated.run_id} for fn in (embed, one)):
+        # the role's answers were checked window by window (embed_resumable)
+        if one.runs != {stated.run_id}:
             print(f"louise: deferred: {role}: answers came from another run than "
                   f"{stated.run_id[:23]}…; nothing is kept", file=sys.stderr)
             return 3
@@ -4057,6 +4073,7 @@ def cmd_embedder_cpu_reference(a) -> int:
                              run={"driver": stated.driver, "engine": stated.engine,
                                   "weights": stated.weights},
                              set_id=codex.space.calibration.set, vectors=vectors)
+        cpu_ref.discard_journal(a.root, name, role, run_id=stated.run_id, set_id=set_id)
         print(f"kept  {role}  run {stated.run_id[:23]}…  {len(vectors)} vectors  {path}")
     return 0
 
