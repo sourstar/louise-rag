@@ -246,11 +246,21 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
 | 1 | 26.74 | 56.3 % | 43.29 | 57.71 |
 | 2 | 34.25 | 76.7 % | 50.28 | — |
 | 4 | 39.50 | 85.2 % | 51.57 | 72.49 |
+| 8 | 39.27 | 85.1 % | — | — |
 
 - **Every arm is exact:** 5,000 of 5,000 vectors bit-identical to W1's.
-- **At 4 in flight:** nemotron runs at 0.77× harrier and 0.54× bge-m3. The
-  card is at 85 %, where theirs was at 98–99 %, so 8 in flight is measured
-  next.
+- **At 4 in flight:** nemotron runs at 0.77× harrier and 0.54× bge-m3.
+- **It does not saturate the card.** 8 in flight adds nothing: it
+  plateaus at ~39.5 chunks/s with the card ~85 % busy, where harrier and
+  bge-m3 reach 98–99 %. On P3's longer chunks it is level with harrier, so
+  the loss is per request or per text, not per token.
+  - The remaining ~15 % is NOT measured. VeGa states llama.cpp at
+    `parallel:1`, so requests are served one after another.
+  - The candidates are host-side work per batch (tokenization with the
+    `pixtral` pre-tokenizer, the non-causal mask) or ops this architecture
+    runs on the CPU.
+  - To find out: LocalAI's CPU share during a 4-in-flight run, then a
+    llama.cpp op trace. Not run; it matters only if nemotron is adopted.
 - **A first run is superseded.** The node's scratch tool left out the
   `passage: ` prefix, so its bit-identity column compared different inputs.
   Arms embed through `wikidata_encoder_ab.encoder_fn` from now on.
