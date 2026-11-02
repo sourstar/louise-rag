@@ -118,24 +118,12 @@ analyzer, stemmer and query parsing Louise serves, not a BM25 library — and
 rule). The report gives three rows per encoder set: BM25, the encoder, and
 the two fused. Both legs read the same truncated text per document.
 
-THE RERANKER AFTER THE LEGS (`rerank`, 2026-11-02, the operator: "evaluate
-the effects with a reranker"). On a `pool` set, each scored row's chunk
-ranking becomes the search's record list (each record once, at its best
-chunk; its first `JUDGED_CHUNKS` chunks in rank order), and its top
-`RERANK_TOP_N` records are re-ordered by the collection's own reranker as
-`retrieval._rerank_list` does it: each chunk under its record's title and
-authors (`_attach_heads`), cut to the reranker's window (`fit_to_window`),
-each record at its best chunk's score, ties in the leg's order
-(`_rerank_order`). Each (query, chunk) pair is scored ONCE for every row and
-kept (resumable: a stopped run asks only what it has not). Two rows per
-scored row: its records BEFORE the reranker and after, both at record level
-(a query is answered by any book of its work), so the two compare the same
-unit. Not reproduced: the catalogue leg's first place and the grouping of a
-work's editions after the reranker; the same for every row.
-TRANSLATIONS ARE (2026-11-02): each pair is judged against the question in
-its record's language when the search's own language plan translated it
-(`language_plan.plan`, kept per question), as `_rerank_list` does;
-`--no-translate` judges against the question as typed.
+THE WHOLE SEARCH (`rerank`, 2026-11-02, the operator: "evaluate the effects
+with a reranker", then "Add BM25 fusion and translations too, make separated
+scores"): each row, BM25 alone, each encoder fused with BM25, and each of
+these after the collection's reranker over the top 10, 40, 50 and 100, with
+the search's own plan, fusion and reranking steps —
+tools/measure/pipeline_eval.py, which says what is and is not reproduced.
 """
 
 from __future__ import annotations
@@ -144,8 +132,6 @@ import argparse
 import hashlib
 import json
 import math
-import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1024,13 +1010,11 @@ def _lexical_rankings(out: Path, max_chars: int, n_queries: int) -> list[list[in
     return json.loads((out / LEXICAL / "ranking-bare.json").read_text(encoding="utf-8"))
 
 
-#: the reranked rows' directory, beside the runs
-RERANKED = "rerank"
-#: chunks ranked per row before records are formed: deep enough that the
-#: top RERANK_TOP_N records each find their JUDGED_CHUNKS chunks
+#: where `rerank` keeps its measurement, beside the runs
+RERANKED = "pipeline"
+#: chunks each encoder ranks per question: deep enough that the vector leg's
+#: top 100 records each find their matched chunks
 CHUNK_DEPTH = 2_000
-#: candidates per reranker call: ~one search's (50 records × 2 chunks)
-RERANK_BATCH = 100
 
 
 def _pool_chunk_ids(out: Path) -> list[str]:
@@ -1043,52 +1027,36 @@ def _record(chunk_id: str) -> str:
     return chunk_id.rsplit(":", 2)[0]              # retrieval.record_of's split
 
 
-def records_of(ranking: list[int], chunk_ids: list[str], depth: int,
-               per_record: int) -> list[tuple[str, list[int]]]:
-    """A chunk ranking as a search's record list: each record once, at its
-    best chunk's place, with its first `per_record` chunks in rank order
-    (`_merge_rrf` + `_matched_chunks`); the first `depth` records."""
-    out: list[tuple[str, list[int]]] = []
+def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans,
+           depths=None, only: list[str] | None = None, call=None) -> int:
+    """The whole search on the pool, stage by stage
+    (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
+    encoder, each fused with BM25, and each after `recipe`'s reranker at
+    every depth. `heads(records)` gives each record `{"head", "lang"}`."""
+    from tools.measure import pipeline_eval as pe
+    if suite_of(out) != POOL:
+        raise SystemExit("`rerank` reads records from chunk ids: a `pool` set only")
+    corpus, queries = load(out, max_chars)
+    chunk_ids = _pool_chunk_ids(out)
+    # the pool's records, each with its chunks in corpus order
     at: dict[str, int] = {}
-    for pos in ranking:
-        rec = _record(chunk_ids[pos])
-        if rec in at:
-            chunks = out[at[rec]][1]
-            if len(chunks) < per_record:
-                chunks.append(pos)
-        elif len(out) < depth:
-            at[rec] = len(out)
-            out.append((rec, [pos]))
-    return out
-
-
-def _record_relevance(queries: Queries, chunk_ids: list[str]) -> list[set[str]]:
-    return [{_record(chunk_ids[i]) for i in rel} for rel in queries.relevant]
-
-
-def _record_metrics(lists: list[list[str]], relevant: list[set[str]],
-                    depths: list[int] = ()) -> tuple[dict, dict]:
-    """Record-level metrics (mean, per query), records numbered per query;
-    `hit@depth` is what reached the reranker, which it cannot change."""
-    totals: dict[str, float] = {}
-    perq: dict[str, list[float]] = {k: [] for k in PAIRED}
-    ks = sorted(set(KS) | {int(k.split("@")[1]) for k in PAIRED} | set(depths))
-    for ranking, rel in zip(lists, relevant):
-        num = {r: i for i, r in enumerate(dict.fromkeys(ranking + sorted(rel)))}
-        m = metrics_for([num[r] for r in ranking], {num[r] for r in rel}, ks)
-        for k, v in m.items():
-            totals[k] = totals.get(k, 0.0) + v
-        for k in PAIRED:
-            perq[k].append(m[k])
-    return {k: v / max(1, len(lists)) for k, v in totals.items()}, perq
-
-
-def _scored_rows(out: Path, corpus: Corpus, queries: Queries, max_chars: int,
-                 only: list[str] | None) -> list[tuple[Path, dict, str, list[list[int]]]]:
-    """(run, meta, the row's kind, its chunk rankings) for every embedded
-    row, and its BM25 fusion where a `lexical` run exists."""
-    lexical_rankings = _lexical_rankings(out, max_chars, len(queries.texts))
-    rows = []
+    where: list[tuple[int, int]] = []
+    members: list[list[int]] = []
+    for pos, cid in enumerate(chunk_ids):
+        rec = _record(cid)
+        if rec not in at:
+            at[rec] = len(members)
+            members.append([])
+        where.append((at[rec], len(members[at[rec]])))
+        members[at[rec]].append(pos)
+    records = sorted(at, key=at.get)
+    head = heads(records)
+    docs = [pe.Doc(lang=(head.get(rec) or {}).get("lang") or "und",
+                   title=(head.get(rec) or {}).get("head") or "",
+                   chunks=[corpus.texts[p] for p in members[at[rec]]]) for rec in records]
+    questions = [pe.Question(text=t, relevant=frozenset(where[p][0] for p in rel))
+                 for t, rel in zip(queries.texts, queries.relevant)]
+    rankings = {}
     for run, meta in runs_in(out):
         if meta.get("kind") == "lexical" or meta.get("limit"):
             continue
@@ -1096,193 +1064,13 @@ def _scored_rows(out: Path, corpus: Corpus, queries: Queries, max_chars: int,
             continue
         doc = np.load(run / "corpus.npy")
         qry = np.load(run / f"queries-{meta['slug']}.npy")
-        dense = rank_dense(doc, qry, corpus, CHUNK_DEPTH)
-        rows.append((run, meta, "vector", dense))
-        if lexical_rankings is not None:
-            rows.append((run, meta, "fused",
-                         [fuse(t, v, CHUNK_DEPTH) for t, v in zip(lexical_rankings, dense)]))
-    return rows
-
-
-class RerankCache:
-    """Each (query, chunk) pair's reranker score, kept as JSON lines under
-    `where`: appended per query after its calls, read back on a rerun, so a
-    stopped run asks only what it has not (invariant 2's spirit)."""
-
-    def __init__(self, where: Path, settings: dict) -> None:
-        where.mkdir(parents=True, exist_ok=True)
-        _same_settings(where, settings)
-        self.path = where / "scores.jsonl"
-        self.scores: dict[tuple[int, int], float] = {}
-        if self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    x = json.loads(line)
-                    self.scores[(x["q"], x["c"])] = float(x["s"])
-
-    def add(self, q: int, got: dict[int, float]) -> None:
-        with self.path.open("a", encoding="utf-8") as fh:
-            for c, sc in got.items():
-                fh.write(json.dumps({"q": q, "c": c, "s": sc}) + "\n")
-                self.scores[(q, c)] = sc
-
-
-def _call_reranker(recipe, query: str, texts: list[str], timeout: float) -> list[float]:
-    """One request as `_rerank_list` sends it; the scores in text order."""
-    from app import retrieval
-    if recipe.api == "jina":
-        body = {"query": query, "documents": texts, "top_n": len(texts)}
-    else:
-        body = {"query": query, "texts": texts, "truncate": True}
-    if recipe.model:
-        body["model"] = recipe.model
-    data = retrieval._rerank_call(recipe, body, timeout, time.monotonic() + timeout)
-    rows = data["results"] if isinstance(data, dict) else data
-    got = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o else o["score"])
-           for o in rows}
-    if sorted(got) != list(range(len(texts))):
-        raise SystemExit(f"the reranker answered for {len(got)} of {len(texts)} candidates")
-    return [got[i] for i in range(len(texts))]
-
-
-class PlanCache:
-    """Each question's language plan as a search makes it (05 §5.2,
-    `language_plan.plan`, translate on): its core and its translations by
-    language, kept as JSON lines, so a rerun asks the models nothing again.
-    `make(text)` gives `(core, {lang: text})`."""
-
-    def __init__(self, path: Path, make) -> None:
-        self.path, self.make = path, make
-        self.rows: dict[int, dict] = {}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    x = json.loads(line)
-                    self.rows[x["q"]] = x
-
-    def get(self, q: int, text: str) -> tuple[str, dict[str, str]]:
-        row = self.rows.get(q)
-        if row is None or row["query"] != text:
-            core, tr = self.make(text)
-            row = {"q": q, "query": text, "core": core, "tr": tr}
-            with self.path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-            self.rows[q] = row
-        return row["core"], row["tr"]
-
-
-def search_plan(collection):
-    """`PlanCache`'s `make` for `collection`: the search's own plan."""
-    def make(text: str) -> tuple[str, dict[str, str]]:
-        from app import language_plan
-        plan = language_plan.plan(text, [collection], translate=True)
-        return plan.core, {k.lower(): v for k, v in (plan.translations or {}).items() if v}
-    return make
-
-
-def score_pairs(cache: RerankCache, q: int, query: str, wanted, text_of, lang_of, recipe, *,
-                plans: PlanCache | None = None, call=None, timeout: float = 600.0) -> int:
-    """The reranker's score of every `wanted` chunk for question `q` that
-    `cache` does not hold yet, as `_rerank_list` asks it: each chunk against
-    the question in its record's language where the plan translated it,
-    else against the question as typed — one call per variant (batches of
-    RERANK_BATCH), each text cut to the reranker's window. The pairs asked."""
-    from app import retrieval
-    call = call or _call_reranker
-    todo = sorted({c for c in wanted if (q, c) not in cache.scores})
-    if not todo:
+        rankings[label_of(meta)] = [[where[p] for p in r]
+                                    for r in rank_dense(doc, qry, corpus, CHUNK_DEPTH)]
+    if not rankings:
+        print(f"{out}: no embedded row to measure")
         return 0
-    core, variants = plans.get(q, query) if plans is not None else (query, {})
-    groups: dict[str, list[int]] = {}
-    for c in todo:
-        lang = (lang_of(c) or "").lower()
-        groups.setdefault(variants.get(lang) or core, []).append(c)
-    got: dict[int, float] = {}
-    for variant, cs in groups.items():
-        texts = retrieval.fit_to_window([text_of(c) for c in cs], recipe)
-        for k in range(0, len(cs), RERANK_BATCH):
-            got.update(zip(cs[k:k + RERANK_BATCH],
-                           call(recipe, variant, texts[k:k + RERANK_BATCH], timeout)))
-    cache.add(q, got)
-    return len(todo)
-
-
-def rerank(out: Path, max_chars: int, recipe, heads, *, depths: list[int] | None = None,
-           per_record: int | None = None, only: list[str] | None = None,
-           timeout: float = 600.0, call=None, plans: PlanCache | None = None) -> int:
-    """The module docstring's "THE RERANKER AFTER THE LEGS". `heads(records)`
-    gives each record's `title — authors` line (`_attach_heads`' own).
-    `depths`: how many records the reranker orders, one row each (the search's
-    RERANK_TOP_N by default; the operator, 2026-11-02: "5 results reranked
-    over 50 results, more likely over 100"). The deepest list's pairs cover
-    every shallower one, so the extra depths cost no request. `heads(records)`
-    gives each record `{"head": its line, "lang": its language}`; `plans`
-    (a `PlanCache`) the question's translations, as a search with
-    translation on uses them; None judges every pair against the question
-    as typed (the API's `translate false`)."""
-    from app import retrieval
-    if suite_of(out) != POOL:
-        raise SystemExit("`rerank` reads records from chunk ids: a `pool` set only")
-    depths = sorted(set(depths or [retrieval.RERANK_TOP_N]))
-    depth = depths[-1]
-    per_record = per_record or retrieval.JUDGED_CHUNKS
-    corpus, queries = load(out, max_chars)
-    chunk_ids = _pool_chunk_ids(out)
-    rows = _scored_rows(out, corpus, queries, max_chars, only)
-    if not rows:
-        print(f"{out}: no embedded row to rerank")
-        return 0
-    lists = {(str(run), kind): [records_of(r, chunk_ids, depth, per_record) for r in ranks]
-             for run, _meta, kind, ranks in rows}
-    head = heads(sorted({rec for ls in lists.values() for q in ls for rec, _ in q}))
-    cache = RerankCache(out / RERANKED / re.sub(r"[^A-Za-z0-9_.-]+", "_", recipe.model or "rerank"),
-                        {"url": recipe.url, "api": recipe.api, "model": recipe.model,
-                         "window": getattr(recipe, "window", None), "max_chars": max_chars,
-                         "head_chars": retrieval.HEAD_CHARS, "translate": plans is not None})
-
-    def text_of(c: int) -> str:
-        line = (head.get(_record(chunk_ids[c])) or {}).get("head") or ""
-        return f"{line}\n\n{corpus.texts[c]}" if line else corpus.texts[c]
-
-    def lang_of(c: int) -> str | None:
-        return (head.get(_record(chunk_ids[c])) or {}).get("lang")
-    retrieval._warm_reranker(recipe)
-    asked = 0
-    t0 = time.monotonic()
-    for q, text in enumerate(queries.texts):
-        want = {c for ls in lists.values() for rec, cs in ls[q] for c in cs}
-        asked += score_pairs(cache, q, text, want, text_of, lang_of, recipe, plans=plans,
-                             call=call, timeout=timeout)
-        if q % 20 == 0:
-            print(f"  query {q + 1}/{len(queries.texts)}: {asked} pairs scored, "
-                  f"{time.monotonic() - t0:.0f} s")
-    relevant = _record_relevance(queries, chunk_ids)
-    for run, meta, kind, _ranks in rows:
-        ls = lists[(str(run), kind)]
-        tag = meta["slug"] if kind == "vector" else f"fused-{meta['slug']}"
-        label = label_of(meta) + (" + BM25 (RRF)" if kind == "fused" else "")
-        before = [[rec for rec, _ in qlist] for qlist in ls]
-        outputs = [(f"records-{tag}", before)]
-        for d in depths:
-            after = []
-            for q, qlist in enumerate(ls):
-                head_d = qlist[:d]
-                best = [max(cache.scores[(q, c)] for c in cs) for _rec, cs in head_d]
-                after.append([head_d[i][0] for i in retrieval._rerank_order(best, fuse=False)]
-                             + [rec for rec, _ in qlist[d:]])
-            outputs.append((f"reranked-d{d}-{tag}", after))
-        for name, recs in outputs:
-            mean, perq = _record_metrics(recs, relevant, depths)
-            (run / f"{name}.json").write_text(json.dumps(mean, indent=2) + "\n", encoding="utf-8")
-            (run / f"perquery-{name}.json").write_text(json.dumps(perq) + "\n", encoding="utf-8")
-            m = mean
-            what = "records" if name.startswith("records") else f"rerank@{name.split('-')[1][1:]}"
-            print(f"{label} {what}: mrr@5 {m['mrr@5']:.4f}  hit@1 {m['hit@1']:.4f}  "
-                  f"hit@5 {m['hit@5']:.4f}  mrr@10 {m['mrr@10']:.4f}  "
-                  + "  ".join(f"reached@{d} {m[f'hit@{d}']:.4f}" for d in depths))
-    print(f"{asked} pairs asked this run, {len(cache.scores)} kept "
-          f"({time.monotonic() - t0:.0f} s)")
+    pe.evaluate(out / RERANKED, collection, docs, questions, rankings, recipe=recipe,
+                plans=plans, depths=depths or pe.DEPTHS, call=call)
     return 0
 
 
@@ -1312,6 +1100,19 @@ def manifest_heads(collection: str):
         return {h["_rec"]: {"head": h.get(retrieval.HEAD, ""), "lang": langs.get(h["book_id"])}
                 for h in hits}
     return c, heads
+
+
+def pe_reranker(collection: str):
+    """`collection`'s own reranker (`reranker_for`), or a refusal that says so."""
+    from app import collections as collections_mod
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    recipe = collections_mod.reranker_for(c)
+    if recipe is None:
+        raise SystemExit(f"{collection} names no reranker and RERANK_URL is unset: "
+                         f"give --reranker-from <a collection that names one>")
+    return recipe
 
 
 def runs_in(out: Path) -> list[tuple[Path, dict]]:
@@ -1424,19 +1225,6 @@ def report(out: Path) -> int:
         if fused.exists():
             rows[f"{label_of(meta)} + BM25 (RRF)"] = json.loads(fused.read_text(encoding="utf-8"))
             keep(f"{label_of(meta)} + BM25 (RRF)", run / f"perquery-fused-{meta['slug']}.json")
-        # `rerank`'s rows: the records before the reranker and after it at
-        # each depth, record level
-        for tag, suffix in ((meta["slug"], ""), (f"fused-{meta['slug']}", " + BM25 (RRF)")):
-            found = [(f"records-{tag}", " (records)")] + sorted(
-                ((p.stem, f" + rerank@{p.stem.split('-')[1][1:]}")
-                 for p in run.glob(f"reranked-d*-{tag}.json")
-                 if p.stem == f"reranked-{p.stem.split('-')[1]}-{tag}"),
-                key=lambda x: int(x[0].split("-")[1][1:]))
-            for name, shown_as in found:
-                path = run / f"{name}.json"
-                if path.exists():
-                    rows[f"{label_of(meta)}{suffix}{shown_as}"] = json.loads(path.read_text(encoding="utf-8"))
-                    keep(f"{label_of(meta)}{suffix}{shown_as}", run / f"perquery-{name}.json")
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
     if not rows:
@@ -1459,14 +1247,6 @@ def report(out: Path) -> int:
     for slug, text in sorted(prefixes.items()):
         print(f"\n[{slug}] query prefix: {text!r}")
     _print_paired(queried)
-    # `rerank`'s rows compared among themselves, at each depth, on what a
-    # reader sees: the first 5 results (the operator's setting, 2026-11-02)
-    groups = sorted({k[k.rindex(" + rerank@"):] for k in queried if " + rerank@" in k})
-    for g in [" (records)"] + groups:
-        same = {k: v for k, v in queried.items() if k.endswith(g)}
-        if len(same) > 1:
-            print(f"\n[{g.strip()}]", end="")
-            _print_paired(same, "mrr@5")
     if suite_of(out) == "jurifindit":
         print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
               "its truncation and corpus handling are unrecorded.")
@@ -1505,15 +1285,15 @@ def main(argv=None) -> int:
                                 "index's analyzer and stemmer, as a record's does")
         if cmd == "rerank":
             p.add_argument("--from-collection", required=True,
-                           help="the collection whose reranker and record titles are used")
+                           help="the collection whose search plan, titles and languages are used")
+            p.add_argument("--reranker-from", default=None,
+                           help="another collection's reranker, where this one names none")
             p.add_argument("--depth", type=int, action="append", default=None,
-                           help="records reranked, repeatable: one row each "
-                                "(the search's RERANK_TOP_N by default)")
+                           help="records reranked, repeatable (10, 40, 50 and 100 by default)")
             p.add_argument("--only", action="append", default=None,
-                           help="rerank only rows whose label contains this; repeatable")
+                           help="measure only rows whose label contains this; repeatable")
             p.add_argument("--no-translate", action="store_true",
-                           help="judge every pair against the question as typed (the API's "
-                                "translate false); by default, as a search translates")
+                           help="no translations: the API's translate false")
         if cmd in ("embed", "lexical", "score", "rerank"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
@@ -1563,14 +1343,12 @@ def main(argv=None) -> int:
     if a.cmd == "score":
         return score(a.out, a.max_chars)
     if a.cmd == "rerank":
-        from app import collections as collections_mod
+        from tools.measure import pipeline_eval as pe
         c, heads = manifest_heads(a.from_collection)
-        recipe = collections_mod.reranker_for(c)
-        if recipe is None:
-            raise SystemExit(f"{a.from_collection} names no reranker and RERANK_URL is unset")
-        plans = None if a.no_translate else PlanCache(
-            a.out / RERANKED / "plans.jsonl", search_plan(c))
-        return rerank(a.out, a.max_chars, recipe, heads, depths=a.depth, only=a.only, plans=plans)
+        recipe = pe_reranker(a.reranker_from or a.from_collection)
+        plans = pe.PlanStore(a.out / RERANKED / ("plans-typed.jsonl" if a.no_translate else "plans.jsonl"),
+                             pe.search_plans(c, translate=not a.no_translate))
+        return rerank(a.out, a.max_chars, c, recipe, heads, plans=plans, depths=a.depth, only=a.only)
     return report(a.out)
 
 
