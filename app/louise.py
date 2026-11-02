@@ -4017,6 +4017,16 @@ def cmd_embedder_cpu_reference(a) -> int:
                     print(f"louise: {role}: the model states a run on {stated.driver!r}, not the "
                           f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
                     return 2
+                # A ROLE THIS RUN ALREADY KEPT IS NOT MADE AGAIN (RULE 1: the same
+                # run on the same set gives the same bytes, invariant 12). Before
+                # this, a pass stopped in its query role redid the document role's
+                # 6.7 h on its next start (gutenberg, 2026-11-02)
+                done = (None if getattr(a, "again", False) else
+                        cpu_ref.kept(a.root, name, role, run_id=stated.run_id,
+                                     set_id=codex.space.calibration.set, count=len(items)))
+                if done is not None:
+                    print(f"kept already  {role}  run {stated.run_id[:23]}…  {done}")
+                    continue
                 texts = emb.gate_texts(codex, role, items)
                 # ONE TEXT A REQUEST, each bounded by the space's window: the
                 # collection's `[encoder] batch` is the card's (wikidata's 16
@@ -5243,6 +5253,8 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection")
     p.add_argument("--model", metavar="NAME", help="the CPU twin's model name")
     p.add_argument("--query-model", metavar="NAME", help="the query side's CPU twin")
+    p.add_argument("--again", action="store_true",
+                   help="make a role again even where this run already kept it")
     p.set_defaults(fn=cmd_embedder_cpu_reference)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")

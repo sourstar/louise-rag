@@ -226,6 +226,7 @@ grep -q "RELAY_RETRY_MS=500" "$ROOT/src.new/app/templates/ask.html"   # #189: th
 grep -q '    mode: str = "running"' "$ROOT/src.new/app/node_profile.py"   # #192/#193: a profile takes a mode (quiet = acquire-only, 12 cores)
 grep -q 'processing suspended' "$ROOT/src.new/app/cpu_limit.py"   # #192: the quiet window says it once
 grep -q 'rows = rows.filter(pc.is_in(rows.column("id"), value_set=wanted))' "$ROOT/src.new/app/embeddings.py"   # vectors_by_chunk_id keeps the asked ids in Arrow (the bakeoff pool's OOM)
+grep -q '^def kept(root: Path, name: str, role: str' "$ROOT/src.new/app/hold/cpu_reference.py"   # cpu-reference skips a role its run already kept
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent

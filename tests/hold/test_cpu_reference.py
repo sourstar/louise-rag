@@ -274,3 +274,59 @@ def test_a_statement_is_admitted_at_its_levels_line():
     assert not _v5(engine=q8, cpu_reference={"run": "r", "worst": "0.9999", "median": "1"}), \
         "an unmeasured level is not admitted against a CPU reference"
     assert _v5(engine=q8), "and nothing to judge without one"
+
+
+def test_a_role_this_run_already_kept_is_not_made_again(monkeypatch, tmp_path):
+    """gutenberg, 2026-11-02: the document role kept at 06:51 (6.7 h of CPU),
+    the query role 352 texts in — a stop and a new start would have made the
+    document role again. The same run on the same set gives the same bytes
+    (invariant 12): the kept role is skipped; `--again` makes it again."""
+    from types import SimpleNamespace
+    from app import encoder_use, louise, run_check
+    from app import collections as collections_mod
+    from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
+    from app.hold import fingerprint
+    recipe = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega",
+                                         model="vega-q-cpu", dtype="f16", ctx=8191, batch=1)
+    codex = SimpleNamespace(space=SimpleNamespace(query=SimpleNamespace(encoder="q"),
+                                                  calibration=SimpleNamespace(set="s")))
+    stated = SimpleNamespace(driver="cpu", run_id="sha256:" + "d" * 64, engine={}, weights="w")
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("gutenberg", codex))
+    monkeypatch.setattr(louise, "_recipe_for", lambda c, n: recipe)
+    monkeypatch.setattr(louise, "_as_candidate", lambda r, a: r)
+    monkeypatch.setattr(run_check, "calibration_items", lambda *a: ["x"] * 3)
+    monkeypatch.setattr(run_check, "probe_for", lambda *a: "louise")
+    monkeypatch.setattr(run_check, "stated_run", lambda *a, **k: stated)
+    monkeypatch.setattr(emb, "gate_texts", lambda c, role, items: [f"{role}:{i}" for i in items])
+    monkeypatch.setattr(emb, "reproduces", lambda a, b: True)
+    monkeypatch.setattr(fingerprint, "indices", lambda texts: [0])
+    embedded = []
+
+    def answers(r, **kw):
+        def fn(texts):
+            embedded.extend(texts)
+            return [[1.0, 0.0] for _ in texts]
+        fn.runs = {stated.run_id}
+        return fn
+    monkeypatch.setattr(run_check, "answers", answers)
+
+    class Held:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(encoder_use, "held", lambda *a, **k: Held())
+    cpu_ref.write(tmp_path, "gutenberg", "document", run_id=stated.run_id,
+                  run={"driver": "cpu", "engine": {}, "weights": "w"}, set_id="s",
+                  vectors=[[0.0, 1.0]] * 3)
+    a = SimpleNamespace(root=tmp_path, collection="gutenberg", model="vega-q-cpu",
+                        query_model="vega-q-cpu", again=False)
+    assert louise.cmd_embedder_cpu_reference(a) == 0
+    assert embedded and all(t.startswith("query:") for t in embedded), "the document role was kept"
+    assert cpu_ref.kept(tmp_path, "gutenberg", "query", run_id=stated.run_id, set_id="s", count=3)
+    assert cpu_ref.kept(tmp_path, "gutenberg", "document", run_id="sha256:" + "e" * 64,
+                        set_id="s", count=3) is None, "another run's answers are not these"
+    assert cpu_ref.kept(tmp_path, "gutenberg", "document", run_id=stated.run_id,
+                        set_id="other", count=3) is None, "another set"
+    embedded.clear()
+    a.again = True
+    assert louise.cmd_embedder_cpu_reference(a) == 0
+    assert any(t.startswith("document:") for t in embedded), "--again makes it again"
