@@ -21,6 +21,7 @@ What is here, and why it is kept:
 | `collection-backend.md` | the backend templates every collection falls in (operator, 2026-10-30), their contracts, and the consolidation still to do |
 | `lessons-learned.md` | the cases that cost time, newest first: what happened, what it cost, the general lesson, and where the rule now lives |
 | `multicore-audit.md` | every pass that walks a corpus or a collection, ranked by what running it on one core costs, and what was fixed |
+| `python-hot-spots.md` | per-document CPU measured by path, pure Python against native; what is structural; a ranked proposal of what to rewrite (and in what) with estimated gains, the operator's to choose |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
 | `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
 | `archive-signing-keys.md` | who signs a pre-embedded archive's bundles, and therefore what `credits[].key` can hold — open, and it blocks crediting a public archive |
