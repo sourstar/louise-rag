@@ -317,7 +317,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
     fresh loads with a sweep of lengths, and the way the peer contributes
     (its batch and concurrency), before any vector of the run is written.
     *Enforced: the VeGa wrapper states no card run whose model env lacks
-    its vendor's mode (deploy/vega/vega_wrapper.py `DETERMINISM`,
+    its vendor's mode, but for ONE setting the model's env declares measured
+    near-exact on that very backend (`LOUISE_NEAR_EXACT_MEASURED`, 2026-11-02)
+    (deploy/vega/vega_wrapper.py `DETERMINISM`, `near_exact_relaxed`,
     tests/vega/test_wrapper_logic.py); the gate's verdicts — exact,
     near-exact, fail — and the batch bound (app/hold/embedder.py,
     app/hold/runs.py `passing`, tests/hold/test_near_exact.py).* Open:

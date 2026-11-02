@@ -169,7 +169,16 @@ Generative llama.cpp models (chat, translate) and rerankers need the
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
-  card run naming no known vendor, is refused;
+  card run naming no known vendor, is refused. Since 2026-11-02 (the
+  operator: "Align VeGa to the amended specs"), ONE setting of that mode may
+  be relaxed once it is measured near-exact and faster on that very backend
+  (invariant 12 as amended 2026-11-01). The model's env declares it,
+  `LOUISE_NEAR_EXACT_MEASURED="<backend name> <SETTING>"`. Refused: another
+  backend's name, a setting not in the mode, two at once, or a CPU run. The
+  declaration is part of the stated run, so the exact mode stays a separate
+  run under its own model. The gate's multi-load verdict holds the relaxed
+  one to 0.99999 and the CPU reference, and only an `exactness = "near"`
+  collection admits it (near-exact-runs.md §3);
 - louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1` (on an
   NVIDIA card also `CUBLAS_WORKSPACE_CONFIG=:4096:8`, 2026-10-21); its
   OpenVINO tasks are refused;

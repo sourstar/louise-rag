@@ -921,3 +921,55 @@ def test_the_wrapper_is_part_of_the_engine(tmp_path):
     assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) != image
     # without a package (a test's Config), the backend's tree alone
     assert vw.engine_manifest(backend, None, vw.TOKENIZER) == vw.tree_manifest(backend)
+
+
+# ---- a vendor mode relaxed once measured (invariant 12 amended 2026-11-01, choice B;
+# the operator, 2026-11-02: "Align VeGa to the amended specs") -----------------------
+
+def _sycl_kw(tmp_path, name="intel-sycl-f16-llama-cpp-up"):
+    backend = vw.real_backend(_backend_dir(tmp_path, name=name))
+    return dict(backend=backend, device="the card", pci=None, weights="sha256:" + "11" * 32,
+                tree=vw.tree_digest(backend.directory), runtime=[], card_driver_line="dxg 1"), name
+
+
+def test_one_setting_measured_near_exact_on_this_backend_may_be_relaxed(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    _rid, run = vw.state_run(canon=_load_with(env), environ=env, **kw)
+    assert run["engine"]["env"] == env, "the run states what it relaxed, and where it was measured"
+    exact = vw.determinism_env(name)
+    rid_exact, _ = vw.state_run(canon=_load_with(exact), environ=exact, **kw)
+    assert rid_exact != _rid, "the exact mode stays another run, available under its own model"
+
+
+def test_relaxing_one_setting_never_relaxes_another_or_parallel(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="GGML_SYCL_FA_ONEDNN=0"):
+        vw.state_run(canon=_load_with(env), environ=env, **kw)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="parallel:1"):
+        vw.state_run(canon=_load_with(env, ("pairs:true", "parallel:4")), environ=env, **kw)
+
+
+@pytest.mark.parametrize("said, match", [
+    ("intel-sycl-f16-llama-cpp GGML_SYCL_ENABLE_DNN", "measure it again"),     # another tree
+    ("{name} ROCBLAS_DEFAULT_ATOMICS_MODE", "not a setting"),                    # not this mode
+    ("{name} GGML_SYCL_ENABLE_DNN GGML_SYCL_FA_ONEDNN", "one setting"),          # two at once
+    ("GGML_SYCL_ENABLE_DNN", "one setting"),                                     # no backend
+])
+def test_a_relaxation_not_measured_for_this_run_is_refused(tmp_path, said, match):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: said.format(name=name)}
+    with pytest.raises(loadopts.Unstatable, match=match):
+        vw.state_run(canon=_load_with(env), environ=env, **kw)
+
+
+def test_a_cpu_run_has_no_mode_to_relax(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="CPU"):
+        vw.state_run(canon=_load_with(env), environ=env, **(kw | {"device": "cpu"}))

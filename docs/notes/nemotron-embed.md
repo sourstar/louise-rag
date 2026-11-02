@@ -278,6 +278,23 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
     - `threads: 1` for fully offloaded embedding models, which removes ~2
       cores of spinning (its bit-identity to be checked);
     - the candidate engine below.
+- **The clean baseline, no CPU twin** (München 17:2x, live engine, the same
+  5,000 W1 chunks, batch 16, through encoder_fn, nothing attached):
+
+  | arm | chunks/s | card busy | backend CPU | bit-identical |
+  |---|---|---|---|---|
+  | harrier c4 | 58.82 | 99.2 % | 339 % | 5,000/5,000 |
+  | nemotron c1 | 46.48 | 86.8 % | 304 % | 5,000/5,000 |
+  | nemotron c4 | 55.03 | 98.6 % | 344 % | 5,000/5,000 |
+  | nemotron c8 | 54.98 | 98.3 % | 340 % | 5,000/5,000 |
+
+  - **Nemotron saturates the card** at 4 in flight, and runs at **0.94×
+    harrier**. 8 in flight adds nothing; 1 → 4 adds 18 %.
+  - **What the CPU twin cost it:** 43 % at 1 in flight (26.74 → 46.48) and 28 %
+    at 4.
+  - The rows above it, measured beside the CPU twin, are superseded for speed.
+  - These are not comparable with HARRIER-OPT's 51.57: that was the full
+    21,348-chunk W1, and this is its first 5,000.
 - **Tokenizer correctness on our engine** (all of W1 and P3, the exact
   strings, against `tokenizers` on the snapshot's tokenizer.json):
   - 71 of 40,931 texts differ, all chunks, no question: W1 203 of 5.82 M
@@ -304,6 +321,33 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
     of the sets (step 0, no card). Each text that differs joins the
     reference and the compare. A sample finds what is common, and a
     tokenizer fault is rare by construction.
+- **The candidate engine PASSES correctness** (München 17:47–17:51; built
+  as louise-llama-cpp:sycl_f16-f96fd5e3f0a4, tar sha256 b5d7ad6a…; P5 applied
+  without fuzz at ddf48f8):
+  - `st_parity tokens` on all of W1 and P3 (40,931 texts, 8,140,608
+    tokens): 0 texts and 0 tokens differ from NVIDIA's tokenizer;
+  - `compare` on the 48: worst 0.999999 (documents), 1.0 (queries);
+  - `compare` on the 71 that failed on the live engine: worst 0.999999,
+    none under 0.999;
+  - so on the candidate nemotron is NVIDIA's model on every checked text.
+- **The candidate's speed is the live engine's** (17:51–17:58, the same 5,000
+  W1 chunks, no other job):
+
+  | arm | chunks/s | card busy | byte-equal to the live engine |
+  |---|---|---|---|
+  | c1 | 46.80 | 86.7 % | 4,987/5,000 |
+  | c4 | 55.38 | 98.7 % | 4,987/5,000 |
+  | c8 | 55.24 | 98.7 % | 4,987/5,000 |
+  | c4, SYCL graphs on | 55.05 | 98.7 % | 4,987/5,000 |
+
+  - **Speed:** +0.5 to +0.7 % against the live engine, within run-to-run
+    noise. The upstream SYCL host-wait changes buy nothing measurable once
+    the card is saturated, and graph replay gives the same bytes at the same
+    speed.
+  - **Bytes:** ddf48f8's kernels give c0fd786's bytes. Only the 13 texts the
+    Tekken fix re-tokenizes differ; the worst is O'Donnell, at 0.954569 to
+    the live engine's vector.
+  - **Within the candidate,** every arm is bit-identical to its c4.
 - **The candidate engine:**
   - LocalAI master (16acc89, 2026-11-02) pins llama.cpp ddf48f8 (10-31),
     which carries both tokenizer fixes, the fattn-mkl host-wait removal
@@ -353,6 +397,26 @@ It is the only model of the three that is best or tied-best on both.
 Gutenberg was not run (the operator narrowed the test). What it costs is
 speed: 0.39–0.54× bge-m3 at one in flight, about half at saturation on
 wikidata's chunks.
+
+## Both modes are part of a model's validation (operator, 2026-11-02)
+
+"About the validation of a model, both modes need to be tested. A model
+shall be able to produce bit exact results if needed. Now that we have proved
+that bit exactness is achievable, give me the speed mode numbers."
+
+- **The exact mode:** the vendor's reproducibility mode,
+  `GGML_SYCL_ENABLE_DNN=0` on Intel SYCL. It must reproduce its own bytes,
+  so that a collection asking `exactness = "exact"` can have them.
+  Nemotron does, on both engines (every arm above).
+- **The speed mode:** the vendor's fast path (oneDNN's matmuls,
+  `GGML_SYCL_ENABLE_DNN=1`; `GGML_SYCL_FA_ONEDNN` stays 0 after its NaN on
+  this card). It is measured for chunks/s, for self-reproduction within
+  invariant 12's near-exact bound (0.99999, no NaN), and for parity with the
+  fp32 reference.
+- **Measured raw for now.** VeGa's wrapper refuses a SYCL run without
+  `GGML_SYCL_ENABLE_DNN=0` (its DETERMINISM map, invariant 12's
+  enforcement). Serving the speed mode through VeGa needs the operator's
+  change to that rule first.
 
 ## What the operator gets
 
