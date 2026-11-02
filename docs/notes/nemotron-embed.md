@@ -417,6 +417,21 @@ Speed at one request in flight, no CPU twin:
 The afternoon's 24.1 and 33.4 were the CPU twin's doing, not the engine's
 (B shows the two engines equal).
 
+## Gutenberg on the live engine's tokenizer (München 18:36–18:43, CPU only)
+
+`st_parity tokens` on the pool's 54,111 exact strings (53,621 documents and
+490 queries, 44.5 M tokens):
+- **1,475 texts (2.73 %) tokenize off NVIDIA's,** 16× W1/P3's rate, but only
+  8,503 tokens (0.019 %), ~5.8 a text;
+- **all at an apostrophe.** LLAMA3's case-insensitive contraction rule
+  ('s|'t|'re|'ve|'m|'ll|'d) splits where Tekken does not:
+  - a quotation opened by an apostrophe: "'Mine" → ' | M | ine, against
+    NVIDIA's ' | Mine;
+  - archaic -'st verbs: "bad'st" → bad | 's | t, against bad | ' | st;
+  - plain modern contractions (don't, it's) tokenize the same.
+- **So the gutenberg row runs on the candidate engine,** where the count is
+  expected to be 0.
+
 ## Both modes are part of a model's validation (operator, 2026-11-02)
 
 "About the validation of a model, both modes need to be tested. A model
