@@ -263,24 +263,20 @@ really in flight (`EMBED_CONCURRENCY`); card busy is read from the PMU.
     ≈ 59 h more, and drops what bge-m3 holds.
   The schedule's hours and the sharing with wikipedia and gutenberg come on
   top, for either model.
-- **The decision rule (operator, 2026-11-02: "Option C"):** wikidata's
-  encoder is decided on the whole-search score below. harrier if it is
-  still significantly better on MRR@10 after BM25 fusion and the reranker
-  (paired randomization test, p < 0.05); bge-m3 otherwise, with `embed`
-  restored. Applied when the score lands, without a further question.
-  The row that decides is fixed before the data: the encoder fused with
+- **The decision (operator, 2026-11-02): the operator decides on the
+  whole-search score, nothing automatic.** "Option C" first, then: "No
+  automatic decision, I decide what to do." wikidata stays off until the
+  operator says otherwise. München's `louise-wikidata-decide` was disarmed,
+  or kept as report only.
+- **The row reported first**, fixed before the data: the encoder fused with
   BM25, reranked over the top 100, the query translated (production's
   search: "5 results reranked over 50 results, more likely over 100").
-  Depth 50 and the typed query are reported beside it and do not decide.
+  - Depth 50, the typed query and the translated-only legs are reported
+    beside it.
   - The pair, as `pipeline_eval` names it: `bge + BM25 + rerank@100
-    [translated]  vs  harrier + BM25 + rerank@100 [translated]`. Its
-    `mrr@10` is bge − harrier, so harrier wins iff mrr@10 < 0 and p@10 < 0.05.
-  - Armed on the node (München, `louise-wikidata-decide`): it runs when the
-    `pipeline-wikidata` step exits 0.
-    - harrier: wikidata stays off and the marker is WIKIDATA-HARRIER.
-    - bge-m3: `hold config apply wikidata --set embed=all` (the recorded
-      value) and WIKIDATA-BGE.
-    - A failed step or a missing pair changes nothing ("NOT decided").
+    [translated]  vs  harrier + BM25 + rerank@100 [translated]`.
+  - Its `mrr@10` is bge − harrier; a negative value with p@10 < 0.05 means
+    harrier is significantly better.
 - **Still owed before the decision:** wikidata's whole-search score
   (`wikidata_encoder_ab.py rerank`: BM25 fused, reranked at 10/40/50/100,
   translated and typed). It says whether the +0.146 survives the full
