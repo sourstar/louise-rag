@@ -1,3 +1,20 @@
+# THE CDC EXTENSION (docs/notes/python-hot-spots.md, "D"): app/chunking.py's
+# content-defined boundary loop, compiled — Rust through PyO3, built into a
+# wheel by maturin, the standard pair for a Python extension. Its own stage:
+# the toolchain never reaches the node, only the wheel. Every version pinned:
+# the Rust image by exact tag and digest (1.97.0, the toolchain the identity
+# tests ran on), maturin by version, PyO3 and every crate by Cargo.lock
+# (--locked). abi3: one wheel for every CPython from 3.12. The trixie image,
+# as python:3.12-slim's: the wheel needs no newer glibc than the base has.
+FROM rust:1.97.0-slim-trixie@sha256:686a437ead83701e8f871e66e838c3ec55f46b5fc235b025756396ac823bdc51 AS cdc-build
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/maturin && /opt/maturin/bin/pip install --no-cache-dir maturin==1.15.0
+WORKDIR /build/louise_cdc
+COPY native/louise_cdc/Cargo.toml native/louise_cdc/Cargo.lock native/louise_cdc/pyproject.toml ./
+COPY native/louise_cdc/src ./src
+RUN /opt/maturin/bin/maturin build --release --locked --out /wheels
+
 FROM python:3.12-slim AS base
 # git: a deposit collection's `.git` source is shallow-cloned by the worker
 # (06 §6.7, app/hold/sources.py; step 16e). Found missing when the merged
@@ -27,6 +44,11 @@ WORKDIR /srv
 # never moves one on its own
 COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
+# the cdc extension's wheel, from the stage above: not on PyPI and not in
+# requirements.txt (app/chunking.py runs its own loop without it); its
+# version is checked against constraints.txt
+COPY --from=cdc-build /wheels /tmp/wheels
+RUN pip install --no-cache-dir -c constraints.txt /tmp/wheels/louise_cdc-*.whl && rm -rf /tmp/wheels
 COPY app ./app
 COPY tools ./tools
 # BYTECODE COMPILED AT BUILD (2026-11-02, the operator asked whether the
@@ -38,6 +60,11 @@ COPY tools ./tools
 # already. A source tree bind-mounted over /srv hides these, as it hides the
 # rest of the image.
 RUN python -m compileall -q -j 0 app tools
+# The image does not build unless app/chunking.py cuts through the extension
+# AND the extension cuts where the Python loop does, on 300 seeded texts
+# (exit 0 is IDENTICAL; without the extension the tool says INCOMPLETE, exit
+# 2). The proof that deploys is the same tool on the node's records.
+RUN python -m tools.measure.cdc_identity --generated 300 --long 20000 --jobs 1 > /dev/null
 # RUNTIME DATA, not a fixture: `app/hold/calibration.py` resolves its sets
 # as `<parent of app>/calibration/<modality>.jsonl`, so `hold collection
 # create`, `hold embedder check` and `hold vectors export` all fail in a
