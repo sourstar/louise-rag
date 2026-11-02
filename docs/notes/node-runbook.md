@@ -140,13 +140,13 @@ byte-identical (`tools/measure/records_ab.py`).
 
 - **The day's periods** (the operator, 2026-10-26; replaces every earlier window; every
   day, weekends too; the NAS is where people live). Applied by the in-app profiles; `deploy/scheduled/node-period.sh
-  night|day|quiet` did it while its crons ran (log `/root/louise-scheduled/node-period.log`). **Since 2026-11-02 the quiet periods SUSPEND PROCESSING** (the operator: "During the day keep gpu at full power, suspend processing during the quiet time frames in the morning, at lunch time and in the evening"; `[profiles.quiet] mode = "acquire-only"`, `cpu_cores = 0`, node-profiles-design.md decision 6): nothing is parsed, indexed or embedded and the build pauses; downloads, seeding and searches go on. Day and night: 12 cores, GPU 230 W, everything runs. The table's 110 W quiet limit is the level kept declared, unused. **Measurements and operator passes go outside the quiet periods**:
+  night|day|quiet` did it while its crons ran (log `/root/louise-scheduled/node-period.log`). **Since 2026-11-02 the quiet periods SUSPEND PROCESSING** (the operator: "During the day keep gpu at full power, suspend processing during the quiet time frames in the morning, at lunch time and in the evening", confirmed with "12 CPU cores always"; `[profiles.quiet] mode = "acquire-only"`, `cpu_cores = 12`, node-profiles-design.md decision 6): the worker parses, indexes and embeds nothing; downloads, seeding, searches, the records build and supervised passes go on. Day and night: 12 cores, GPU 230 W, everything runs. The table's 110 W quiet limit is the level kept declared, unused. **GPU measurements go outside the quiet periods**:
 
 | period | wikipedia build | GPU | gutenberg embed |
 |---|---|---|---|
 | 22:30–06:00 night | 12 cores | power limit 230 W (the card's own) | `all` |
 | 08:00–12:00, 13:30–16:30 day | 12 cores (8 until 2026-11-02) | 230 W | `all` |
-| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | paused (12 cores for part of 2026-11-02, decision 5; paused again by decision 6) | 230 W, serving searches only | none: processing suspended |
+| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | 12 cores (stopped until 2026-11-02) | 230 W, serving searches only | none: the worker's processing suspended |
 
   - The quiet limit is the B70's `power1_cap` (xe hwmon, PL1), the only lever on its
     noise: its blower has no pwm (firmware-controlled), and `fancontrol.py` reads its

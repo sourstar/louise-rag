@@ -18,7 +18,8 @@ profile = "06:00-08:00 quiet; 08:00-12:00 day; 12:00-13:30 quiet; 13:30-16:30 da
 # mode wins: acquire-only parses, indexes and embeds nothing; downloads,
 # seeding and searches go on.
 mode = "acquire-only"
-cpu_cores = 0       # the records build and the parse pools pause at the end of their unit
+cpu_cores = 12      # the operator, 2026-11-02: "12 CPU cores always" — the records build and the
+                    # supervised passes go on; the worker's parse, index and embed rest by `mode`
 gpu = "full"        # decision 4; an idle card draws its idle power whatever its cap, and searches run at full speed
 
 [profiles.day]

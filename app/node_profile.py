@@ -6,7 +6,7 @@ recommendations, 3 full local/p2p, the whole point of quiet gpu is to use it").
     profile = "06:00-08:00 quiet; 08:00-12:00 day; 12:00-13:30 quiet; 13:30-16:30 day; 16:30-22:30 quiet; else night"
     sat = "..."                       # optional, per weekday (mon..sun)
 
-    [profiles.quiet]  cpu_cores = 0   gpu = "full"  mode = "acquire-only"
+    [profiles.quiet]  cpu_cores = 12  gpu = "full"  mode = "acquire-only"
     [profiles.day]    cpu_cores = 12  gpu = "full"
     [profiles.night]  cpu_cores = 12  gpu = "full"
 

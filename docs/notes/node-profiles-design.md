@@ -98,16 +98,17 @@ cores): the kernel's limit, while the app limits itself below it.
    "Use 12 CPU cores even in the quiet hours, I installed a new CPU cooler
    that is much more silent." `cpu_cores = 12` in every profile — quiet
    (was 0) and day (was 8) as night. The GPU's levels are unchanged.
-6. *(2026-11-02, supersedes decision 3's "embedding runs in every profile"
-   and decision 5's 12 cores in the quiet windows.)* The operator: "During
-   the day keep gpu at full power, suspend processing during the quiet time
-   frames in the morning, at lunch time and in the evening." Profiles take a
-   `mode` key, and the stricter of it and the node's own mode wins. The
-   quiet profile (06:00–08:00, 12:00–13:30, 16:30–22:30) is
-   `mode = "acquire-only"`, `cpu_cores = 0`: nothing is parsed, indexed or
-   embedded, and the records build and the operator's passes pause at their
-   unit; downloads, seeding and searches go on. Day and night: 12 cores, GPU
-   full, everything runs. The quiet profile keeps `gpu = "full"`
+6. *(2026-11-02, supersedes decision 3's "embedding runs in every
+   profile"; decision 5's 12 cores stand.)* The operator: "During the day
+   keep gpu at full power, suspend processing during the quiet time frames
+   in the morning, at lunch time and in the evening", confirmed with "12 CPU
+   cores always, the rest is confirmed". Profiles take a `mode` key, and the
+   stricter of it and the node's own mode wins. The quiet profile
+   (06:00–08:00, 12:00–13:30, 16:30–22:30) is `mode = "acquire-only"`,
+   `cpu_cores = 12`: the worker parses, indexes and embeds nothing;
+   downloads, seeding and searches go on, and so do the records build and
+   the supervised passes (they are limited by `cpu_cores` alone). Day and
+   night: 12 cores, GPU full, everything runs. The quiet profile keeps `gpu = "full"`
    (decision 4): an idle card draws its idle power whatever its cap, and the
-   searches it serves run at full speed. Measurements and operator passes
-   run outside the quiet windows.
+   searches it serves run at full speed. GPU measurements run outside the
+   quiet windows.
