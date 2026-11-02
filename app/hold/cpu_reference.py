@@ -105,6 +105,23 @@ def read(path: Path) -> CpuReference:
                         arr.tolist(), Path(path))
 
 
+def kept(root: Path, name: str, role: str, *, run_id: str, set_id: str,
+         count: int) -> Path | None:
+    """The reference `run_id` already made of this set, whole and readable,
+    or None. A run reproduces itself (invariant 12), so its answers to the
+    same set are these bytes: `hold embedder cpu-reference` skips the role."""
+    path = _file(root, name, role, run_id)
+    if not path.is_file():
+        return None
+    try:
+        ref = read(path)
+    except (OSError, ValueError, KeyError, CodexError):
+        return None
+    if ref.run_id != run_id or ref.set_id != set_id or len(ref.vectors) != count:
+        return None
+    return path
+
+
 def find(root: Path, name: str, role: str, *, weights: str, set_id: str,
          count: int | None = None) -> CpuReference | None:
     """The newest stored reference for these weights and this set, or None.
