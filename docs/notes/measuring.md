@@ -162,3 +162,19 @@ report the interval, not just the point; measure at the depth the system uses
 - **A supervisor restarts the image it captured.** After a deploy, a pass
   under `supervise-pass.sh` that restarts runs the OLD image until it is
   stopped and started again on the new one.
+- **An armed step waits on a FILE MARKER its producer creates, never on a
+  log grep.** On 2026-11-02 three armed steps fired early because a grep for
+  a step's last line matched an older line of the same kind (`harrier:
+  done$` matched "prof-harrier: done"; `end$` matched a stopped pass's end):
+  - the approved old-data deletion ran at 18:13 instead of after the
+    pipeline steps;
+  - two BEFORE/AFTER rows (before-rows3d, lever3e) measured the wrong
+    window and are invalid.
+  The producing step writes its marker (as EVAL-OVER and NEMO-DONE do), and
+  the armed step tests that file. A row whose trigger matched a stale line is
+  rerun, never reported.
+- **A model loaded before an in-place backend rebuild keeps its old
+  process.** `/models/reload` does not stop it (localai-bugs B8 is the same
+  family). Unload each one (`/backend/shutdown`) before the rebuild, and
+  check that the first gate after it names a NEW engine and run. A repeated
+  id means the gate ran on the old process.
