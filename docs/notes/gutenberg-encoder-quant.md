@@ -2,19 +2,19 @@
 
 *Planned 2026-11-02; measure only. The operator: "Measure only, I am
 wondering if the quantization to 4 bits of qwen3 is putting it at the same
-level of bge at 16 bits". Results go in "Result" below when the run is done.*
+level of bge at 16 bits", then: "No, I want qwen3 4bit vs bge-m3 16bit" —
+two rows, no f16 Qwen. Results go in "Result" below when the run is done.*
 
-## The question, and the three rows that answer it
+## The question, and the two rows that answer it
 
 | row | encoder, weights | document vectors | queries |
 |---|---|---|---|
 | **Q4** | Qwen3-Embedding-4B, Q4_K_M (gutenberg's own) | the vectors gutenberg holds (RULE 1: nothing recomputed), checked against 64 re-embedded twins at cosine ≥ 0.99 | gutenberg's served encoder and instruction |
-| **F16** | Qwen3-Embedding-4B, f16 (`vega-qwen3-embedding-4b-f16`, the Q4 YAML with the f16 file: the deployed flags and env) | embedded | gutenberg's instruction (`--query-like gutenberg`) |
-| **bge** | bge-m3, F16 (`vega-bge-m3`, as wikidata-bge serves it) | embedded | as wikidata-bge serves them |
+| **bge** | bge-m3, F16 (`vega-bge-m3`, as wikidata serves it: `--from-collection wikidata`) | embedded | as wikidata serves them |
 
-- Q4 against bge answers the operator's question.
-- Q4 against F16 is what the 4 bits cost Qwen.
-- F16 against bge is the two models with no quantization in between.
+Q4 against bge answers the operator's question. What the 4 bits alone cost
+Qwen (an f16 Qwen row) is not measured, by the operator's choice; `embed
+--query-like gutenberg` would add it.
 
 ## The set
 
@@ -44,11 +44,9 @@ level of bge at 16 bits". Results go in "Result" below when the run is done.*
 
 - **Card time:** a pool of ~30–40 k chunks at ~750 tokens is ~25–30 M tokens.
   - bge-m3: about 1 h.
-  - Qwen f16: about 3–5 h.
   - Q4: minutes (the queries and 64 checks).
   - Day and night periods only.
-- **Disk:** the f16 weights, 8.05 GB (`Qwen/Qwen3-Embedding-4B-GGUF`), and
-  ~0.4 GB of vectors a Qwen row.
+- **Disk:** under 1 GB of vectors and set files.
 
 ## Result
 
