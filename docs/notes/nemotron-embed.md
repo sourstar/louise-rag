@@ -278,6 +278,19 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
     - `threads: 1` for fully offloaded embedding models, which removes ~2
       cores of spinning (its bit-identity to be checked);
     - the candidate engine below.
+- **The clean baseline, no CPU twin** (München 17:2x, live engine, the same
+  5,000 W1 chunks, batch 16, through encoder_fn, nothing attached):
+
+  | arm | chunks/s | card busy | backend CPU | bit-identical |
+  |---|---|---|---|---|
+  | harrier c4 | 58.82 | 99.2 % | 339 % | 5,000/5,000 |
+  | nemotron c4 | 55.03 | 98.6 % | 344 % | 5,000/5,000 |
+
+  - **Nemotron saturates the card** at 4 in flight, and runs at **0.94×
+    harrier**.
+  - The rows above it, measured beside the CPU twin, are superseded for speed.
+  - These are not comparable with HARRIER-OPT's 51.57: that was the full
+    21,348-chunk W1, and this is its first 5,000.
 - **Tokenizer correctness on our engine** (all of W1 and P3, the exact
   strings, against `tokenizers` on the snapshot's tokenizer.json):
   - 71 of 40,931 texts differ, all chunks, no question: W1 203 of 5.82 M
