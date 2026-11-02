@@ -223,3 +223,23 @@ def test_the_card_names_the_languages_held_not_hand_populated():
     assert web._profile_label(SimpleNamespace(plugin="wikipedia", profile=None, slices=())) == \
         "(hand-populated)"
     assert web._profile_label(SimpleNamespace(plugin="wikipedia", profile="en,de", slices=None)) == "en,de"
+
+
+def test_the_card_offers_the_choice_only_where_the_plugin_groups():
+    from app import web
+    wiki = SimpleNamespace(plugin="wikipedia", embed_select=None)
+    assert web._embed_select_view(wiki) == {"policy": "smart", "stated": None}
+    assert web._embed_select_view(SimpleNamespace(plugin="wikipedia", embed_select="all"))["policy"] == "all"
+    assert web._embed_select_view(SimpleNamespace(plugin="gutenberg", embed_select=None)) is None
+
+
+def test_the_route_writes_the_file_and_refuses_another_value(monkeypatch):
+    from fastapi import HTTPException
+    from app import collection_file, web
+    monkeypatch.setattr(web, "_collection_or_404", lambda name: SimpleNamespace(name=name))
+    written = []
+    monkeypatch.setattr(collection_file, "set_values", lambda name, values: written.append((name, values)))
+    assert web.collection_embed_select("wikipedia", web.EmbedSelectBody(value="all"))["embed_select"] == "all"
+    assert written == [("wikipedia", {"embed_select": "all"})]
+    with pytest.raises(HTTPException):
+        web.collection_embed_select("wikipedia", web.EmbedSelectBody(value="most"))

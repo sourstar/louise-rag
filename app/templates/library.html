@@ -181,6 +181,18 @@
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
       </select></div>
+    {% if c.embed_select %}
+    {# WHICH documents the encoder spends on (07 §7.8 `embed_select`;
+       operator, 2026-11-02: wikipedia's "smart" choice, its default) —
+       in sight beside the mode it narrows, saved to the collection's file #}
+    <div style="flex:0 1 auto">
+      <label style="margin:0 0 2px">Embed which</label>
+      <select data-embed-select onchange="setEmbedSelect('{{ c.name }}', this.value)"
+              title="smart: every English article, plus for each Wikidata item the longest article in another language when the English one is missing or shorter; the rest held and word-searchable, not embedded — saved to collections/{{ c.name }}.toml">
+        <option value="smart" {{ 'selected' if c.embed_select.policy == 'smart' }}>smart (English + the longest other language)</option>
+        <option value="all" {{ 'selected' if c.embed_select.policy == 'all' }}>every article</option>
+      </select></div>
+    {% endif %}
     {% if c.shareable %}
     {# the OTHER axis, independent of the encoder's: what this node makes
        available — its records and every embedding it holds, as bundles
@@ -209,7 +221,7 @@
   <details class="more" data-drawer="details">
     <summary>Details</summary>
     {% if not c.fetched %}
-    <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
+    <div class="note">fetch stage: off — acquisition is not enabled for this collection</div>
     {% endif %}
     <div class="note">
       delta freshness: {{ c.last_discover_text }} ·
@@ -569,6 +581,12 @@ async function setEmbedMode(name,mode,shared){
     toast(name+': embed mode → '+(EMBED_LABELS[mode]||mode)+(d.share_enabled?' — sharing enabled':'')+' — saved to collections/'+name+'.toml');
     if(d.share_enabled){location.reload()}}
   catch(e){toast('embed mode failed: '+e);location.reload()}
+}
+async function setEmbedSelect(name,value){
+  try{await postJSON('/admin/library/'+name+'/embed-select',{value});
+    toast(name+': embed '+(value==='smart'?'smart (English + the longest other language)':'every article')+
+          ' — saved to collections/'+name+'.toml; applied after the next scan')}
+  catch(e){toast('embed selection failed: '+e);location.reload()}
 }
 async function setShare(name,on,mode){
   if(!on&&mode==='p2p'&&!confirm(name+' embeds in all p2p mode, which publishes what it embeds; disabling sharing switches it to all local. Proceed?')){location.reload();return}

@@ -166,7 +166,7 @@ def test_the_prose_is_under_details_and_the_status_in_sight(client):
     for status in ("parsed (rdf)", "indexed (lexical)", "embedded (dense)", "space: ", "Embed mode",
                    ">2 blocked</span>"):
         assert status in in_sight, status
-    for prose in ("fetch stage: n/a", "delta freshness:", "on-demand queue:",
+    for prose in ("fetch stage: off", "delta freshness:", "on-demand queue:",
                   "failed a stage or exhausted retries —"):
         assert prose in details and prose not in in_sight, prose
 
