@@ -398,6 +398,26 @@ Gutenberg was not run (the operator narrowed the test). What it costs is
 speed: 0.39–0.54× bge-m3 at one in flight, about half at saturation on
 wikidata's chunks.
 
+## Both modes are part of a model's validation (operator, 2026-11-02)
+
+"About the validation of a model, both modes need to be tested. A model
+shall be able to produce bit exact results if needed. Now that we have proved
+that bit exactness is achievable, give me the speed mode numbers."
+
+- **The exact mode:** the vendor's reproducibility mode,
+  `GGML_SYCL_ENABLE_DNN=0` on Intel SYCL. It must reproduce its own bytes,
+  so that a collection asking `exactness = "exact"` can have them.
+  Nemotron does, on both engines (every arm above).
+- **The speed mode:** the vendor's fast path (oneDNN's matmuls,
+  `GGML_SYCL_ENABLE_DNN=1`; `GGML_SYCL_FA_ONEDNN` stays 0 after its NaN on
+  this card). It is measured for chunks/s, for self-reproduction within
+  invariant 12's near-exact bound (0.99999, no NaN), and for parity with the
+  fp32 reference.
+- **Measured raw for now.** VeGa's wrapper refuses a SYCL run without
+  `GGML_SYCL_ENABLE_DNN=0` (its DETERMINISM map, invariant 12's
+  enforcement). Serving the speed mode through VeGa needs the operator's
+  change to that rule first.
+
 ## What the operator gets
 
 Per collection:
