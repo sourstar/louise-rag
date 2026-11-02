@@ -464,6 +464,38 @@ No other candidate is. The vector is 2,048 dims, or 1,024 cut for almost
 nothing. The re-embed is coarse: gutenberg ~5–6 card-days, wikidata ~7–9,
 wikipedia smart ~15, so ~4 weeks of card, ~1.5 months with the quiet hours.
 
+## The residual ~5 % idle on long texts (München 19:31–19:53)
+
+The gutenberg pool's first 5,000 texts (~846 tokens each), candidate engine,
+exact mode, nothing else running:
+
+| batch × in flight | texts/s | card busy | byte-equal to batch 1 |
+|---|---|---|---|
+| 1 × 4 | 19.06 | 95.0 % | 5,000/5,000 |
+| 1 × 8 | 19.06 | 95.3 % | 5,000/5,000 |
+| 16 × 4 (production's) | 19.08 | 95.5 % | 5,000/5,000 |
+| 16 × 8 | 19.06 | 95.4 % | 5,000/5,000 |
+
+- **Not per-request overhead:** batch and requests in flight change nothing.
+- **Batch-invariant:** at f16 on long texts, every arm gives batch 1's bytes.
+- **The cause** (perf on the backend): at `parallel:1` llama.cpp runs one
+  sequence at a time, synchronously. The host's work for each sequence
+  falls between the card's bursts: graph build and submit, the KQ mask
+  (n² entries), input copies, the f16 output's conversion, and the sync.
+  That is ~2.4 ms of a ~52 ms text.
+  - The main thread reads 98 %, but mostly spinning in `sched_yield` (Level
+    Zero's host sync).
+  - The CPU is not the limit: 345 % of 12 cores.
+  - On W1's short chunks the same costs are smaller, hence 98.6–99 %.
+- **What would remove it,** none measured:
+  - overlapping the next sequence's host work with the card's current one,
+    an engine change. llama.cpp's own way, `parallel` > 1, batches
+    sequences together and moves bytes, so VeGa refuses it;
+  - the KQ mask built on the card.
+  - Either buys at most ~4.5 % on long texts and ~1 % on short ones.
+- **Decided (operator, 2026-11-02): left as it is.** "A, bit exactness is at
+  best a 5% to pay, it is worth the price."
+
 ## Both modes are part of a model's validation (operator, 2026-11-02)
 
 "About the validation of a model, both modes need to be tested. A model

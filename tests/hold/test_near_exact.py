@@ -109,8 +109,10 @@ def test_the_sweep_reaches_every_length_band_and_a_variation_never_reads_as_1():
 def test_exactness_is_read_from_the_collections_encoder_block():
     from app import collections as collections_mod
     base = {"url": "http://localai:8080", "embed_model": "m", "query_model": "m"}
-    assert collections_mod.parse_recipe(base, where="t").exactness == "near", \
-        "near-exact is the rule (operator, 2026-11-01, choice B)"
+    assert collections_mod.parse_recipe(base, where="t").exactness == "exact", \
+        "bit-exact is the default again (operator, 2026-11-02: below 5 %, exact is the default)"
+    assert collections_mod.parse_recipe(dict(base, exactness="near"), where="t").exactness == "near", \
+        "near-exact is a collection's explicit opt-in"
     assert collections_mod.parse_recipe(dict(base, exactness="exact"), where="t").exactness == "exact"
     with pytest.raises(ValueError, match="exactness"):
         collections_mod.parse_recipe(dict(base, exactness="roughly"), where="t")

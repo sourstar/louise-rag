@@ -298,14 +298,18 @@ are the ones that have drifted; prefer to add a test when you touch them.
     does not FAILS, however good its cosines to the calibration member,
     because that is how a broken engine shows (oneDNN's SDPA: a NaN and a
     vector at cosine 0.09). A run that gives back its own BYTES is recorded
-    **exact**, one within the bound **near-exact**; both are admitted, and
-    the statement says which (docs/notes/near-exact-runs.md, 03 §3.3).
-    Peers accept each other at the space's tolerance (03 §3.1): no two
-    kinds of hardware give the same bytes, so local byte equality is
-    evidence, never the condition of admission. A collection may still ask
-    `exactness = "exact"` — bytes or nothing. Each card still runs with its
-    stack's reproducibility mode in the MODEL's YAML `env` until a setting
-    without it is measured, one at a time, faster and within the bound
+    **exact**, one within the bound **near-exact**, and the statement says
+    which (docs/notes/near-exact-runs.md, 03 §3.3). BIT-EXACT IS THE
+    DEFAULT (operator, 2026-11-02: "bit exactness is at best a 5% to pay,
+    it is worth the price"; measured within +0.5 % of the speed mode for
+    every live llama.cpp encoder): `exactness = "exact"`, bytes or nothing,
+    unless a collection opts into `exactness = "near"`, where a near-exact
+    run is admitted. Peers accept each other at the space's tolerance
+    (03 §3.1): no two kinds of hardware give the same bytes, so local byte
+    equality is evidence, never the condition of admission between peers.
+    Each card still runs with its stack's reproducibility mode in the
+    MODEL's YAML `env` until a setting without it is measured, one at a
+    time, faster and within the bound
     (docs/notes/approved-encoders.md, "Bitwise reproducibility, by vendor"):
       - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0`;
       - Intel SYCL: `GGML_SYCL_ENABLE_DNN=0` (oneDNN chooses kernels by
