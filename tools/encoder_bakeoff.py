@@ -1027,7 +1027,7 @@ def _record(chunk_id: str) -> str:
     return chunk_id.rsplit(":", 2)[0]              # retrieval.record_of's split
 
 
-def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans,
+def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans, typed=None,
            depths=None, only: list[str] | None = None, call=None) -> int:
     """The whole search on the pool, stage by stage
     (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
@@ -1070,7 +1070,7 @@ def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans,
         print(f"{out}: no embedded row to measure")
         return 0
     pe.evaluate(out / RERANKED, collection, docs, questions, rankings, recipe=recipe,
-                plans=plans, depths=depths or pe.DEPTHS, call=call)
+                plans=plans, typed=typed, depths=depths or pe.DEPTHS, call=call)
     return 0
 
 
@@ -1292,8 +1292,6 @@ def main(argv=None) -> int:
                            help="records reranked, repeatable (10, 40, 50 and 100 by default)")
             p.add_argument("--only", action="append", default=None,
                            help="measure only rows whose label contains this; repeatable")
-            p.add_argument("--no-translate", action="store_true",
-                           help="no translations: the API's translate false")
         if cmd in ("embed", "lexical", "score", "rerank"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
@@ -1346,9 +1344,10 @@ def main(argv=None) -> int:
         from tools.measure import pipeline_eval as pe
         c, heads = manifest_heads(a.from_collection)
         recipe = pe_reranker(a.reranker_from or a.from_collection)
-        plans = pe.PlanStore(a.out / RERANKED / ("plans-typed.jsonl" if a.no_translate else "plans.jsonl"),
-                             pe.search_plans(c, translate=not a.no_translate))
-        return rerank(a.out, a.max_chars, c, recipe, heads, plans=plans, depths=a.depth, only=a.only)
+        plans = pe.PlanStore(a.out / RERANKED / "plans.jsonl", pe.search_plans(c, translate=True))
+        typed = pe.PlanStore(a.out / RERANKED / "plans-typed.jsonl", pe.search_plans(c, translate=False))
+        return rerank(a.out, a.max_chars, c, recipe, heads, plans=plans, typed=typed,
+                      depths=a.depth, only=a.only)
     return report(a.out)
 
 

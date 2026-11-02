@@ -35,7 +35,7 @@ compares every pair of encoders it finds.
            client (`embeddings.embed_calibration`, `_embed_texts` underneath) with the collection's recipe —
            wikidata's for jina-v3, wikipedia's for bge-m3; resumable by block
   rerank   OUT_DIR --collection C [--reranker-from G] [--encoders bge,harrier]
-           [--depth 10 --depth 40 --depth 50 --depth 100] [--doc-lang en] [--no-translate]
+           [--depth 10 --depth 40 --depth 50 --depth 100] [--doc-lang en]
            the whole search on the sample, stage by stage (the operator,
            2026-11-02: "Add BM25 fusion and translations too, make separated
            scores … verify if it doesn't pay off using a fancy embedder if the
@@ -487,7 +487,7 @@ def score(out: Path) -> dict:
 CHUNK_DEPTH = 2_000
 
 
-def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, depths=None,
+def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, typed=None, depths=None,
            doc_lang: str | None = None, call=None, index=None) -> dict:
     """The whole search on this sample, stage by stage
     (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
@@ -530,7 +530,7 @@ def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, depths=
             best = best[np.lexsort((best, -sims[q][best]))]
             rankings[enc].append([pairs[int(i)] for i in best])
     return pe.evaluate(out / "pipeline", collection, docs, questions, rankings, recipe=recipe,
-                       plans=plans, depths=depths or pe.DEPTHS, call=call, index=index,
+                       plans=plans, typed=typed, depths=depths or pe.DEPTHS, call=call, index=index,
                        say=lambda m: print(m, file=sys.stderr))
 
 
@@ -568,7 +568,6 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--depth", type=int, action="append", default=None)
     r.add_argument("--doc-lang", default=None,
                    help="the chunks' language where the sample does not say it (wikidata: en)")
-    r.add_argument("--no-translate", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "sample":
         got = sample(a.out, entities=a.entities, families=tuple(a.families.split(",")), seed=a.seed)
@@ -586,10 +585,10 @@ def main(argv: list[str] | None = None) -> int:
         c = collections_mod.by_name(a.collection)
         if c is None:
             raise SystemExit(f"no {a.collection} collection here")
-        plans = pe.PlanStore(a.out / "pipeline" / ("plans-typed.jsonl" if a.no_translate else "plans.jsonl"),
-                             pe.search_plans(c, translate=not a.no_translate))
+        plans = pe.PlanStore(a.out / "pipeline" / "plans.jsonl", pe.search_plans(c, translate=True))
+        typed = pe.PlanStore(a.out / "pipeline" / "plans-typed.jsonl", pe.search_plans(c, translate=False))
         got = rerank(a.out, c, encoders=a.encoders.split(","), recipe=pe_reranker(a.reranker_from or a.collection),
-                     plans=plans, depths=a.depth, doc_lang=a.doc_lang)
+                     plans=plans, typed=typed, depths=a.depth, doc_lang=a.doc_lang)
         got = {k: got[k] for k in ("rows", "by_language", "pairs", "untranslated_plans")}
     else:
         got = score(a.out)

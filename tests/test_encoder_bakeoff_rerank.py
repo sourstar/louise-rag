@@ -61,15 +61,17 @@ def test_the_pool_runs_through_the_whole_search_stage_by_stage(tmp_path, monkeyp
     def call(recipe, query, texts, timeout):
         sent.extend(texts)
         return [10.0 if query in t else 0.0 for t in texts]
-    assert bake.rerank(out, 20_000, "gutenberg", RECIPE, _heads, plans=_plans(out),
+    typed = pe.PlanStore(out / "typed.jsonl", lambda text: {
+        "core": text, "translations": {}, "query_lang": "en", "only": [], "main": None, "status": "off"})
+    assert bake.rerank(out, 20_000, "gutenberg", RECIPE, _heads, plans=_plans(out), typed=typed,
                        depths=[2, 4], call=call) == 0
     res = json.loads((out / bake.RERANKED / "pipeline.json").read_text())
     rows = res["rows"]
     # the row alone: book 2 third, book 4 fourth
-    assert rows["m"]["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
-    assert rows["BM25"]["hit@1"] == 1.0, "each question names its book's words"
-    assert rows["m + BM25"]["mrr@10"] > rows["m"]["mrr@10"]
-    assert rows["m + rerank@4"]["hit@1"] == 1.0
+    assert rows["m [translated]"]["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
+    assert rows["BM25 [translated]"]["hit@1"] == 1.0, "each question names its book's words"
+    assert rows["m + BM25 [translated]"]["mrr@10"] > rows["m [translated]"]["mrr@10"]
+    assert rows["m + rerank@4 [typed]"]["hit@1"] == 1.0
     assert all(t.startswith("Title ") for t in sent), "each chunk under its book's title"
 
 
