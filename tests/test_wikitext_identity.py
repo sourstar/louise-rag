@@ -456,6 +456,86 @@ def test_an_edge_parses_the_same(name):
     assert compare(EDGES[name]) == []
 
 
+# ---------------------------------------------------------------- one parse for two
+
+def _whole_page_parses(monkeypatch, mod, page: str) -> int:
+    """How many times `mod.parse_all(page)` parses the page itself (or the
+    page without its reference lists, `apparatus`'s string)."""
+    wholes = {old._tags(page), old._PLACEHOLDER.sub("", old._tags(page))}
+    seen = []
+    real = mwparserfromhell.parse
+    monkeypatch.setattr(mod.mwparserfromhell, "parse",
+                        lambda text, *a, **k: (seen.append(text in wholes), real(text, *a, **k))[1])
+    try:
+        mod.parse_all(page)
+    finally:
+        monkeypatch.setattr(mod.mwparserfromhell, "parse", real)
+    return sum(seen)
+
+
+def test_parse_all_parses_the_page_twice_where_it_parsed_it_three_times(monkeypatch):
+    page = _scaled(5_000)
+    assert _whole_page_parses(monkeypatch, old, page) == 3
+    assert _whole_page_parses(monkeypatch, new, page) == 2
+
+
+def _shared_tree_pages() -> list[str]:
+    return [_scaled(2_000), *EDGES.values(), *(_Page(seed).page() for seed in range(400))]
+
+
+def test_every_read_of_the_tree_is_done_before_the_prose_changes_it(monkeypatch):
+    """The prose passes change the tree `parse_all` read the page's facts
+    from. Every read happens first, on a tree whose shape is a fresh
+    parse's; the passes then leave it, step for step, as they leave a fresh
+    parse (the old code's own `_prose_code`)."""
+    events: list[str] = []
+    for name in ("_categories", "_category_sortkeys", "_infoboxes", "_references",
+                 "_external_links", "_named", "_by_name"):
+        real = getattr(new, name)
+        monkeypatch.setattr(new, name, lambda *a, _n=name, _r=real: (events.append(_n), _r(*a))[1])
+    real_prose = new._prose
+    checked = []
+
+    def prose(code):
+        events.append("prose")
+        checked.append(shape(code) == shape(mwparserfromhell.parse(old._tags(page))))
+        got = real_prose(code)
+        expect = old._prose_code(old._tags(page))
+        checked.append((shape(got[0]), got[1], got[2]) == (shape(expect[0]), expect[1], expect[2]))
+        return got
+
+    monkeypatch.setattr(new, "_prose", prose)
+    for page in _shared_tree_pages():
+        events.clear()
+        if new.is_redirect(page):
+            continue
+        assert outcome(new.parse_all, page) == outcome(old.parse_all, page)
+        assert events.count("prose") == 1 and events[-1] == "prose", events
+        assert len(events) > 1
+    assert checked and all(checked)
+
+
+def test_a_string_tags_would_still_change_gets_its_own_parse(monkeypatch):
+    """`_tags` is idempotent, so the page `parse_all` parsed is the page
+    `_structured` would parse. Should it ever not be, the prose takes its
+    own parse of its own string, as the code before did."""
+    def tags(text):
+        return text + "\n"                   # not idempotent
+    page = _scaled(2_000)
+    monkeypatch.setattr(old, "_tags", tags)
+    monkeypatch.setattr(new, "_tags", tags)
+    parsed = []
+    real = mwparserfromhell.parse
+    monkeypatch.setattr(new.mwparserfromhell, "parse",
+                        lambda text, *a, **k: (parsed.append(text), real(text, *a, **k))[1])
+    got = outcome(new.parse_all, page)
+    monkeypatch.setattr(new.mwparserfromhell, "parse", real)
+    assert parsed.count(page + "\n") == 1 and parsed.count(page + "\n\n") == 1
+    assert got == outcome(old.parse_all, page)
+    for page in EDGES.values():
+        assert outcome(new.parse_all, page) == outcome(old.parse_all, page)
+
+
 # ---------------------------------------------------------------- the node's checker
 
 def _dump(tmp_path: Path, streams: list[list[tuple[int, str, str]]]) -> Path:
