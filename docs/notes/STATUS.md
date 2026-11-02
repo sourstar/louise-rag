@@ -35,6 +35,19 @@ measured (published figures disagree).
   (b7b6357). The app's stored config is unchanged, so a TrueNAS restart of
   the app puts the web back on `louise-rag:local`. The next full deploy
   reconciles everything.
+- **LocalAI's CPU cap raised to 12 cores, permanently** (operator, 2026-11-02:
+  "Raise localai CPU cores cap to 12 permanently"). Its container had an
+  8-core cgroup quota on the 12-thread host, shared by every backend: a CPU
+  twin (4.2–5.4 cores) beside a busy SYCL backend (~3.4) crossed it, and the
+  kernel stopped the whole container each period, the card's feeder
+  included. harrier ran 5,152 tokens/s beside gutenberg's CPU twin against
+  10,931 without it; 14.3 % of LocalAI's periods had been throttled
+  (274,263 of 1,926,425, 45,949 s). Live since 10:59:49 (`docker update
+  --cpus 12`, `cpu.max 1200000 100000`). The TrueNAS app's own
+  `resources.limits.cpus` is changed after EVAL-OVER and the CPU reference
+  (`louise-localai-cpus12` writes `LOCALAI-12-APPLIED`; gutenberg's gate
+  waits for it). Until then a LocalAI or node restart brings back 8. The
+  numbers: scheduling-log.md; the harrier note's "Speed, and what limits it".
 
 ### 2026-10-31 (evening): wikidata on bge-m3; vector tables with stable row ids; two speed fixes
 
