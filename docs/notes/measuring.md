@@ -145,3 +145,18 @@ report the interval, not just the point; measure at the depth the system uses
 - **The worker log's batch lines were throttled samples until #78.** A
   run's lines summed to 604 of its 2,000 books. Each line now carries
   the totals of the batches it stands for.
+
+## 9. Added 2026-11-02 (gutenberg's CPU reference)
+
+- **`docker pause` is not lossless for a VeGa client.** A request in flight
+  comes back after the pause, but VeGa keeps a receipt for a limited time.
+  A pause longer than that leaves the answer with no receipt, so it is not
+  taken (`ReceiptDeferred: … expired`). The CPU reference lost 352 answers
+  that way after a 5 h pause; the pass is now journalled
+  (near-exact-runs.md §2).
+  - To free a CPU for minutes, pause.
+  - For hours, stop the pass: SIGTERM finishes its unit, and the next start
+    resumes.
+- **A supervisor restarts the image it captured.** After a deploy, a pass
+  under `supervise-pass.sh` that restarts runs the OLD image until it is
+  stopped and started again on the new one.
