@@ -292,7 +292,13 @@ def test_the_governor_applies_the_level_at_a_profile_change_and_restores_on_stop
     monkeypatch.setattr(config, "GOVERNOR_POLL_S", 0.02)
     monkeypatch.setattr(config, "GOVERNOR_HEARTBEAT_S", 0.05)
     cfg = Path(os.environ["CONFIG_DIR"])
-    (cfg / "platform.toml").write_bytes(EXAMPLE.read_bytes())
+    # the example's quiet profile runs the card at full (decision 4); this
+    # test needs a profile change that changes the level, so quiet takes the
+    # declared quiet level here
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert text.count('gpu = "full"        # decision 4') == 1
+    (cfg / "platform.toml").write_text(text.replace('gpu = "full"        # decision 4',
+                                                    'gpu = "quiet"       # decision 4'))
     d, h = _card(tmp_path), _hwmon(tmp_path)
     now = [datetime(2026, 10, 27, 7, 0)]                    # quiet, in the operator's schedule
     stop = threading.Event()

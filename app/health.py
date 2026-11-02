@@ -107,11 +107,11 @@ def _held_by_mode(mode: str) -> tuple[str, ...]:
     if mode not in node_state.MODE_RUNS:
         return ()
     return tuple(stage for stage, needs in _STAGE_NEEDS.items()
-                 if not node_state.runs(mode, needs))
+                 if not node_state.mode_runs(mode, needs))
 
 
 #: the stages the node PROFILE's cpu_cores = 0 pauses (worker._cpu_paused):
-#: the parse pool's work; embedding runs in every profile
+#: the parse pool's work; embedding is held by the profile's `mode`, not its cores
 _PROFILE_PAUSED = ("rdf", "fts", "archive")
 
 
@@ -121,16 +121,21 @@ def _held_reason(mode: str | None, stage: str) -> str:
         # live report read "held — held — the node is…" (staged check)
         return (f"the node is {mode}; this runs when the Library's "
                 f"mode is set to running")
-    if stage in _PROFILE_PAUSED:
-        # THE NODE PROFILE (app/cpu_limit.py, the operator's schedule): a
-        # quiet band pauses rdf, fts and the archive pass, and the stage read
-        # "waiting" with no reason while the worker's log alone said "profile
-        # quiet: paused until 13:30" (operator, 2026-10-31)
+    if stage in _STAGE_NEEDS:
+        # THE NODE PROFILE (app/cpu_limit.py, the operator's schedule): its
+        # mode suspends processing in the quiet windows (operator,
+        # 2026-11-02), and its cpu_cores = 0 pauses rdf, fts and the archive
+        # pass; the stage read "waiting" with no reason while the worker's
+        # log alone said "profile quiet: paused until 13:30" (operator,
+        # 2026-10-31)
         try:
-            from . import cpu_limit
+            from . import cpu_limit, node_state
             lim = cpu_limit.current()
-            if lim.cores == 0:
-                return f"{lim.says()} (the node's schedule, platform.toml); embedding goes on"
+            if lim.suspends and not node_state.mode_runs(lim.mode or "", _STAGE_NEEDS[stage]):
+                return f"{lim.says()} (the node's schedule, platform.toml)"
+            if stage in _PROFILE_PAUSED and lim.cores == 0:
+                goes_on = "; embedding goes on" if node_state.profile_runs(node_state.EMBED) else ""
+                return f"{lim.says()} (the node's schedule, platform.toml){goes_on}"
         except Exception:   # noqa: BLE001 — a health check never raises
             pass
     return ""

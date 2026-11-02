@@ -6,22 +6,28 @@ recommendations, 3 full local/p2p, the whole point of quiet gpu is to use it").
     profile = "06:00-08:00 quiet; 08:00-12:00 day; 12:00-13:30 quiet; 13:30-16:30 day; 16:30-22:30 quiet; else night"
     sat = "..."                       # optional, per weekday (mon..sun)
 
-    [profiles.quiet]  cpu_cores = 0   gpu = "quiet"
-    [profiles.day]    cpu_cores = 8   gpu = "full"
+    [profiles.quiet]  cpu_cores = 0   gpu = "full"  mode = "acquire-only"
+    [profiles.day]    cpu_cores = 12  gpu = "full"
     [profiles.night]  cpu_cores = 12  gpu = "full"
 
     [gpu.levels.full]   power_limit = "max"
     [gpu.levels.quiet]  power_limit = "50%"  max_clock = "50%"  fan_max_rpm = 1200
 
 A profile limits BACKGROUND CPU work (the records build's and the worker's
-parse pools: `cpu_cores`, 0 = paused at the end of the current unit) and
-sets the card's level. It never limits a query, and it never stops
-embedding: a collection's own `embed` says what it embeds, in every profile
-(the operator's decision 3) — a quiet GPU is a power-limited one, still used.
+parse pools: `cpu_cores`, 0 = paused at the end of the current unit), sets
+the card's level, and may hold the node to a stricter MODE than its own
+(`mode`, one of app/node_state.py's MODE_RUNS: running, acquire-only,
+seed-only, paused). The operator, 2026-11-02: "During the day keep gpu at
+full power, suspend processing during the quiet time frames in the morning,
+at lunch time and in the evening" — so the quiet profile is
+`mode = "acquire-only"`: nothing is parsed, indexed or embedded, downloads
+and seeding go on (node-profiles-design.md decision 6, superseding decision
+3's "embedding runs in every profile"). A profile never limits a query.
 
 Desired state, Tier 2 (invariant 10): nothing here is written to a
 database; whoever applies a profile reads it with `active()`. Precedence:
-the node's mode (`node pause`) wins over the profile.
+the STRICTER of the node's mode (`node pause`, the Library's choice) and the
+profile's mode wins — `node_state.runs` asks both, so every gate agrees.
 
 The window grammar and its parser are `[bandwidth] schedule`'s
 (app/transfer/schedule.py), wall-clock local time; the standard alternatives
@@ -59,6 +65,7 @@ class Profile:
     name: str
     cpu_cores: int | None               # None: no limit below the cgroup quota
     gpu: str                            # a GpuLevel's name
+    mode: str = "running"               # node_state.MODE_RUNS key: the most this profile lets run
 
 
 @dataclass(frozen=True)
@@ -70,6 +77,7 @@ class Active:
 
     def to_dict(self) -> dict[str, Any]:
         return {"profile": self.profile.name, "cpu_cores": self.profile.cpu_cores,
+                "mode": self.profile.mode,
                 "gpu": {"level": self.level.name, "power_limit": self.level.power_limit,
                         "max_clock": self.level.max_clock, "fan_max_rpm": self.level.fan_max_rpm},
                 "until": self.until.isoformat(timespec="minutes") if self.until else None,
@@ -135,20 +143,26 @@ def parse(raw: dict[str, Any]) -> Profiles | None:
             raise ProfileError(f"[gpu.levels.{name}] fan_max_rpm is a positive number of RPM")
         levels[name] = GpuLevel(name, _limit(lv.get("power_limit", "max"), f"[gpu.levels.{name}] power_limit", "W"),
                                 _limit(lv.get("max_clock", "max"), f"[gpu.levels.{name}] max_clock", "MHz"), rpm)
+    from .node_state import MODE_RUNS       # here: node_state's imports reach the database
+    modes = tuple(MODE_RUNS)
     profiles: dict[str, Profile] = {}
     for name, p in (raw.get("profiles") or {}).items():
         if not isinstance(p, dict):
             raise ProfileError(f"[profiles.{name}] is a table")
-        unknown = set(p) - {"cpu_cores", "gpu"}
+        unknown = set(p) - {"cpu_cores", "gpu", "mode"}
         if unknown:
-            raise ProfileError(f"[profiles.{name}] takes cpu_cores and gpu; not {sorted(unknown)}")
+            raise ProfileError(f"[profiles.{name}] takes cpu_cores, gpu and mode; not {sorted(unknown)}")
         cores = p.get("cpu_cores")
         if cores is not None and (not isinstance(cores, int) or isinstance(cores, bool) or cores < 0):
             raise ProfileError(f"[profiles.{name}] cpu_cores is 0 or more (0 = background CPU work paused)")
         gpu = p.get("gpu", "full")
         if gpu not in levels:
             raise ProfileError(f"[profiles.{name}] gpu = {gpu!r} is not a level; the levels are {sorted(levels)}")
-        profiles[name] = Profile(name, cores, gpu)
+        mode = p.get("mode", "running")
+        if mode not in modes:
+            raise ProfileError(f"[profiles.{name}] mode = {mode!r} is not a node mode; the modes are "
+                               f"{', '.join(modes)}")
+        profiles[name] = Profile(name, cores, gpu, mode)
     if not profiles:
         raise ProfileError("[schedule] names profiles, and there is no [profiles.<name>] table")
     names = frozenset(profiles)

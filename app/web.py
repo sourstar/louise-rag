@@ -100,7 +100,7 @@ TEMPLATES.env.globals["asset_v"] = _asset_version()
 # does not do, whoever builds the context.
 TEMPLATES.env.globals.update(mode_labels=node_state.MODE_LABELS,
                              mode_says=node_state.MODE_SAYS,
-                             mode_runs=node_state.runs)
+                             mode_runs=node_state.mode_runs)
 # Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
 # half the world — an operator read "+377,217/h" as 377.217 docs/h and
 # computed an 11-year ETA from a 4-day one. Dots as thousands separators,

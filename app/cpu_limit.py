@@ -18,6 +18,11 @@ and sooner only when the profile in force says it ends sooner. An unreadable
 file never stops a build or a stage — it is said, and the last good limit is
 kept (deferral, not failure).
 
+The profile's MODE rides on the same read (node-profiles-design.md decision
+6, operator 2026-11-02: processing suspended in the quiet windows): `Limit.mode`
+is what `node_state.runs` intersects with the node's own mode, so one file
+read per TTL answers both and a bad file keeps the last good mode too.
+
 This is the reconciliation loop of the design note (Kubernetes' pattern): each
 reader compares the desired limit with what it does at its next boundary. The
 kernel's own mechanism for the same job is cgroups v2 `cpu.max`; the container
@@ -45,11 +50,21 @@ class Limit:
     profile: str | None = None        # the profile in force; None when the node declares none
     until: datetime | None = None     # when it ends
     error: str | None = None          # the last read failed: the rest is the last good one
+    mode: str | None = None           # the profile's node mode; None when the node declares none
+
+    @property
+    def suspends(self) -> bool:
+        """The profile holds the node to less than running."""
+        return self.mode is not None and self.mode != "running"
 
     def says(self) -> str:
-        """One line: "profile quiet: paused until 08:00", "profile day: 8 cores"."""
+        """One line: "profile quiet: processing suspended until 08:00 (…)",
+        "profile day: 8 cores"."""
         if self.profile is None:
             what = "no profile: no core limit"
+        elif self.suspends:
+            until = f" until {_when(self.until)}" if self.until else ""
+            what = f"profile {self.profile}: processing suspended{until} ({_GOES_ON.get(self.mode, 'mode ' + str(self.mode))})"
         elif self.cores is None:
             what = f"profile {self.profile}: no core limit"
         elif self.cores == 0:
@@ -62,6 +77,11 @@ class Limit:
 
 
 NO_PROFILE = Limit(None)
+
+#: what a suspending profile's mode leaves running, in the log's words
+_GOES_ON = {"acquire-only": "downloads, seeding and searches go on",
+            "seed-only": "seeding and searches go on",
+            "paused": "searches go on"}
 
 
 def _when(t: datetime) -> str:
@@ -98,7 +118,7 @@ def _read(key: str) -> tuple[Limit, float]:
     if a is None:
         got, ttl = NO_PROFILE, TTL_S
     else:
-        got = Limit(a.profile.cpu_cores, a.profile.name, a.until)
+        got = Limit(a.profile.cpu_cores, a.profile.name, a.until, mode=a.profile.mode)
         ttl = TTL_S
         if a.until is not None:
             # the boundary the schedule names, on time rather than up to a TTL late
@@ -144,7 +164,8 @@ class Watch:
     def see(self) -> tuple[Limit, str | None]:
         """The limit now, and the line to say when it changed since the last look."""
         lim = current()
-        key = (lim.cores, lim.profile, lim.until if lim.cores == 0 else None, lim.error)
+        key = (lim.cores, lim.profile, lim.until if lim.cores == 0 or lim.suspends else None,
+               lim.error, lim.mode)
         with self._lock:
             first, changed = self._last is self._UNSEEN, key != self._last
             self._last = key

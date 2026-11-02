@@ -34,16 +34,25 @@ def test_the_operators_schedule(profiles, hhmm, name):
     assert profiles.active(_at(hhmm)).profile.name == name
 
 
-def test_each_profile_carries_its_cores_and_gpu_level(profiles):
-    quiet = profiles.active(_at("07:00"))
-    # 12 cores in every profile since 2026-11-02 (the operator: "Use 12 CPU
-    # cores even in the quiet hours", a quieter CPU cooler); 0 pausing is
-    # tests/test_cpu_limit.py's
-    assert quiet.profile.cpu_cores == 12 and quiet.level.name == "quiet"
-    assert quiet.level.power_limit == "50%" and quiet.level.fan_max_rpm == 1200
+def test_each_profile_carries_its_cores_gpu_level_and_mode(profiles):
+    # the operator, 2026-11-02: "During the day keep gpu at full power,
+    # suspend processing during the quiet time frames in the morning, at
+    # lunch time and in the evening" (decision 6)
+    for hhmm in ("07:00", "12:30", "18:00"):
+        quiet = profiles.active(_at(hhmm))
+        assert quiet.profile.name == "quiet" and quiet.profile.mode == "acquire-only"
+        assert quiet.profile.cpu_cores == 0 and quiet.level.power_limit == "max"
     day, night = profiles.active(_at("09:00")), profiles.active(_at("23:00"))
-    assert (day.profile.cpu_cores, day.level.power_limit) == (12, "max")
-    assert (night.profile.cpu_cores, night.level.power_limit) == (12, "max")
+    assert (day.profile.cpu_cores, day.level.power_limit, day.profile.mode) == (12, "max", "running")
+    assert (night.profile.cpu_cores, night.level.power_limit, night.profile.mode) == (12, "max", "running")
+    assert profiles.active(_at("07:00")).to_dict()["mode"] == "acquire-only"
+    # the quiet level stays declared, for a node that wants it
+    assert profiles.levels["quiet"].power_limit == "50%" and profiles.levels["quiet"].fan_max_rpm == 1200
+
+
+def test_a_profile_without_a_mode_runs_everything():
+    p = node_profile.parse({"schedule": {"profile": "else day"}, "profiles": {"day": {"cpu_cores": 4}}})
+    assert p.active(_at("09:00")).profile.mode == "running"
 
 
 def test_until_is_the_next_change(profiles):
@@ -72,7 +81,8 @@ def test_no_schedule_is_no_profile():
     (lambda r: r["schedule"].update(profile="06:00-08:00 quiet"), "without a profile"),
     (lambda r: r["profiles"]["day"].update(gpu="turbo"), "not a level"),
     (lambda r: r["profiles"]["day"].update(cpu_cores=-1), "0 or more"),
-    (lambda r: r["profiles"]["day"].update(sustained_embedding=True), "takes cpu_cores and gpu"),
+    (lambda r: r["profiles"]["day"].update(sustained_embedding=True), "takes cpu_cores, gpu and mode"),
+    (lambda r: r["profiles"]["quiet"].update(mode="quiet"), "not a node mode"),
     (lambda r: r["gpu"]["levels"]["quiet"].update(power_limit="half"), "power_limit"),
     (lambda r: r["gpu"]["levels"]["quiet"].update(power_limit="150%"), "1-100"),
     # each key takes its own unit: a power limit in MHz, a clock in watts
@@ -91,7 +101,7 @@ def test_platform_toml_carries_them_and_refuses_a_bad_one(tmp_path, monkeypatch)
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     (tmp_path / "platform.toml").write_bytes(EXAMPLE.read_bytes())
     assert platform_config.load().profiles.active(_at("07:00")).profile.name == "quiet"
-    assert node_profile.cpu_cores(_at("23:00")) == 12
+    assert node_profile.cpu_cores(_at("23:00")) == 12 and node_profile.cpu_cores(_at("07:00")) == 0
     (tmp_path / "platform.toml").write_text('[schedule]\nprofile = "else nowhere"\n[profiles.day]\n')
     with pytest.raises(schedule.ScheduleError):
         platform_config.load()

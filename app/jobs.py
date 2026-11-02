@@ -162,6 +162,13 @@ def waiting_because(job: Job, mode: str) -> str | None:
     if job.kind == COMMAND:
         return "queued: the worker runs commands one at a time, in order"
     if job.kind not in kinds_allowed(mode):
+        if node_state.mode_runs(mode, node_state.EMBED):
+            # the node's mode runs it; the SCHEDULE holds it (a quiet window,
+            # node-profiles-design.md decision 6)
+            from . import cpu_limit
+            return (f"waiting: {cpu_limit.current().says()} — the node's schedule; "
+                    f"creating a collection embeds the calibration set, which "
+                    f"runs when the schedule lets processing run")
         label = dict(node_state.MODE_LABELS).get(mode, mode)
         return (f"waiting: the node is set to “{label}”, and creating a "
                 f"collection embeds the calibration set, which runs only "
