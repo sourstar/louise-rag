@@ -161,10 +161,16 @@ reversed orders, every score or token compared as bytes.
 | the same, `vega-llama-cpp-p5` (measured on vega-qwen3-embedding-4b-fa1, 2026-10-31 09:59–11:30; /root/measure/repro_nan.py, var-vega-qwen3-embedding-4b-fa1.log) | **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`** (DNN=0, F16 KV cache) | **BIT-EXACT, no NaN**: 8 of 8 runs (48 texts, 3 fresh loads × 2 shuffled passes), every text one byte string, a NaN/inf scan of every vector clean, every exit 0. 539–773 s a run, against 956–1,007 with FA off (−23 to −45 %; production embedding ran beside it, and two deploys restarted the worker during runs 1–3). The same engine and model with oneDNN's SDPA (the row above) varied in 4 of 8 runs with a NaN and a 0.0865 wrong vector: the cause, by measurement. The 2,048 sweep and the multi-load gate come before gutenberg moves (architecture session) |
 | **vega-qwen3-embedding-4b, `vega-llama-cpp-p5`: gutenberg's encoder since 2026-10-31 13:41** (rollout-qwen-fa-20261031.sh@c572c3b, pre-approved by the architecture session) | **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`**, DNN=0, F16 KV cache | **BIT-EXACT AND CORRECT, live as run 0a80405f.** The sweep: 528/528 texts (16 spread + 512 prefixes to 2,048 words, 2 fresh loads × 2) one byte string, no NaN, 1,470 s against FA off's 1,719. The multi-load gate (#120) on the candidate name: PASS both sides, exact over 3 fresh loads, version-5 statements with load_variation 1. Document whole set worst 0.999994, query 0.999908, 0 of 512 below 0.995. Gate benchmark 1,500 / 1,453 tokens/s, against 1,294 / 1,311 for FA off's run b36c5912 (+16 %). **On real gutenberg chunks (150, ~3,240 characters each) the speed is about the same:** FA off 2.33 / 2.32 chunks/s, FA on 2.23 / 2.48, in alternating passes. FA gains on long inputs (the repro runs' prefixes to 8,191 words: −23 to −45 % a run), little at gutenberg's chunk length. The live run was checked equal to the gated one, and gutenberg resumed |
 
-Generative llama.cpp models (chat, translate) and rerankers need the
+Generative llama.cpp models (chat, translate) and rerankers needed the
 `vega-llama-cpp-gen` package (`cuts: context_size`): the tokenizer probe of
 `vega-llama-cpp` embeds a text at load, and that killed a chat model's child
-(exit 1, LocalAI "connection refused").
+(exit 1, LocalAI "connection refused"). Since 2026-11-02 (operator: "Why don't
+have just one vega-llama-cpp?") the wrapper probes only an EMBEDDER's load —
+LocalAI's ModelOptions `Embeddings` on and `Reranking` off
+(`vega_wrapper.loads_an_embedder`) — and passes a generation model or a
+reranker through, so ONE package, `vega-llama-cpp`, serves every llama.cpp
+model on the one engine. The `-gen`, `-p5`, `-up` and `-t5` packages retire
+with the move to LocalAI `16acc89`.
 
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:

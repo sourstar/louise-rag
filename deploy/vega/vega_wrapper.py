@@ -88,6 +88,22 @@ DETOKENIZE = "/backend.Backend/Detokenize"
 #: longest-first), so the window must be that size.
 TOKENIZER, CONTEXT_SIZE = "tokenizer", "context_size"
 CUTS = (TOKENIZER, CONTEXT_SIZE)
+
+
+def loads_an_embedder(pb: Any, raw: bytes) -> bool:
+    """Whether a LoadModel is an embedding model's: LocalAI's ModelOptions
+    `Embeddings` on and `Reranking` off. Only an embedder gets `tokenizer`'s
+    probe at load (`PROBE_TEXT`, an Embedding call) and the cut; a generation
+    model or a reranker on the same package is passed through untouched — the
+    probe killed a chat model's child (approved-encoders.md), which is why a
+    second `cuts: context_size` package (`vega-llama-cpp-gen`) once existed
+    (operator, 2026-11-02: one vega-llama-cpp). Options that do not parse are
+    an embedder's, as before this check."""
+    try:
+        opts = pb.ModelOptions.FromString(raw)
+    except Exception:                                # noqa: BLE001 — protobuf's DecodeError
+        return True
+    return bool(opts.Embeddings) and not bool(getattr(opts, "Reranking", False))
 #: embedded once at load, never returned: its token count with and without
 #: the special tokens the backend adds says how many those are
 PROBE_TEXT = "VeGa counts the special tokens"
@@ -1470,7 +1486,11 @@ class Gate:
                 context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)
             except Exception:                        # noqa: BLE001 — protobuf's DecodeError
                 context_size = 0
-            specials, token_ids = (self._probe(call) if self.cfg.cuts == TOKENIZER
+            embedder = loads_an_embedder(self.pb, raw)
+            if self.cfg.cuts == TOKENIZER and not embedder:
+                log(f"{self.backend.name}: {Path(canon.weights_path).name} is loaded for "
+                    f"generation or reranking: no tokenizer probe, no input cut here")
+            specials, token_ids = (self._probe(call) if self.cfg.cuts == TOKENIZER and embedder
                                    else (None, False))
             self.loaded = Loaded(run_id, run, declares_pairs(canon.options.get("Options")),
                                  self.child.pid, context_size, specials, token_ids)
