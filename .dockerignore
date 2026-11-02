@@ -1,0 +1,5 @@
+# Compiled modules never enter the image from a developer's tree: the image
+# compiles its own from the sources it copies (Dockerfile, stage `native`;
+# tools/build_native.py). A stale extension copied in by `COPY app ./app`
+# would be imported before the `.py` beside it.
+**/*.so

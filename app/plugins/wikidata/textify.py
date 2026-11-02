@@ -89,7 +89,7 @@ class Text:
 @dataclass(slots=True)
 class MonolingualText:
     text: Optional[str] = None
-    lang: Optional[str] = None
+    lang: Any = None                    # the dump's `language`, as given (VENDORED.md: annotations)
 
     def __str__(self) -> str:
         return self.lang + ":" + self.text if self.lang and self.text else self.text or ""
@@ -129,8 +129,8 @@ class Formatted:
 @dataclass(slots=True)
 class Entity:
     id: str
-    label: Optional[str] = None
-    description: Optional[str] = None
+    label: Any = None                   # a str, or the dump's value as given (VENDORED.md: annotations)
+    description: Any = None
     aliases: list[str] = field(default_factory=list)
     claims: list["Claim"] = field(default_factory=list)
     #: OURS: the words before the statements — upstream's, or the history
@@ -212,7 +212,7 @@ class ClaimValue:
 
 # ---- the normaliser (upstream's shape; the dump's labels, our formatter) -------------------
 
-def _lang_val(d: Any, lang: str, fallback: str | None) -> str:
+def _lang_val(d: Any, lang: str, fallback: str | None) -> Any:
     """Upstream `get_lang_val`: the language, else `mul`, else the fallback."""
     if not isinstance(d, dict):
         return ""
@@ -224,7 +224,7 @@ def _lang_val(d: Any, lang: str, fallback: str | None) -> str:
     return (v or {}).get("value", "") if isinstance(v, dict) else ""
 
 
-def _filter_by_rank(statements: list[dict]) -> list[dict]:
+def _filter_by_rank(statements: list[Any]) -> list[dict]:
     """Upstream: where a property has a preferred statement, only the
     preferred ones; else the normal ones; deprecated never (all_ranks False)."""
     has_preferred = any(isinstance(s, dict) and s.get("rank") == "preferred" for s in statements)
@@ -238,7 +238,7 @@ def _filter_by_rank(statements: list[dict]) -> list[dict]:
     return kept
 
 
-def _dropped_by_rank(statements: list[dict]) -> list[dict]:
+def _dropped_by_rank(statements: list[Any]) -> list[dict]:
     """OURS: what `_filter_by_rank` drops and the history section keeps — a
     property's normal-rank statements when it has a preferred one;
     deprecated never."""
@@ -280,7 +280,7 @@ def most_recent_first(statements: list[dict]) -> list[dict]:
     return first + [s for i, s in enumerate(statements) if i not in seen]
 
 
-def _datatype(statements: list[dict]) -> str:
+def _datatype(statements: list[Any]) -> str:
     for st in statements:
         if isinstance(st, dict):
             ms = st.get("mainsnak", st)
@@ -415,7 +415,7 @@ class Normalizer:
                     quals.append(self._snak_claim(qpid, snaks))
         return ClaimValue(claim=claim, value=value, qualifiers=quals, rank=st.get("rank"))
 
-    def _snak_claim(self, pid: str, snaks: list[dict]) -> Claim:
+    def _snak_claim(self, pid: str, snaks: list[Any]) -> Claim:
         datatype = next((s["datatype"] for s in snaks
                          if isinstance(s, dict) and isinstance(s.get("datatype"), str) and s["datatype"]), "string")
         claim = Claim(subject=Entity(id="<qualifier>"), property=Entity(id=pid, label=self._label(pid)),
@@ -440,7 +440,7 @@ class Normalizer:
         if t == "wikibase-entityid" or datatype in ("wikibase-item", "wikibase-property"):
             eid = v.get("id") if isinstance(v, dict) else None
             if not isinstance(eid, str) and isinstance(v, dict) and isinstance(v.get("numeric-id"), int):
-                eid = {"item": "Q", "property": "P", "lexeme": "L"}.get(v.get("entity-type"), "") + str(v["numeric-id"])
+                eid = {"item": "Q", "property": "P", "lexeme": "L"}.get(v.get("entity-type"), "") + str(v["numeric-id"])  # type: ignore[arg-type]
             if isinstance(eid, str) and eid[:1] in ("Q", "P") and eid[1:].isdigit():
                 return Entity(id=eid, label=self._label(eid))
             # OURS: a lexeme, form or sense (L7, L7-F2) is its id; upstream
