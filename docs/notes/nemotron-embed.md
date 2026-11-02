@@ -255,6 +255,45 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
   `passage: ` prefix, so its bit-identity column compared different inputs.
   Arms embed through `wikidata_encoder_ab.encoder_fn` from now on.
 
+## Wikipedia P3, vector only (München, 2026-11-02 16:38–16:48)
+
+The set: 5,000 articles, 18,783 chunks, 400 questions (200 en, 200 it).
+
+| encoder | MRR@10 | recall@1 | @10 | @40 | @50 | @100 |
+|---|---|---|---|---|---|---|
+| bge-m3 (wikipedia's) | 0.9277 | 0.900 | 0.9775 | 0.9875 | 0.990 | 0.9975 |
+| harrier | 0.8650 | 0.820 | 0.950 | 0.9825 | 0.985 | 0.995 |
+| **nemotron** | **0.9720** | **0.9575** | **0.995** | 1.000 | 1.000 | 1.000 |
+| nemotron, cut to 1,024 | 0.9727 | 0.960 | 0.995 | 0.9975 | 0.9975 | 1.000 |
+
+- **All 400 questions:**
+  - nemotron − bge-m3 = +0.044, p = 0.0001 (32 questions better, 1 worse);
+  - nemotron − harrier = +0.107, p = 0.0001;
+  - the cut costs nothing (−0.0007, p = 0.86).
+- **English questions:**
+  - nemotron 0.972, harrier 0.944, bge-m3 0.917;
+  - nemotron beats bge-m3 by 0.055 (p = 0.0001) and harrier by 0.028
+    (p = 0.008).
+- **Italian questions:**
+  - nemotron 0.972, bge-m3 0.938, harrier 0.786;
+  - nemotron beats bge-m3 by 0.034 (p = 0.002);
+  - harrier's cross-language weakness is not nemotron's.
+- **By the article's language (MRR@10):**
+  - en articles: bge 0.949, harrier 0.796, nemotron 0.979;
+  - it articles: bge 0.907, harrier 0.933, nemotron 0.965.
+- **Speed on P3's longer chunks, one request in flight:** bge-m3 86.4,
+  harrier 34.0, nemotron 33.4 chunks/s. Level with harrier here, 0.39×
+  bge-m3.
+
+**Reading, the two general collections that ran:**
+- wikidata: nemotron ≈ harrier ≫ bge-m3 (ahead of harrier on Italian only);
+- wikipedia: nemotron > bge-m3 > harrier.
+
+It is the only model of the three that is best or tied-best on both.
+Gutenberg was not run (the operator narrowed the test). What it costs is
+speed: 0.39–0.54× bge-m3 at one in flight, about half at saturation on
+wikidata's chunks.
+
 ## What the operator gets
 
 Per collection:
