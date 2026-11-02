@@ -441,3 +441,30 @@ def test_each_language_has_its_own_table_and_pairs(tmp_path):
     whole = got["mrr10"]["nemotron"]
     halves = [got["languages"][x]["encoders"]["nemotron"]["mrr10"] for x in ("en", "it")]
     assert whole == pytest.approx(sum(halves) / 2, abs=1e-3)
+
+
+def test_nemotron_up_is_the_same_model_on_the_candidate_engine(monkeypatch, tmp_path):
+    """The operator, 2026-11-02: "build the new engine and test Nemotron with
+    that" — the same weights and prefixes, the candidate engine's model name;
+    its 1,024 cut is made from its own vectors, never the live engine's."""
+    from app import collections as collections_mod
+    base = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega", model="vega-bge-m3",
+                                       dtype="f16", ctx=1024, dim=1024, cut="tokens")
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: object())
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda c: base)
+    for enc in ("nemotron-up", "nemotron-up-m1024"):
+        r = ab._recipe(enc)
+        assert r.model == ab.NEMOTRON_UP_MODEL == "vega-nemotron-3-embed-1b-up"
+        assert r.query_instruction == "query: "
+    assert ab._recipe("nemotron").model == ab.NEMOTRON_MODEL
+    rng = np.random.default_rng(7)
+    live, up = rng.normal(size=(3, 2048)).astype("float32"), rng.normal(size=(3, 2048)).astype("float32")
+    np.save(tmp_path / "vec-nemotron-00000.npy", live)
+    np.save(tmp_path / "qvec-nemotron.npy", live[:1])
+    np.save(tmp_path / "vec-nemotron-up-00000.npy", up)
+    np.save(tmp_path / "qvec-nemotron-up.npy", up[:1])
+    assert ab.embed(tmp_path, "nemotron-up-m1024")["from"] == "nemotron-up"
+    cut = np.load(tmp_path / "vec-nemotron-up-m1024-00000.npy")
+    assert np.allclose(cut, up[:, :1024] / np.linalg.norm(up[:, :1024], axis=1, keepdims=True), atol=1e-6)
+    assert sorted(p.name for p in tmp_path.glob("vec-nemotron-[0-9]*.npy")) == ["vec-nemotron-00000.npy"]
+    assert sorted(p.name for p in tmp_path.glob("vec-nemotron-up-[0-9]*.npy")) == ["vec-nemotron-up-00000.npy"]

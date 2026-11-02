@@ -66,7 +66,8 @@ DEPTHS = (10, 40, 50, 100)
 BLOCK = 1000
 ENCODERS = {"jina": "wikidata", "bge": "wikipedia",     # the collection whose recipe embeds
             "jina-gguf": "wikidata", "harrier": "wikidata",
-            "nemotron": "wikidata", "nemotron-m1024": "wikidata"}
+            "nemotron": "wikidata", "nemotron-m1024": "wikidata",
+            "nemotron-up": "wikidata", "nemotron-up-m1024": "wikidata"}
 #: microsoft/harrier-oss-v1-0.6b, converted by us (gutenberg-encoder-bakeoff.md)
 HARRIER_MODEL = "vega-harrier-oss-v1-0.6b"
 #: its card's retrieval prompt (`web_search_query`); documents take none
@@ -79,6 +80,11 @@ HARRIER_QUERY = ("Instruct: Given a web search query, retrieve relevant passages
 #: give them: the query side through the recipe's instruction, the document
 #: side put before each chunk here
 NEMOTRON_MODEL = "vega-nemotron-3-embed-1b"
+#: the same weights on the CANDIDATE engine (operator, 2026-11-02: "build the
+#: new engine and test Nemotron with that"): LocalAI 16acc89, llama.cpp
+#: ddf48f8, whose `pixtral` pre-tokenizer is Tekken's — the live engine split
+#: 71 of 40,931 W1/P3 texts otherwise (nemotron-embed.md)
+NEMOTRON_UP_MODEL = "vega-nemotron-3-embed-1b-up"
 NEMOTRON_QUERY = "query: "
 NEMOTRON_PASSAGE = "passage: "
 #: its Matryoshka cut (the card: "keeping the first 1024 or 512 dimensions
@@ -326,10 +332,12 @@ def _recipe(encoder: str):
         # the instruction and the specials (its context_size is 2,048)
         return dataclasses.replace(recipe, model=GGUF_MODELS[False], query_model=GGUF_MODELS[True],
                                    ctx=2047)
-    if encoder in ("nemotron", "nemotron-m1024"):
-        # the base collection's server, api and cut; nemotron's model, its
-        # query prefix on queries, a window within its context_size 8,192
-        return dataclasses.replace(recipe, model=NEMOTRON_MODEL, query_model=None, query_url=None,
+    if is_nemotron(encoder):
+        # the base collection's server, api and cut; nemotron's model (on the
+        # live or the candidate engine), its query prefix on queries, a window
+        # within its context_size 8,192
+        model = NEMOTRON_UP_MODEL if encoder.startswith("nemotron-up") else NEMOTRON_MODEL
+        return dataclasses.replace(recipe, model=model, query_model=None, query_url=None,
                                    query_instruction=NEMOTRON_QUERY, dim=None,
                                    ctx=max(int(recipe.ctx or 0), 8191))
     if encoder == "harrier":
@@ -349,8 +357,8 @@ def matryoshka(vectors, dim: int = JINA_DIM):
 
 
 def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
-    if encoder == "nemotron-m1024":
-        return cut_from(out, "nemotron", encoder, NEMOTRON_CUT)
+    if is_nemotron(encoder) and encoder.endswith("-m1024"):
+        return cut_from(out, encoder[:-len("-m1024")], encoder, NEMOTRON_CUT)
     encode, lease = encoder_fn(encoder, encode)
     with lease:
         return _embed(out, encoder, encode)
@@ -380,13 +388,18 @@ def encoder_fn(encoder: str, encode: Callable | None = None):
         inner = encode
         encode = lambda texts, query: matryoshka(   # noqa: E731
             inner([JINA_INSTRUCTIONS[query] + t for t in texts], query))
-    if encoder == "nemotron":
+    if is_nemotron(encoder):
         # the query prefix is the recipe's instruction (the client puts it);
         # the document prefix is put here: the recipe has no document side
         inner_n = encode
         encode = lambda texts, query: inner_n(   # noqa: E731
             texts if query else [NEMOTRON_PASSAGE + t for t in texts], query)
     return encode, lease
+
+
+def is_nemotron(encoder: str) -> bool:
+    """nemotron, nemotron-up and their 1,024 cuts: one model, its prefixes."""
+    return encoder in ("nemotron", "nemotron-m1024", "nemotron-up", "nemotron-up-m1024")
 
 
 def cut_from(out: Path, source: str, name: str, dim: int) -> dict:
@@ -575,7 +588,7 @@ def _query_encoder(encoder: str):
         recipe = _recipe(encoder)
         with encoder_use.held(recipe, holder=encoder_use.holder(f"pipeline {encoder}"), query=True):
             got = embeddings.embed_calibration(recipe, texts, query=True, asked=False)
-        if encoder == "nemotron-m1024":
+        if is_nemotron(encoder) and encoder.endswith("-m1024"):
             return matryoshka(got, NEMOTRON_CUT).tolist()
         return got
     return encode
