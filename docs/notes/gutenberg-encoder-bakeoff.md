@@ -205,9 +205,44 @@ retrieval prompt, one text a request.
   stop; harrier's are measured (batches and requests in flight, through VeGa,
   since wikidata cuts by tokens); then the time to re-embed wikidata with it.
 
-### wikipedia
+- **Chunks under harrier's tokenizer:** 1.0057× bge-m3's (München: 200,211
+  records, stratified over the 9 embedded families, cut by
+  `chunk_wikidata_text` at 1,024 tokens with each tokenizer; per family 0.945
+  for property to 1.0159 for place). So 43.27 M chunks become ~43.52 M.
+- **The operator chose to keep wikidata's bge-m3 embedding off** until the
+  re-embed decision (2026-11-02, "Choice A"); the reason is written in
+  wikidata.toml.
 
-*Pending (P3).*
+### wikipedia (2026-11-02 ~12:40): bge-m3 stays
+
+5,000 articles (2,500 en, 2,500 it), 18,783 chunks, 400 questions written by
+the chat model (P2, the question's language alternating). Measured by
+München (P3).
+
+| encoder | MRR@10 | recall@1 | recall@10 | chunks/s |
+|---|---|---|---|---|
+| **bge-m3 F16** (wikipedia's recipe, batch 16, one request in flight) | **0.9277** | 0.900 | 0.9775 | 86.4 |
+| harrier-0.6b f16 (VeGa, batch 1) | 0.8650 | 0.820 | 0.950 | 34.0 |
+
+- **bge-m3 − harrier, MRR@10:** +0.063, p = 0.0001 (60 questions better, 23
+  worse). **By the rule, bge-m3 stays on wikipedia.**
+- **Where harrier loses:** Italian questions (0.938 → 0.786), mostly about
+  English articles: across languages. It gains on English questions (0.917 →
+  0.944) and Italian articles (0.907 → 0.933), and loses on English articles
+  (0.949 → 0.796).
+- wikipedia's `embed` is back to "all" at EVAL-OVER, and lever 3 is armed.
+
+### The three verdicts
+
+| collection | reference encoder | margin (MRR@10) |
+|---|---|---|
+| gutenberg | Qwen3-Embedding-4B Q4_K_M | +0.064 over harrier, +0.101 over bge-m3 |
+| wikidata | **harrier-0.6b** (if re-embedded) | +0.146 over bge-m3 |
+| wikipedia | bge-m3 | +0.063 over harrier |
+
+No one model wins the general collections. A node that searches all three
+holds three query encoders (about 2.5, 1.2 and 3.0 GB on the card), where
+keeping bge-m3 on wikidata would mean two.
 
 ## Published benchmarks, against ours (checked 2026-11-02)
 
