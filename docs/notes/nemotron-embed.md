@@ -90,6 +90,10 @@ do"). The harrier exercise it repeats is gutenberg-encoder-bakeoff.md.
    Non-causal attention needs the whole text in one ubatch, which 8,192 covers.
 5. **The conversion check** (`tools/measure/st_parity.py`). Before any row
    counts:
+   - FIRST `tokens` over every text of the sets: the engine's token ids
+     against the snapshot's tokenizer.json. Each text that differs is added
+     to the texts below (added 2026-11-02, after the 48-text sample missed
+     71 that differed);
    - `pick` 32 W1 chunks spread over their lengths and 16 questions, en and it;
    - `reference` in a THROWAWAY venv: torch CPU,
      `transformers==5.5.0`, `sentence-transformers==5.4.1`, the card's versions.
@@ -283,8 +287,23 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
   - the cause: c0fd786 maps the `pixtral` pre-tokenizer to LLAMA3's rules.
     Upstream e197cef (10-22) maps it to Tekken's, and d8d9297 (10-20) adds
     `\p{M}` to the Tekken lookaheads;
-  - the 71 texts' cosines to a sentence-transformers reference are being
-    measured.
+  - **their cosines to a fresh sentence-transformers reference: the
+    conversion check FAILS on them** (17:19):
+    - 4 of the 71 are under 0.99 (worst 0.9546), and 27 are between 0.99
+      and 0.999;
+    - the four are W1 entities whose NAME is the differing part: "Joseph
+      O'Donnell", two Hindi names and a Thai title;
+    - the 48-text check had passed only because its sample held none of
+      these.
+  - **So on the live engine nemotron is not NVIDIA's model** on 0.17 % of
+    these texts: apostrophe forms and combining marks. The W1 and P3 tables
+    carry that at this rate. It cannot move them much, but nemotron is not
+    adoptable on c0fd786. The candidate engine (Tekken pre-tokenizer at
+    ddf48f8) is checked on the same 71.
+  - **The check itself is fixed:** `st_parity tokens` tokenizes EVERY text
+    of the sets (step 0, no card). Each text that differs joins the
+    reference and the compare. A sample finds what is common, and a
+    tokenizer fault is rare by construction.
 - **The candidate engine:**
   - LocalAI master (16acc89, 2026-11-02) pins llama.cpp ddf48f8 (10-31),
     which carries both tokenizer fixes, the fattn-mkl host-wait removal
