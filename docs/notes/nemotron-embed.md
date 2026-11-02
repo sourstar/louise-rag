@@ -493,6 +493,8 @@ exact mode, nothing else running:
     sequences together and moves bytes, so VeGa refuses it;
   - the KQ mask built on the card.
   - Either buys at most ~4.5 % on long texts and ~1 % on short ones.
+- **Decided (operator, 2026-11-02): left as it is.** "A, bit exactness is at
+  best a 5% to pay, it is worth the price."
 
 ## Both modes are part of a model's validation (operator, 2026-11-02)
 
