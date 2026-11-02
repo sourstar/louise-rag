@@ -105,3 +105,10 @@ lxml>=5
 # tokens of a pinned tokenizer.json — wikidata-text, 06 §6.3 (operator,
 # 2026-10-18, D6: "Yes match it"). Pinned: the cut enters space_id.
 tokenizers==0.22.1
+# orjson (Rust) PARSES the held record lines of `hold records build`
+# (app/pack/records.py `loads_line`; operator, 2026-11-02: "I want all the
+# optimizations"). It never writes a byte that is hashed, signed or stored:
+# those are `canonical_line`'s json.dumps (09 §9.5), and a line orjson could
+# parse otherwise than json.loads goes to json.loads. Prebuilt manylinux
+# cp312 wheels, no toolchain in the image.
+orjson==3.13.0

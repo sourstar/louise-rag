@@ -19,7 +19,9 @@ baseline record is already resolved there):
 Then the manifest: slices, shards with their hashes, layers, license,
 the terms text copied in, signed with the node key when one is set.
 """
+import contextvars
 import json
+import os
 import shutil
 import sqlite3
 import time
@@ -389,7 +391,8 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
         "SELECT path, frame, line FROM held WHERE uid=?", (row["uid"],)).fetchone()
     src = None
     if at is not None:
-        line = records.read_record_at(Path(row[HELD_DIR]) / at["path"], int(at["frame"]), int(at["line"]))
+        line = records.read_record_at(os.path.join(row[HELD_DIR], at["path"]), int(at["frame"]),
+                                      int(at["line"]))
         # A HELD LINE IS TAKEN UNLESS THE MANIFEST PROVES ITS UNIT CHANGED
         # (2026-10-31): wikipedia's archive-layer lines were cut from
         # locators without the page_props segment; their rows now name the
@@ -415,10 +418,11 @@ def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[st
     it is, its layer, and its chunks cut again for the part's
     `chunks_root` (a pure function of the line's sections, invariant 3)."""
     native_id = int(line["native_id"])
-    layer = layers_mod.layer_index(collection, native_id)
+    resolved = _layers_of(collection)
+    layer = resolved.index(native_id)
     chunks = 0
     chunk_blob = bytearray()
-    for c in layers_mod.chunker_for_document(collection, native_id)(
+    for c in resolved.chunker_at(layer)(
             line["uid"], native_id, [tuple(s) for s in line.get("sections") or []]):
         chunks += 1
         chunk_blob += hold_records.chunk_contribution(c["id"], c["text"])
@@ -461,50 +465,133 @@ def part_writer_pool():
 #: only if this is not enough.
 SHIP_LEVEL = 1
 
+#: IN BATCHES, not a line at a time (python-hot-spots.md "C", 2026-11-02): a
+#: pyarrow `compress` call costs a fixed 25-42 µs whatever the line's size —
+#: 15-18 % of the child for small records. A child's task compresses its
+#: lines together, SHIP_BATCH_RECORDS or SHIP_BATCH_BYTES at a time,
+#: whichever comes first, and each record carries `(batch, start, end)`: its
+#: line is `raw[start:end]` of the batch's expanded bytes. One task's answer
+#: is pickled as one object, so a batch crosses the pipe ONCE however many
+#: records name it (pickle's memo). A batch a part boundary cuts in two goes
+#: to both parts' writers — at most two batches a part — which is why a
+#: batch stays small: 64 records amortise the call 64 times, and against
+#: the 2,000 records of a wikipedia part (20,000 wikidata, 30,000 pubmed) two
+#: shared batches are at most ~6 % more bytes for its writer; a book over
+#: SHIP_BATCH_BYTES is a batch of its own. Lines compressed together also
+#: compress better than one by one. The bytes written are the same: the same
+#: lines in the same order, lossless. THE STANDARD ALTERNATIVE: a zstd
+#: context REUSED across calls (python-zstandard's ZstdCompressor; the
+#: stdlib's compression.zstd from Python 3.14) compresses a line as its own
+#: frame without the fixed cost pyarrow's one-shot call pays. It needs a new
+#: dependency or 3.14, and pays only if a part's writer must never receive
+#: another part's lines.
+SHIP_BATCH_RECORDS = 64
+SHIP_BATCH_BYTES = 256 << 10
 
-def _ship(line: bytes) -> tuple[bytes, int]:
+
+def ship_lines(results: list[tuple[bool, object]]) -> None:
+    """IN PLACE: every answered record's line — `with_line`'s bytes under
+    LINE_KEY — replaced by its place in a compressed batch,
+    `((compressed, raw_size), start, end)`, the batch tuple SHARED by its
+    records. Lines in result order; a failed row, or a record whose line
+    the child did not encode (a Parquet part), is left as it is."""
     import pyarrow as pa
-    return bytes(pa.Codec("zstd", compression_level=SHIP_LEVEL).compress(line)), len(line)
+    codec = None
+    members: list[tuple[dict, int, int]] = []
+    lines: list[bytes] = []
+    size = 0
+
+    def flush() -> None:
+        nonlocal codec, size
+        if not lines:
+            return
+        if codec is None:
+            codec = pa.Codec("zstd", compression_level=SHIP_LEVEL)
+        raw = b"".join(lines)
+        batch = (bytes(codec.compress(raw)), len(raw))
+        for record, start, end in members:
+            record[LINE_KEY] = (batch, start, end)
+        members.clear()
+        lines.clear()
+        size = 0
+
+    for ok, value in results:
+        if not ok or not isinstance(value, tuple) or not value or not isinstance(value[0], dict):
+            continue
+        record = value[0]
+        line = record.get(LINE_KEY)
+        if not isinstance(line, bytes):
+            continue
+        members.append((record, size, size + len(line)))
+        lines.append(line)
+        size += len(line)
+        if len(lines) >= SHIP_BATCH_RECORDS or size >= SHIP_BATCH_BYTES:
+            flush()
+    flush()
+
+
+def _shipped(x) -> bool:
+    """Is `x` a line's place in a batch (`ship_lines`)?"""
+    return isinstance(x, tuple) and len(x) == 3 and isinstance(x[0], tuple)
+
+
+def _unship_all(shipped: list) -> list[bytes]:
+    """The lines, each batch expanded ONCE however many of them it holds.
+    A raw line (bytes) is taken as it is: encoded, never shipped."""
+    import pyarrow as pa
+    codec = None
+    expanded: dict[int, bytes] = {}       # id(batch) -> its raw bytes; the batches live in `shipped`
+    out: list[bytes] = []
+    for x in shipped:
+        if isinstance(x, (bytes, bytearray)):
+            out.append(bytes(x))
+            continue
+        batch, start, end = x
+        raw = expanded.get(id(batch))
+        if raw is None:
+            if codec is None:
+                codec = pa.Codec("zstd")
+            comp, size = batch
+            raw = expanded[id(batch)] = bytes(codec.decompress(comp, decompressed_size=size))
+        out.append(raw[start:end])
+    return out
 
 
 def _unship(shipped) -> bytes:
-    if isinstance(shipped, (bytes, bytearray)):
-        return bytes(shipped)                 # a line encoded before shipping existed
-    import pyarrow as pa
-    comp, size = shipped
-    return bytes(pa.Codec("zstd").decompress(comp, decompressed_size=size))
+    """One line, as `_unship_all` gives it."""
+    return _unship_all([shipped])[0]
 
 
 def _write_part(path: Path, buf: list[dict], lines: list | None, record_line: int,
                 chunk_blobs: list[bytes]):
     """One closed part's bytes and its three roots (09 §9.4), in a writer
     process (or thread): what `close_shard` did inline, in the same order.
-    `lines` arrive as the child shipped them (`_ship`)."""
+    `lines` arrive as the child shipped them (`ship_lines`)."""
     if lines is not None:
-        lines = [_unship(x) for x in lines]
+        lines = _unship_all(lines)
     info = records.write_shard(path, buf, record_line=record_line, lines=lines)
     return (info, shard_mod.pieces_root_of(path),
             hold_records.records_root(r["content_hash"] for r in buf),
             hold_records.chunks_root_of(b"".join(chunk_blobs)))
 
 
-def _write_part_columns(path: Path, cols: tuple, blob: bytes, comp_lens, raw_lens,
-                        record_line: int, chunk_blob: bytes):
+def _write_part_columns(path: Path, cols: tuple, batches: list, batch_sizes, at_batch, at_start,
+                        at_end, record_line: int, chunk_blob: bytes):
     """`_write_part` for a part whose every line was shipped by the child,
     handed over as COLUMNS: what `write_shard` reads of a record when its
     line is given (uid, native_id, chunks), the content hashes for the
-    records root, and the lines as ONE bytes object of their compressed
-    forms with two arrays of lengths. A list of dicts and a tuple a line
-    were pickled object by object on the build's GIL — `_send` 35 % of its
-    threads after #149 (München, 2026-10-31); this is a few objects a part.
-    The bytes written are the same: the same lines, in the same order."""
+    records root, and the lines as the compressed BATCHES that hold them
+    (`ship_lines`) with, per record, its batch's number and its line's two
+    offsets. A list of dicts and a tuple a line were pickled object by
+    object on the build's GIL — `_send` 35 % of its threads after #149
+    (München, 2026-10-31); this is a few objects a part. Each batch is
+    expanded once. The bytes written are the same: the same lines, in the
+    same order."""
     import pyarrow as pa
     uids, native_ids, chunks, hashes = cols
     codec = pa.Codec("zstd")
-    lines, pos = [], 0
-    for clen, rlen in zip(comp_lens, raw_lens):
-        lines.append(bytes(codec.decompress(blob[pos:pos + clen], decompressed_size=rlen)))
-        pos += clen
+    raws = [bytes(codec.decompress(comp, decompressed_size=size)) for comp, size in zip(batches, batch_sizes)]
+    lines = [raws[k][a:b] for k, a, b in zip(at_batch, at_start, at_end)]
     recs = [{"uid": u, "native_id": n, "chunks": c} for u, n, c in zip(uids, native_ids, chunks)]
     info = records.write_shard(path, recs, record_line=record_line, lines=lines)
     return (info, shard_mod.pieces_root_of(path), hold_records.records_root(hashes),
@@ -512,15 +599,30 @@ def _write_part_columns(path: Path, cols: tuple, blob: bytes, comp_lens, raw_len
 
 
 def _columns_of(buf: list[dict], lines: list) -> tuple | None:
-    """The columnar hand-over of a part (`_write_part_columns`), or None
-    when a line was not shipped by the child (the part goes as before)."""
+    """The columnar hand-over of a part (`_write_part_columns`): the
+    columns, the distinct batches its lines are in (in order of first use)
+    and their raw sizes, and per record its batch's number and offsets — or
+    None when a line was not shipped by the child (the part goes as
+    before)."""
     from array import array
-    if not lines or not all(isinstance(x, tuple) and len(x) == 2 for x in lines):
+    if not lines or not all(_shipped(x) for x in lines):
         return None
     cols = ([r["uid"] for r in buf], [r.get("native_id") for r in buf],
             [r.get("chunks") for r in buf], [r["content_hash"] for r in buf])
-    return (cols, b"".join(c for c, _ in lines), array("q", (len(c) for c, _ in lines)),
-            array("q", (n for _, n in lines)))
+    batches: list[bytes] = []
+    sizes = array("q")
+    number: dict[int, int] = {}          # id(batch) -> its place in `batches`; alive in `lines`
+    at_batch, at_start, at_end = array("q"), array("q"), array("q")
+    for batch, start, end in lines:
+        k = number.get(id(batch))
+        if k is None:
+            k = number[id(batch)] = len(batches)
+            batches.append(batch[0])
+            sizes.append(batch[1])
+        at_batch.append(k)
+        at_start.append(start)
+        at_end.append(end)
+    return cols, batches, sizes, at_batch, at_start, at_end
 
 
 #: a record's line, written by the pool's child (`with_line`) and taken by
@@ -558,17 +660,76 @@ def with_line(collection, got: tuple[dict, int, bytes, dict[str, str]]):
     no key of the line's shape) — and the record SLIMMED to what the
     parent reads (`_slim`). A Parquet part encodes its own cells from the
     whole record, and a figures line (`record_line` 2) has its plates
-    written by the parent: both keep the record whole."""
+    written by the parent: both keep the record whole. The line is left
+    raw here; its task ships the task's lines together (`ship_lines`)."""
     from app.hold.codex import container_of
     record, layer, blob, plates = got
     codex = getattr(collection, "codex", None)
     record_line = int(getattr(codex, "record_line", 1) or 1)
     if container_of(codex) == "parquet":
         return got
-    record[LINE_KEY] = _ship(records.canonical_line(record, record_line=record_line))
+    record[LINE_KEY] = records.canonical_line(record, record_line=record_line)
     if record_line != 1:
         return got
     return _slim(record), layer, blob, plates
+
+
+#: the layers of the collection the running records task cuts
+#: (`compute_records`), resolved once for the task and dropped with it
+_task_layers: contextvars.ContextVar = contextvars.ContextVar("pack_build_task_layers", default=None)
+
+
+def _layers_of(collection) -> layers_mod.Resolved:
+    """The running task's resolution when it was made for THIS collection
+    object (identity, never a name), else one made now: a record cut
+    outside a task (the CLI's, `hold check`'s origin line) resolves its
+    layers once, where `layer_index` and `chunker_for_document` resolved
+    them three times."""
+    got = _task_layers.get()
+    if got is not None and got.collection is collection:
+        return got
+    return layers_mod.Resolved(collection)
+
+
+def compute_records(kind: str, collection, rows: list[dict]) -> list[tuple[bool, object]]:
+    """The parse pool's "record" and "held-record" task (`parallel._compute`,
+    in a child or in-process): one (ok, value) per row, in order — the
+    value `with_line`'s answer, a failure `{"type", "msg"}` for its row
+    alone — and the task's lines then shipped in batches (`ship_lines`).
+
+    What does not change from one record to the next is resolved once a
+    task, not once a record: the plugin, and the collection's layers
+    (python-hot-spots.md "C": `layers_for` three times a record, 6-15 % of
+    the child). A layer resolution that fails is left to each row, which
+    then fails on its own as it did."""
+    if kind == "held-record":
+        # the part's lookups in two queries, not two per record (prefetch_held)
+        rows = [dict(r) for r in rows]    # the caller's rows unchanged (inline, they are its own)
+        try:
+            prefetch_held(collection, rows)
+        except Exception:   # noqa: BLE001 — each row then looks itself up, as before
+            pass
+    try:
+        plugin = collection.plugin_instance()
+    except Exception as e:   # noqa: BLE001 — every row's own failure, as when each asked
+        return [(False, {"type": type(e).__name__, "msg": str(e)[:500]}) for _ in rows]
+    try:
+        resolved = layers_mod.Resolved(collection)
+    except Exception:   # noqa: BLE001 — each row resolves, and fails, on its own
+        resolved = None
+    make = held_or_parsed if kind == "held-record" else _record_of
+    out: list[tuple[bool, object]] = []
+    token = _task_layers.set(resolved)
+    try:
+        for row in rows:
+            try:
+                out.append((True, with_line(collection, make(collection, plugin, row))))
+            except Exception as e:   # noqa: BLE001 — recorded per document by the build
+                out.append((False, {"type": type(e).__name__, "msg": str(e)[:500]}))
+    finally:
+        _task_layers.reset(token)
+    ship_lines(out)
+    return out
 
 
 def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
@@ -580,7 +741,8 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
     doc = plugin_io.canonical_doc(plugin, row)
     native_id = int(row["native_id"])
     sections = [[name or "", body or ""] for name, body in doc.sections]
-    layer = layers_mod.layer_index(collection, native_id)
+    resolved = _layers_of(collection)
+    layer = resolved.index(native_id)
     # The chunks are counted AND folded into this document's contribution to
     # the shard's `chunks_root` (09 §9.4) in one pass. It is done here, in
     # the parse pool's child, because parse + chunk + hash per document is
@@ -589,8 +751,7 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
     # these blobs in record order and hashes once.
     chunks = 0
     chunk_blob = bytearray()
-    for c in layers_mod.chunker_for_document(collection, native_id)(
-            doc.uid, native_id, doc.sections):
+    for c in resolved.chunker_at(layer)(doc.uid, native_id, doc.sections):
         chunks += 1
         chunk_blob += hold_records.chunk_contribution(c["id"], c["text"])
     record = {
@@ -921,9 +1082,8 @@ def _pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_
             lines = [r.pop(LINE_KEY, None) for r in buf]
             columns = _columns_of(buf, lines)
             if columns is not None:
-                cols, blob, comp_lens, raw_lens = columns
-                fut = part_pool.submit(_write_part_columns, pack_dir / rel, cols, blob, comp_lens,
-                                       raw_lens, record_line, b"".join(chunk_blobs))
+                fut = part_pool.submit(_write_part_columns, pack_dir / rel, *columns,
+                                       record_line, b"".join(chunk_blobs))
             else:
                 fut = part_pool.submit(_write_part, pack_dir / rel, buf, None if None in lines else lines,
                                        record_line, chunk_blobs)

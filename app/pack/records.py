@@ -550,11 +550,16 @@ def cached_index(path: Path) -> ShardIndex:
     return index
 
 
-def cached_frame(path: Path, k: int) -> list[bytes]:
+def cached_frame(path: Path | str, k: int) -> list[bytes]:
+    """Frame k's lines, from the cache when it holds them. `path` may be a
+    str: the records build names a held part per record, and a Path built
+    and rendered for each was ~4 % of its child (2026-11-02); it is made
+    here only on a miss."""
     key = (str(path), k)
     hit = _frames.get(key)
     if hit is not None:
         return hit
+    path = Path(path)
     lines = read_frame(path, cached_index(path), k)
     return _frames.put(key, lines, sum(len(x) for x in lines))
 
@@ -621,8 +626,52 @@ def iter_fields(path: Path, fields: Sequence[str]) -> Iterator[dict]:
             yield out
 
 
-def read_record_at(path: Path, frame: int, line: int) -> dict:
-    return json.loads(cached_frame(path, frame)[line])
+#: orjson (Rust) PARSES held lines for the records build (operator,
+#: 2026-11-02: "I want all the optimizations"; python-hot-spots.md "F"):
+#: 1.6-2.1x json.loads on the hotspots' record lines, the guard below
+#: included (0.7-40 KB; measured 2026-11-02). It never WRITES one: every
+#: byte that is hashed, signed or stored is `canonical_line`'s json.dumps
+#: (09 §9.5). Absent (a checkout without the image's packages), lines parse
+#: with json.loads, as they always did.
+try:
+    import orjson as _orjson
+except ImportError:                         # pragma: no cover — the image pins it
+    _orjson = None
+
+#: every byte to "0" if it is an ASCII digit, else to "."
+_DIGIT_MASK = bytes(0x30 if 0x30 <= b <= 0x39 else 0x2E for b in range(256))
+#: 19 digits in a row: the shortest integer that can fall outside the 64 bits
+#: orjson parses exactly. Outside them orjson does NOT raise — it returns a
+#: FLOAT (measured, 3.13.0: 18446744073709551616 -> 1.8446744073709552e+19,
+#: -9223372036854775809 -> -9.223372036854776e+18) where json.loads returns
+#: the int, and the line re-encoded would differ. Any integer of 18 digits
+#: or fewer is inside the range, so a line with no such run cannot hold one.
+_LONG_RUN = b"0" * 19
+
+
+def loads_line(line) -> dict:
+    """`json.loads(line)`, the same object, by orjson where orjson gives it.
+
+    json.loads parses wherever orjson might differ: a line with a run of 19
+    digits anywhere (a big integer, above; a run inside a string costs only
+    the slower parse), a line that is not bytes, and a line orjson refuses
+    for ANY reason — NaN and Infinity, a number that overflows a double,
+    lone surrogates, invalid UTF-8, a BOM, nesting past 1,024 levels — and
+    then json.loads gives its own answer or its own error, as before.
+    Duplicate keys: both keep the last value at the first key's place.
+    Proven equal on every fixture line and on generated ones
+    (tests/pack/test_ship_batches.py)."""
+    if _orjson is None or not isinstance(line, (bytes, bytearray)) \
+            or line.translate(_DIGIT_MASK).find(_LONG_RUN) != -1:
+        return json.loads(line)
+    try:
+        return _orjson.loads(line)
+    except Exception:                       # noqa: BLE001 — json.loads decides, as before
+        return json.loads(line)
+
+
+def read_record_at(path: Path | str, frame: int, line: int) -> dict:
+    return loads_line(cached_frame(path, frame)[line])
 
 
 def reset_caches() -> None:
