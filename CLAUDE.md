@@ -307,8 +307,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
     run is admitted. Peers accept each other at the space's tolerance
     (03 §3.1): no two kinds of hardware give the same bytes, so local byte
     equality is evidence, never the condition of admission between peers.
-    Each card still runs with its stack's reproducibility mode in the MODEL's YAML `env` until a setting
-    without it is measured, one at a time, faster and within the bound
+    Each card still runs with its stack's reproducibility mode in the
+    MODEL's YAML `env` until a setting without it is measured, one at a
+    time, faster and within the bound
     (docs/notes/approved-encoders.md, "Bitwise reproducibility, by vendor"):
       - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0`;
       - Intel SYCL: `GGML_SYCL_ENABLE_DNN=0` (oneDNN chooses kernels by
