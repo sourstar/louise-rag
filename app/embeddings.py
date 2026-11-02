@@ -197,7 +197,7 @@ class EndpointBusy(EndpointDeferred):
 #: `_refuse_load`: "VeGa: no run can be stated: <why>"), carried to us in the
 #: runner's error. It does not heal by waiting: the run is refused until the
 #: model's tree or YAML changes (CLAUDE.md invariant 12).
-VEGA_NO_RUN = "VeGa: no run can be stated"
+VEGA_NO_RUN = model_load.VEGA_NO_RUN
 
 
 class EndpointRunRefused(EndpointBusy):
@@ -395,7 +395,8 @@ def _warm_first(batch: list[Item], recipe: "collections_mod.EmbedRecipe",
                           "encoding_format": "base64", "model": recipe.model}
         else:
             body = _body(recipe, probe)
-        httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s, headers=level)
+        return httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s,
+                          headers=level)
 
     lvl, plugin = dispatch.current()
     model_load.ensure_loaded(recipe.url, recipe.model, warm,

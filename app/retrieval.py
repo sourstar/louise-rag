@@ -700,10 +700,10 @@ def _warm_reranker(recipe) -> None:
         body = {"query": "warm", "texts": ["warm"], "truncate": True}
     body["model"] = recipe.model
 
-    def warm(bound_s: float) -> None:
+    def warm(bound_s: float):
         with dispatch.interactive(dispatch.Level.RERANK):
-            httpc.post(recipe.url, json=body, timeout=bound_s,
-                       headers=dispatch.level_headers())
+            return httpc.post(recipe.url, json=body, timeout=bound_s,
+                              headers=dispatch.level_headers())
 
     model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank", max_age_s=0.0)
 
