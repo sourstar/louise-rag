@@ -3,7 +3,7 @@
 # without its one-off steps: the bundles are on tank already, contribute.sh is
 # retired). /tmp/louise-src.tgz = git archive <sha> app tests tools docs
 # calibration native deploy requirements.txt requirements-dev.txt requirements-build.txt
-# constraints.txt Dockerfile .dockerignore platform.toml.example (native/ and
+# constraints.txt Dockerfile .dockerignore .gitignore platform.toml.example (native/ and
 # requirements-build.txt since D + E: the image compiles louise_cdc and the textifier);
 # /tmp/louise-commit = <sha>.
 #   ssh root@<node> bash -s < deploy-louise-tip.sh
@@ -38,7 +38,7 @@
 set -euo pipefail
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration native"
-FILES="requirements.txt requirements-dev.txt requirements-build.txt constraints.txt Dockerfile .dockerignore platform.toml.example"
+FILES="requirements.txt requirements-dev.txt requirements-build.txt constraints.txt Dockerfile .dockerignore .gitignore platform.toml.example"
 TGZ=/tmp/louise-src.tgz
 COMMIT=$(cat /tmp/louise-commit)
 HOLD=/root/supervise/louise.hold
@@ -304,12 +304,17 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_embed_select.py tests/test_wikitext_identity.py tests/test_citations_fast_path.py tests/test_refs_normattiva.py tests/pack/test_ship_batches.py tests/test_layers.py tests/test_parallel.py tests/test_library_card_drawers.py tests/test_library_embedder_tag.py tests/test_web_compact_details.py tests/test_web_worker_modes.py tests/test_toml_roundtrip.py tests/test_pipeline_eval.py tests/test_encoder_bakeoff_rerank.py tests/test_profile_embed_stages.py \
     tests/test_vectors_by_chunk_id.py tests/test_profile_mode.py tests/test_worker_settle_runs.py tests/test_ask_relay_browser.py tests/test_endpoint_refusal_exit.py tests/test_deploy_supervise_pass.py tests/test_rage_bench.py tests/test_embed_materialize.py tests/test_rage_settings.py tests/hold/test_rage_settings.py tests/hold/test_rage_settings_cli.py tests/test_rage_name.py tests/test_card_record.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_embedder_cli.py tests/hold/test_cpu_reference.py tests/hold/test_near_exact.py tests/test_encoder_batch.py tests/test_slice_scope.py tests/hold/test_relocate.py tests/test_toml_roundtrip.py tests/test_measure_wikidata_encoder_ab.py tests/test_merge_by_relevance.py tests/test_record_rerank.py tests/test_measure_fusion_calibration.py tests/test_node_show.py tests/test_vega_repro_check.py tests/test_worker_boot_node_state.py tests/hold/test_embedder.py tests/hold/test_backend_engine.py tests/hold/test_engine_options.py tests/hold/test_pair_calibration.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py tests/hold/test_drift.py tests/test_record_source.py tests/test_lance_stable_row_ids.py tests/test_vector_rewrite.py \
-    tests/test_cdc_native.py tests/hold/test_cdc_identity.py tests/test_plugins_wikidata_textify_compiled.py tests/hold/test_codex.py tests/hold/test_codex_document_instruction.py tests/test_nemotron_conversion_tools.py \
+    tests/test_cdc_native.py tests/hold/test_cdc_identity.py tests/test_plugins_wikidata_textify_compiled.py tests/test_nemotron_conversion_tools.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
 # conftest `codex` fixture is not found (2026-10-27; alone and in the full suite it passes)
 docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
   louise-rag:staged timeout -s KILL 900 python -m pytest -q -p no:cacheprovider tests/hold/test_rename.py
+# tests/hold/test_codex.py the same (its `codex` fixture; 61 errors in the long run, 2026-11-02),
+# with #252's document-instruction tests beside it
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
+  louise-rag:staged timeout -s KILL 900 python -m pytest -q -p no:cacheprovider \
+    tests/hold/test_codex.py tests/hold/test_codex_document_instruction.py
 docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv -v "$ROOT/config:/config:ro" \
   -e CONFIG_DIR=/config louise-rag:staged python -c "
 from app import node_profile as np
