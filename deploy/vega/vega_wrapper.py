@@ -970,6 +970,44 @@ NO_MODE = frozenset({"vulkan"})
 #: stopped pubmed although measured.
 MEASURED_ENV = "LOUISE_BITEXACT_MEASURED"
 MEASURED_TASKS = frozenset({"medcpt-article", "medcpt-rerank"})
+#: A vendor mode RELAXED, one setting, once MEASURED near-exact and faster
+#: (invariant 12 as amended 2026-11-01, the operator's choice B: "until a
+#: setting without it is measured, one at a time, faster and within the
+#: bound"; near-exact-runs.md §3; the operator, 2026-11-02: "both modes need
+#: to be tested. A model shall be able to produce bit exact results if
+#: needed"). The model's env names the backend it was measured on and the one
+#: setting it relaxes, "<backend name> <KEY>": the backend name ties it to the
+#: tree the measurement ran on, as MEASURED_ENV does, so a new tree is measured
+#: again. The declaration is in the stated run (another run than the exact
+#: one, which stays available under its own model), and the gate's multi-load
+#: verdict holds it to 0.99999 and the CPU reference: only a collection that
+#: opted into `exactness = "near"` admits it.
+NEAR_EXACT_ENV = "LOUISE_NEAR_EXACT_MEASURED"
+
+
+def near_exact_relaxed(canon: loadopts.Canon, backend_name: str, mode: Mapping[str, str]) -> str | None:
+    """The one setting of `mode` the model declares measured near-exact on
+    `backend_name`, or None. A declaration for another backend, or naming no
+    setting of this mode, or more than one, is refused: it relaxes nothing it
+    was not measured for."""
+    said = canon.env.get(NEAR_EXACT_ENV)
+    if said is None:
+        return None
+    parts = str(said).split()
+    if len(parts) != 2:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} must read \"<backend name> <SETTING>\": one setting, measured "
+            f"(CLAUDE.md invariant 12: relaxed one at a time), not {said!r}")
+    backend, key = parts
+    if backend != backend_name:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} names {backend}, and this run is on {backend_name}: a relaxed "
+            f"setting is measured on the tree it runs on (CLAUDE.md invariant 12); measure it again")
+    if key not in mode:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} relaxes {key}, which is not a setting of {backend_name}'s "
+            f"deterministic mode ({', '.join(sorted(mode)) or 'none'})")
+    return key
 
 
 def _option_values(canon: loadopts.Canon, key: str) -> list[str]:
@@ -999,7 +1037,13 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str,
                 raise loadopts.Unstatable(
                     f"{backend_name} names no vendor whose deterministic mode the wrapper knows "
                     f"(CLAUDE.md invariant 12): a card run on it is refused")
-            lacks += [f"env {k}={v}" for k, v in sorted(mode.items()) if canon.env.get(k) != v]
+            relaxed = near_exact_relaxed(canon, backend_name, mode)
+            lacks += [f"env {k}={v}" for k, v in sorted(mode.items())
+                      if canon.env.get(k) != v and k != relaxed]
+        elif NEAR_EXACT_ENV in canon.env:
+            raise loadopts.Unstatable(
+                f"{NEAR_EXACT_ENV} relaxes a card's deterministic mode, and this run is on the "
+                f"CPU, which has none to relax")
         return lacks
     if "python" in tokens:
         tasks = _option_values(canon, "task")
