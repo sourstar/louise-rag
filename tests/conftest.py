@@ -210,6 +210,46 @@ def serial_parse_pool(monkeypatch):
     monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", False)
 
 
+@pytest.fixture(autouse=True)
+def compiled_textify_answers_as_its_source(monkeypatch):
+    """Where the wikidata textifier is COMPILED (mypyc; docs/notes/
+    python-hot-spots.md "E"), every text a test asks of it is asked of its
+    source too, and a test whose two answers differ fails: the plugin's
+    tests, the pack's records builds — every entity of the suite — become
+    an identity check of the compiled module, at no extra test. Where it
+    is not compiled (a tree without the build), nothing is wrapped."""
+    import sys
+    live = sys.modules.get("app.plugins.wikidata.textify")
+    if live is None:
+        return
+    from app.plugins.wikidata import pure
+    if not pure.is_compiled(live):
+        return
+    source = pure.textify()
+
+    def checked(name):
+        compiled_fn, source_fn = getattr(live, name), getattr(source, name)
+
+        def call(*args, **kw):
+            try:
+                got = ("text", compiled_fn(*args, **kw))
+            except Exception as e:  # noqa: BLE001 — the same failure is the same answer
+                got = ("raised", type(e).__name__, str(e), e)
+            try:
+                want = ("text", source_fn(*args, **kw))
+            except Exception as e:  # noqa: BLE001
+                want = ("raised", type(e).__name__, str(e), e)
+            assert got[:3] == want[:3], f"compiled textify.{name} differs from its source: {got[:3]!r} != {want[:3]!r}"
+            if got[0] == "raised":
+                raise got[3]
+            return got[1]
+        call.__wrapped__ = compiled_fn          # the compiled function itself, unchecked
+        return call
+
+    for name in ("entity_text", "history_text"):
+        monkeypatch.setattr(live, name, checked(name))
+
+
 @pytest.fixture
 def corpus_dir(tmp_path) -> Path:
     dest = tmp_path / "corpus"

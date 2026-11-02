@@ -75,6 +75,25 @@ COPY calibration ./calibration
 EXPOSE 8742
 CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8742"]
 
+# THE NATIVE BUILD (2026-11-02, docs/notes/python-hot-spots.md "E"): wikidata's
+# textifier and its formatter compiled to C by mypyc (tools/build_native.py),
+# its entity text ~1.8x faster. A stage FROM base — the image's own Python
+# and sources — with a C compiler and the pinned mypy (requirements-build.txt),
+# none of which reaches the node: only the .so files leave it, copied into
+# the dev and runtime stages below. Python imports an extension before the
+# .py of the same name; the .py stays the source and the reference. The
+# stage checks the compiled modules against that source on 20,000 seeded
+# generated entities and fails the build on one differing byte
+# (tools/measure/textify_identity.py); München runs the same tool on the
+# node's own entities, in the built image, before any deploy (>= 100,000).
+FROM base AS native
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-build.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements-build.txt
+RUN python -m tools.build_native --out /native \
+    && python -m tools.measure.textify_identity --generated 20000
+
 # puppeteer-core, installed where npm already is: Debian's npm is 363
 # packages on top of node's 15, and the test image needs node alone
 FROM node:20-slim AS browser-deps
@@ -97,5 +116,10 @@ ENV NODE_PATH=/opt/browser-test/node_modules \
 # gRPC for the VeGa wrapper's tests: the test image only (requirements-dev.txt)
 COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -c constraints.txt -r requirements-dev.txt
+# the compiled modules, as the runtime has them: the suite runs against them
+# (tests/conftest.py checks every text against the source while they are)
+COPY --from=native /native/ ./
 
 FROM base AS runtime
+# the compiled modules (stage `native`), beside their sources
+COPY --from=native /native/ ./
