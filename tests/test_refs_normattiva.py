@@ -177,9 +177,11 @@ def _citations_unfiltered(query: str) -> list[dict]:
 def test_the_month_pre_check_finds_exactly_what_both_patterns_find():
     """A dated citation names its month, so a text without one skips the
     dated pattern — a third of `citations`' cost over every chunk of every
-    book in the text-index stage (2026-10-30). The answer is the same on
-    every text: the fixtures' acts, citations in each form, an English book,
-    and a month named with no citation."""
+    book in the text-index stage (2026-10-30); the scan now tries either
+    pattern only before the digits a citation holds (2026-11-02,
+    tests/test_citations_fast_path.py). The answer is the same on every
+    text: the fixtures' acts, citations in each form, an English book, and
+    a month named with no citation."""
     fixtures = Path(__file__).parent / "fixtures"
     texts = [p.read_text(encoding="utf-8", errors="replace")
              for p in sorted((fixtures / "normattiva").glob("*.xml"))]
