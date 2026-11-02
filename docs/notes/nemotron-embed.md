@@ -4,7 +4,8 @@ The operator: "Do the same exercise of harrier with Nemotron 1b embedder, I
 want it on llama.cpp with 16bit precision, in the worse case is a
 validation test for the future."
 
-**Status: planned, measure only.** The tools are merged. The steps below run
+**Status: steps 1–3 and the reference done (below); the card steps
+next.** The tools are merged. The steps below run
 on the node. The operator decides on the rows; nothing follows from them on
 its own (the operator, 2026-11-02: "No automatic decision, I decide what to
 do"). The harrier exercise it repeats is gutenberg-encoder-bakeoff.md.
@@ -126,6 +127,44 @@ do"). The harrier exercise it repeats is gutenberg-encoder-bakeoff.md.
 - the card steps (5's compare, 6–9) run after tonight's pipeline steps, as
   harrier's did: acquire-only, embedding suspended;
 - disk: ~2.3 GB snapshot, ~2.3 GB GGUF, ~1 GB venv.
+
+## Done (München, 2026-11-02, on the dev PC)
+
+Steps 1–3 and the reference half of step 5 ran in one python:3.12-slim
+container. The record is in nemotron-provenance.json and f16_range.json
+under /data/bakeoff/nemotron/.
+
+- **Weights:**
+  - revision c0c9fea93ea424587517f2c59e20db9f1d6bf615;
+  - model.safetensors 2,281,852,472 bytes, sha256
+    f959c3b04e66b42de280bfb97c140cb7e0bfe25e3ecb0b4464c68a8436b2d04f;
+  - every LFS file checked against the Hub's sha256.
+- **The cast to f16:**
+  - 146 tensors, 1,140,918,272 values, max |x| 3.72;
+  - **overflow 0**, non-finite 0;
+  - to_zero 4,055 (0.0004 %), subnormal 4,093,908 (0.36 %).
+- **The GGUF:**
+  - upstream llama.cpp 3f8af15a76ac8675812e856da45454bafc90f12c,
+    `--outtype f16`;
+  - 2,289,841,280 bytes, sha256
+    09596cedbdf2a0d164b37083794632be55dcb2aa2abcf02fb995dfdccbecbf2c.
+- **Its metadata:**
+  - `mistral3.attention.causal = false`, `pooling_type = 1` (mean);
+  - `add_bos_token = false`, `add_eos_token = false`;
+  - 2,048 dims, 16 blocks;
+  - YaRN (original context 16,384, trained context 262,144);
+  - pre-tokenizer `pixtral`.
+
+  As step 3 asks.
+- **The reference:** 48 texts (32 W1 chunks, 8 en and 8 it questions), the
+  card's prompts, fp32 on the CPU. The venv:
+  - torch 2.8.0+cpu, transformers 5.5.0, sentence-transformers 5.4.1;
+  - tokenizers 0.22.2, safetensors 0.8.0, numpy 2.3.5.
+
+  transformers warned of the unknown `apply_yarn_scaling` key, which the
+  card says to expect. If the two engines' YaRN differ, the long texts will
+  show it first.
+- **Next:** 5b on the card, then 6–8, after the night's pipeline steps.
 
 ## What the operator gets
 
