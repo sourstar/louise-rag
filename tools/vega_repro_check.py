@@ -175,9 +175,18 @@ def main(argv: list[str] | None = None) -> int:
     every = [item(json.loads(line)) for line in
              args.texts.read_text(encoding="utf-8").splitlines() if line.strip()]
     texts = spread(every, args.n) + sweep(every, args.sweep, args.window)
+    from types import SimpleNamespace
+    from app import encoder_use
     try:
-        out = measure(texts, url=args.url, model=args.model, loads=args.loads,
-                      repeats=args.repeats, window=args.window, post=httpx.post)
+        # LEASED for the whole measurement (2026-11-02): each beat, the
+        # worker unloads every vega- model no held collection names unless
+        # a process leases it (app/encoder_use.py). harrier, named by none,
+        # was stopped 112 times in two hours under this check, a reload per
+        # minute, and two runs ran out of time with no verdict.
+        with encoder_use.held(SimpleNamespace(model=args.model, url=args.url),
+                              holder=encoder_use.holder("vega_repro_check")):
+            out = measure(texts, url=args.url, model=args.model, loads=args.loads,
+                          repeats=args.repeats, window=args.window, post=httpx.post)
     except Exception as e:                       # noqa: BLE001 — said, and not clean
         print(f"{args.model}: NOT MEASURED: {type(e).__name__}: {e}")
         return 2

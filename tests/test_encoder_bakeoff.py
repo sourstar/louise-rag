@@ -674,3 +674,29 @@ def test_the_report_no_longer_says_bare_is_what_the_node_serves(tmp_path, capsys
     shown = capsys.readouterr().out
     assert "which is what this node serves today" not in shown
     assert "--from-collection" in shown
+
+
+def test_each_side_is_embedded_under_its_lease(tmp_path, monkeypatch) -> None:
+    """2026-11-02: each beat, the worker unloads every vega- model no held
+    collection names unless a process leases it — a candidate is named by
+    none, and was reloaded every minute."""
+    from contextlib import contextmanager
+    from app import encoder_use
+    from tools import encoder_bakeoff as bake
+    now: list = [None]
+    seen = []
+
+    @contextmanager
+    def lease(recipe, *, holder, query=False, **kw):
+        assert holder.startswith("encoder_bakeoff embed pid ")
+        now[0] = (recipe.model, query)
+        yield
+        now[0] = None
+    monkeypatch.setattr(encoder_use, "held", lease)
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (bake.Corpus([1, 2], ["a", "b"]),
+                                                             bake.Queries(["q"], [[1]])))
+    monkeypatch.setattr("app.embeddings.embed_calibration",
+                        lambda recipe, texts, query=False, **kw:
+                        seen.append((now[0], query)) or [[1.0, 0.0] for _ in texts])
+    assert bake.embed(tmp_path, "m", "http://x", "harrier", None, 8192, 1, 20_000) == 0
+    assert seen == [(("harrier", False), False), (("harrier", True), True)]

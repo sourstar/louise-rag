@@ -175,3 +175,35 @@ def test_a_nan_that_comes_back_the_same_on_every_load_is_not_reproducible(tmp_pa
             "--loads", "1", "--repeats", "1"]
     assert vega_repro_check.main(args) == 1
     assert "NON-FINITE" in capsys.readouterr().out
+
+
+def test_the_model_is_leased_for_the_whole_measurement(tmp_path, monkeypatch, capsys):
+    """2026-11-02: each beat, the worker unloads every vega- model no held
+    collection names unless a process leases it — harrier, named by none, was
+    stopped 112 times in two hours under this check."""
+    import sys
+    import types
+    from contextlib import contextmanager
+    from app import encoder_use
+    held = []
+
+    @contextmanager
+    def lease(recipe, *, holder, **kw):
+        held.append((recipe.model, recipe.url, holder))
+        yield
+        held.append("released")
+    monkeypatch.setattr(encoder_use, "held", lease)
+    post, log = backend()
+
+    def inside(url, json, timeout):
+        assert held and held[-1] != "released", "every request under the lease"
+        return post(url, json, timeout)
+    f = tmp_path / "t.jsonl"
+    f.write_text("\n".join(json.dumps({"text": t}) for t in TEXTS), encoding="utf-8")
+    monkeypatch.setattr(vega_repro_check.time, "sleep", lambda s: None)
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=inside))
+    args = ["--url", "http://localai:30286", "--model", "m", "--texts", str(f), "--sweep", "0",
+            "--loads", "2", "--repeats", "1"]
+    assert vega_repro_check.main(args) == 0 and log["shutdowns"] == 2
+    assert held[0][:2] == ("m", "http://localai:30286")
+    assert held[0][2].startswith("vega_repro_check pid ") and held[1:] == ["released"]

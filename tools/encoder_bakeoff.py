@@ -778,23 +778,30 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
     # The corpus side never carries the prefix, so every variant of a model
     # shares these vectors and only the cheap side is re-embedded.
+    # Each side LEASED while it embeds (2026-11-02): each beat, the worker
+    # unloads every vega- model no held collection names unless a process
+    # leases it (app/encoder_use.py) — a candidate is named by none.
+    from app import encoder_use
+    holder = encoder_use.holder("encoder_bakeoff embed")
     checked = None
-    if stored:
-        doc = stored_vectors(out, from_collection)
-        n = min(check, len(corpus.texts))
-        at = np.random.default_rng(0).choice(len(corpus.texts), size=n, replace=False) if n else []
-        if n:
-            from app import embeddings
-            fresh = np.asarray(embeddings.embed_calibration(
-                recipe, [corpus.texts[i] for i in at], query=False), dtype=np.float32)
-            worst, median = check_stored(doc[np.asarray(at)], fresh)
-            checked = {"n": n, "worst": round(worst, 6), "median": round(median, 6)}
-            print(f"  stored vectors checked: {n} re-embedded, worst cosine {worst:.6f}, "
-                  f"median {median:.6f}")
-    else:
-        doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
-    qry = _embed_sharded([query_prefix + t for t in queries.texts],
-                         run / f"queries-{slug}", recipe, query=True)
+    with encoder_use.held(recipe, holder=holder):
+        if stored:
+            doc = stored_vectors(out, from_collection)
+            n = min(check, len(corpus.texts))
+            at = np.random.default_rng(0).choice(len(corpus.texts), size=n, replace=False) if n else []
+            if n:
+                from app import embeddings
+                fresh = np.asarray(embeddings.embed_calibration(
+                    recipe, [corpus.texts[i] for i in at], query=False), dtype=np.float32)
+                worst, median = check_stored(doc[np.asarray(at)], fresh)
+                checked = {"n": n, "worst": round(worst, 6), "median": round(median, 6)}
+                print(f"  stored vectors checked: {n} re-embedded, worst cosine {worst:.6f}, "
+                      f"median {median:.6f}")
+        else:
+            doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
+    with encoder_use.held(recipe, holder=holder, query=True):
+        qry = _embed_sharded([query_prefix + t for t in queries.texts],
+                             run / f"queries-{slug}", recipe, query=True)
     np.save(run / "corpus.npy", doc)
     np.save(run / f"queries-{slug}.npy", qry)
     (run / f"run-{slug}.json").write_text(json.dumps(
