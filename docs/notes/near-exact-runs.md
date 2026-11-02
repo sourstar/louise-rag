@@ -36,13 +36,15 @@ Each flip stays within cosine ≥ 0.999999 of the other answers. Turning it off 
   - worst **< 0.995** (the review line, operator 2026-10-18): the run FAILS. Review means it writes nothing until a human has looked.
   - **Quantised weights: a line per quantization level, measured** (operator, 2026-11-01: "calculate a reasonable threshold per quantization level, do not just assume it is the same as the full precision"; `embedder.cpu_review_line`).
     - **Why every quantised level differs, not only 4-bit.** For every quantised weight type, llama.cpp's CPU path rounds the activations to 8 bits before the dot product (`vec_dot_type`: Q8_K for the k-quants, Q8_0/Q8_1 for the others), and the card's path does not round them the same way. F16 and BF16 weights take F16/BF16 activations on both. So Q8_0 is not expected to sit near full precision here, and is measured like the rest.
-    - **The rule, fixed before the data** (`cpu_line_from`): line = 1 − 1.5 × (1 − worst), where worst is the lowest card-vs-CPU-twin cosine measured for the level over the calibration texts, the shortest included. That leaves 50 % headroom over the largest deviation seen, for other cards, drivers and texts. The result is rounded down to 0.001 and never set above the operator's 0.995.
+    - **The rule, fixed before the data** (`cpu_line_from`): line = 1 − 1.5 × (1 − worst), where worst is the lowest card-vs-CPU-twin cosine measured for the level over the calibration texts, the shortest included. That leaves 50 % headroom over the largest deviation seen, for other cards, drivers and texts. The result is rounded down to 0.001. A quantised level's line is never set above the operator's 0.995. **A 16- or 32-bit level's is never set below it** (the operator, 2026-11-02: "Lift the cap for 16-bit as recommended"): 16-bit weights round little between card and CPU, so their line is as strict as their worst measured across EVERY vendor allows, and a peer's card is judged by what cards of its kind were seen to do.
     - **An unmeasured level has no line.** Its run is not judged against a CPU reference on another level's line: with a reference stored, it fails with "measure this level". Without one, nothing is compared, as for any run.
     - **Measured so far:**
 
       | level | model, measurement | worst | p1 | median | line |
       |---|---|---|---|---|---|
-      | F16 / BF16 / F32 | bge-m3 F16, wikipedia's gate against c19ca7b8 (2026-11-01) | 0.999930 | 0.999955 | 0.999999 | 0.995 (operator; the rule gives 0.9998) |
+      | F16 | bge-m3 F16, wikipedia's gate against c19ca7b8 (2026-11-01), Arc B70 | 0.999930 | 0.999955 | 0.999999 | — |
+      | F16, across vendors | bge-m3 F16 on AMD ROCm 7.2, RX 9060 XT, against its CPU twin (Perugia, 2026-10-18) | **0.998362** | — | — | **0.997** (since 2026-11-02) |
+      | BF16 / F32 | not measured | — | — | — | 0.995 (the floor) |
       | Q4_K_M | Qwen3-Embedding-4B, gutenberg run 0a80405f against our CPU engine's twin (München, m6) | 0.989292 | 0.996898 | 0.998358 | **0.983** |
 
       The worst sits on the shortest texts (36–39 tokens), with a near-constant offset at every length. Two CPU engines agreed 1.000000 on 19 of 19.
