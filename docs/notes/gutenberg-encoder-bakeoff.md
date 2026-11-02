@@ -236,8 +236,9 @@ really in flight (`EMBED_CONCURRENCY`); card busy is read from the PMU.
     AFTER), so harrier there would be ≈ 65.1;
   - 43.27 M × 1.0057 ≈ 43.52 M chunks;
   - 43.52 M ÷ 65.1 ≈ 669,000 s ≈ **186 h (7.7 days)**;
-  - bge-m3 for all 43.27 M at 91.5 would be ≈ 131 h, less what it already
-    holds.
+  - bge-m3 holds 1,440,632 vectors (3.3 %, the Lance table's row count,
+    14:2x), so ~41.83 M are left: ≈ **127 h** at 91.5. harrier costs
+    ≈ 59 h more, and drops what bge-m3 holds.
   The schedule's hours and the sharing with wikipedia and gutenberg come on
   top, for either model.
 - **Still owed before the decision:** wikidata's whole-search score
