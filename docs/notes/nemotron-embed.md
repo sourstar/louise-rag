@@ -330,7 +330,24 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
   - `compare` on the 71 that failed on the live engine: worst 0.999999,
     none under 0.999;
   - so on the candidate nemotron is NVIDIA's model on every checked text.
-    Speed, scores and the repro check follow.
+- **The candidate's speed is the live engine's** (17:51–17:58, the same 5,000
+  W1 chunks, no other job):
+
+  | arm | chunks/s | card busy | byte-equal to the live engine |
+  |---|---|---|---|
+  | c1 | 46.80 | 86.7 % | 4,987/5,000 |
+  | c4 | 55.38 | 98.7 % | 4,987/5,000 |
+  | c8 | 55.24 | 98.7 % | 4,987/5,000 |
+  | c4, SYCL graphs on | 55.05 | 98.7 % | 4,987/5,000 |
+
+  - **Speed:** +0.5 to +0.7 % against the live engine, within run-to-run
+    noise. The upstream SYCL host-wait changes buy nothing measurable once
+    the card is saturated, and graph replay gives the same bytes at the same
+    speed.
+  - **Bytes:** ddf48f8's kernels give c0fd786's bytes. Only the 13 texts the
+    Tekken fix re-tokenizes differ; the worst is O'Donnell, at 0.954569 to
+    the live engine's vector.
+  - **Within the candidate,** every arm is bit-identical to its c4.
 - **The candidate engine:**
   - LocalAI master (16acc89, 2026-11-02) pins llama.cpp ddf48f8 (10-31),
     which carries both tokenizer fixes, the fattn-mkl host-wait removal
