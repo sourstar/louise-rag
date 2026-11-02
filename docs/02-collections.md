@@ -62,6 +62,8 @@ codex = {
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
                                      -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
     query: {encoder: null | {weights: "sha256:…", engine: {…}}, instruction: null | "<prefix>"},
+    document: {instruction: "<prefix>"},   -- only where the space prefixes its documents
+                                     -- (09 §9.3, Codex version 11); absent otherwise
     tolerance: "0.95",
     calibration: {set: "sha256:…", vectors: "sha256:…", query_vectors: null | "sha256:…", quorum: {n: 16, min_pass: 12}},
     envelope: "sha256:…",
@@ -546,8 +548,12 @@ member name is the first 16 hex characters of the digest. The query side
 is part of the function: a query is embedded by `space.query.encoder`
 when it is not null — bi-encoder pairs such as MedCPT's query and
 article encoders — and prefixed with `space.query.instruction` when
-that is not null; a document is embedded by `space.encoder` and never
-prefixed (05 §5.1).
+that is not null; a document is embedded by `space.encoder`, prefixed
+with `space.document.instruction` where the space declares one and never
+otherwise (05 §5.1; *amended 2026-11-02*, Codex version 11: an encoder
+trained with a document prefix, Nemotron's `"passage: "`, computes
+another function without it, so the prefix is the space's and inside
+`space_id`).
 
 **Not the engine either.** The software that runs the model — its build,
 the image holding it or, for a backend a model runner installs, the

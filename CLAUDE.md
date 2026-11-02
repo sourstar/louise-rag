@@ -91,9 +91,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
    chunker) and each layer's INPUT form (text, or a tokenizer pair),
    `cleaning_version`, the space block's dim, dtype, ctx, pooling,
    normalisation, its query side (the query encoder's weights and its
-   `instruction`), its `cut` where the space declares one (characters or
-   tokens), and the epoch (09 §9.3's formula; a version-2 Codex still has
-   its engine image inside). Not
+   `instruction`), its document `instruction` where the space declares one
+   (Codex version 11, 2026-11-02: Nemotron's "passage: "), its `cut` where
+   the space declares one (characters or tokens), and the epoch (09 §9.3's
+   formula; a version-2 Codex still has its engine image inside). Not
    the ENGINE — the tested build, image, args, env and device are frozen
    in the Codex as `space.encoder.engine` (inside `collection_id`,
    outside `space_id`); any engine may contribute once its RUN passes

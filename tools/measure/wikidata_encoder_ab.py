@@ -317,7 +317,12 @@ def _recipe(encoder: str):
     c = collections_mod.by_name(ENCODERS[encoder])
     if c is None:
         raise SystemExit(f"no {ENCODERS[encoder]} collection here: its recipe embeds the {encoder} side")
-    recipe = collections_mod.recipe_for(c)
+    # THIS TOOL PREFIXES DOCUMENTS ITSELF (`encoder_fn`: "passage: " for
+    # nemotron, jina-gguf's own), so the base collection's own
+    # `space.document.instruction` (Codex version 11) must not ride along: a
+    # Nemotron wikidata would put "passage: " on bge's and harrier's documents
+    # too, and twice on nemotron's
+    recipe = dataclasses.replace(collections_mod.recipe_for(c), document_instruction=None)
     # the wikidata chunk is cut at 1,024 tokens already: no second cut by a
     # window another corpus was sized for — within what each backend takes
     # (the node, 2026-10-31: a window of 8,192 was refused by both):

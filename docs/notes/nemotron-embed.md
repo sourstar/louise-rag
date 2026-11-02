@@ -570,6 +570,29 @@ The speed mode is oneDNN's matmuls: `GGML_SYCL_ENABLE_DNN=1`.
   byte-identical at 1, 4 and 8 in flight. The speed mode buys ~3 % for
   byte-level reproducibility, within near-exact's bound.
 
+## Production (operator, 2026-11-02)
+
+"Wipe wikidata vectors, use Nemotron instead, rule 1. Suspend any gutenberg
+and wikipedia further embedding, when wikidata is over make a gutenberg-nemo
+with Nemotron and embed it. Once done the old gutenberg can be backed up in
+tank and retired. Then do the same with wikipedia, smart embedding only."
+
+- **The document prefix is the space's.** Every row above embedded documents
+  with `"passage: "`, as the card says; the spec had a query instruction only.
+  Codex version 11 adds `space.document.instruction`, inside `space_id`,
+  prepended to every document input by the one client that sends documents
+  (`embeddings._sent`): chunks, the calibration set at `create`, the gate,
+  the re-check, probes. The operator's A, by default, the same night.
+- **2,048 dims, native.** The 1,024 cut measured no worse (W1 full − cut
+  +0.009, p = 0.165; P3 equal) but needs a truncation the spec does not
+  have; a 1,024 space can be derived later from the stored 2,048 vectors
+  without the card (09 §9.3 `derivation`, `truncate`).
+- **Order:** wikidata re-created (RULE 1, records and chunks carried, the
+  1.44 M bge vectors wiped at the re-creation: 3.3 GB); 43.27 M chunks,
+  ~9 card-days at W1's c4 rate, ~190 GB at 2,048 f16. Then gutenberg-nemo,
+  the old gutenberg backed up to tank and retired; then wikipedia-nemo, smart
+  embedding only, the same way.
+
 ## What the operator gets
 
 Per collection:

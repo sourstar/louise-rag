@@ -91,7 +91,10 @@ def space_differences(a: Codex, b: Codex) -> list[str]:
                 "query.instruction": q.instruction, "epoch": s.epoch,
                 "cleaning_version": c.cleaning_version,
                 # the cut is the function's (Codex version 8): crossed by --recut alone
-                "cut": s.cut}
+                "cut": s.cut,
+                # every document vector is a function of it (Codex version 11):
+                # never crossed by a carry that keeps vectors
+                "document.instruction": s.document_instruction}
     fa, fb = fn(a), fn(b)
     return [k for k in fa if fa[k] != fb[k]]
 
@@ -369,7 +372,8 @@ WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
 #: A1h: what a carry from a collection holding no vector may change — the
 #: encoder's side of the space (the engine is outside `space_differences`)
 ENCODER_SIDE = frozenset({"encoder.weights", "dim", "dtype", "ctx", "cut", "pooling", "normalise",
-                          "query.encoder.weights", "query.instruction", "epoch"})
+                          "query.encoder.weights", "query.instruction", "document.instruction",
+                          "epoch"})
 
 
 #: what may differ under `--rebuilt` (A1c): the parser and the image that runs

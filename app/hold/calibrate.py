@@ -149,10 +149,14 @@ def load_pairs(path: str | Path) -> tuple[str, list[tuple[str, str]]]:
 Embed = Callable[[Endpoint, list], tuple[list[list[float]], set]]
 
 
-def http_embed(ctx: int) -> Embed:
+def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
     """Embed through the existing client (invariant 7), the endpoint's own
     recipe, truncating at `ctx` as the gate does. Returns the vectors and
-    the runs the answers stated (`Louise-Run`, 03 §3.3)."""
+    the runs the answers stated (`Louise-Run`, 03 §3.3).
+
+    `document_instruction`: the space's `space.document.instruction` (09
+    §9.3, Codex version 11), prepended by the client as to every document,
+    so the tolerance is measured on the inputs the gate will send."""
     import httpx
 
     from app import collections as collections_mod, embeddings
@@ -161,7 +165,7 @@ def http_embed(ctx: int) -> Embed:
         recipe = collections_mod.EmbedRecipe(
             url=ep.url, api=ep.api,
             model=ep.model or collections_mod.model_named_by(ep.url) or "",
-            dtype="f32", ctx=ctx)
+            dtype="f32", ctx=ctx, document_instruction=document_instruction)
         runs: set = set()
         try:
             # the calibration set in the space's form: texts, or a pair
