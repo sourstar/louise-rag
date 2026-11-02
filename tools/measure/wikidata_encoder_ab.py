@@ -59,6 +59,10 @@ from pathlib import Path
 from typing import Callable
 
 TOP = 10
+#: the candidate depths a reranker reads (the operator, 2026-11-02: "if it fits a
+#: simple benchmark comparison like @10 @40 @50 @100"): what share of the
+#: questions find their entity within each, the encoder alone
+DEPTHS = (10, 40, 50, 100)
 BLOCK = 1000
 ENCODERS = {"jina": "wikidata", "bge": "wikipedia",     # the collection whose recipe embeds
             "jina-gguf": "wikidata", "harrier": "wikidata",
@@ -459,6 +463,7 @@ def score(out: Path) -> dict:
     rr: dict[str, list[float]] = {}
     hit1: dict[str, list[int]] = {}
     hit10: dict[str, list[int]] = {}
+    within: dict[int, dict[str, list[int]]] = {d: {} for d in DEPTHS}
     for enc in ENCODERS:
         # `[0-9]`: "vec-jina-*" would take jina-gguf's blocks as well
         blocks = sorted(out.glob(f"vec-{enc}-[0-9]*.npy"))
@@ -477,6 +482,8 @@ def score(out: Path) -> dict:
         rr[enc] = [1.0 / r if r <= TOP else 0.0 for r in rank]
         hit1[enc] = [int(r == 1) for r in rank]
         hit10[enc] = [int(r <= TOP) for r in rank]
+        for d in DEPTHS:
+            within[d][enc] = [int(r <= d) for r in rank]
 
     def mean(xs):
         return round(sum(xs) / len(xs), 4) if xs else None
@@ -492,6 +499,7 @@ def score(out: Path) -> dict:
            "mrr10": {e: mean(v) for e, v in rr.items()},
            "recall1": {e: mean(v) for e, v in hit1.items()},
            "recall10": {e: mean(v) for e, v in hit10.items()},
+           "recall_at": {f"@{d}": {e: mean(v) for e, v in within[d].items()} for d in DEPTHS},
            "by_family": by("family"), "by_language": by("lang")}
     # SPEED: chunks per second each encoder embedded the sample at
     res["chunks_per_s"] = {}

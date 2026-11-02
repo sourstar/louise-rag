@@ -392,3 +392,27 @@ def test_the_1024_cut_is_nemotrons_own_vectors_cut_and_renormalised(tmp_path):
     assert json.loads((tmp_path / "time-nemotron-m1024.json").read_text())["chunks"] == 5
     # nemotron's own blocks are not taken for the cut's, nor the cut's for nemotron's
     assert sorted(p.name for p in tmp_path.glob("vec-nemotron-[0-9]*.npy")) == ["vec-nemotron-00000.npy"]
+
+
+def test_score_says_what_share_find_their_entity_within_each_reranker_depth(tmp_path):
+    """The operator, 2026-11-02: "if it fits a simple benchmark comparison like
+    @10 @40 @50 @100": the encoder alone, no reranker."""
+    n, dim = 120, 8
+    corpus = [{"uid": f"u{i}", "family": "en", "label": "", "chunks": ["c"]} for i in range(n)]
+    (tmp_path / "corpus.jsonl").write_text("".join(json.dumps(e) + "\n" for e in corpus))
+    qs = [{"uid": f"u{i}", "family": "en", "lang": "en", "query": "q"} for i in range(4)]
+    (tmp_path / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    # entity i's vector scores i-th best for every query: entity 0 first, 119 last
+    doc = np.zeros((n, dim), dtype="float32")
+    doc[:, 0] = np.linspace(1.0, 0.0, n)
+    doc[:, 1] = np.sqrt(1.0 - doc[:, 0] ** 2)
+    np.save(tmp_path / "vec-bge-00000.npy", doc)
+    np.save(tmp_path / "qvec-bge.npy", np.tile(np.eye(1, dim, 0, dtype="float32"), (4, 1)))
+    # the four questions' entities rank 1, 30, 45 and 101
+    for q, target in zip(qs, (0, 29, 44, 100)):
+        q["uid"] = f"u{target}"
+    (tmp_path / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    got = ab.score(tmp_path)
+    assert got["recall_at"] == {"@10": {"bge": 0.25}, "@40": {"bge": 0.5},
+                                "@50": {"bge": 0.75}, "@100": {"bge": 0.75}}
+    assert got["recall10"]["bge"] == 0.25
