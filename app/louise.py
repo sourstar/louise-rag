@@ -1168,6 +1168,41 @@ def cmd_dev_tool(a) -> int:
     return int(rc or 0)
 
 
+def cmd_dev_embed_select(a) -> int:
+    """`louise dev embed-select <collection> [--apply]` (app/embed_select.py;
+    operator, 2026-11-02): what the collection's embed selection chooses —
+    documents, embedded here, declined, with a Wikidata item, English — read
+    from the manifest opened read-only and its page_props, writing nothing.
+    `--apply` writes the marks now, as the worker does after a scan, under
+    the collection's lock."""
+    import sqlite3
+
+    from app import collections as _cm, embed_select
+    c = _cm.by_name(a.collection)
+    if c is None:
+        raise CodexError(f"{a.collection}: not a collection this node holds")
+    out = {"collection": c.name, "policy": embed_select.policy(c)}
+    if not embed_select.owns_marks(c):
+        print(json.dumps({**out, "note": "every document held is embedded"}, indent=2))
+        return 0
+    if a.apply:
+        from app import db as _db
+        _take_write_lock(a.root, c.name, "dev embed-select")
+        with _closing(_db.connect(c)) as con:
+            out.update(embed_select.apply(con, c, log=lambda m: print(m, file=sys.stderr)))
+    else:
+        con = sqlite3.connect(f"file:{c.manifest_path}?mode=ro", uri=True)
+        try:
+            _, _, counts = embed_select.decide(c, con)
+        except embed_select.Unavailable as e:
+            raise CodexError(f"{c.name}: {e}") from None
+        finally:
+            con.close()
+        out.update(counts)
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def cmd_dev_mark_embedded(a) -> int:  # noqa: C901
     """`louise dev mark-embedded <collection>`: the one-off reconcile for the
     documents `share contribute`'s build embedded and never marked (372 on
@@ -5469,6 +5504,11 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "and linked, as a new collection's is; writes (07 §7.8)")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_dev_adopt_bundles)
+    p = dverbs.add_parser("embed-select", help="what the collection's embed selection chooses (wikipedia: "
+                                                "smart); read-only unless --apply")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--apply", action="store_true", help="write the marks now, under the collection's lock")
+    p.set_defaults(fn=cmd_dev_embed_select)
     p = dverbs.add_parser("mark-embedded", help="documents whose every chunk has a vector here and whose "
                                                  "manifest row says embed_done = 0, marked (writes)")
     root_arg(p); p.add_argument("collection")

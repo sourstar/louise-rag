@@ -84,7 +84,8 @@ def _codex_toml_text(path: Path, *, codex: str, profile: str | None,
                      extras: tuple[str, ...], title: str | None = None,
                      slices=None, kinds=None, share: bool = False,
                      reranker=None, source: str = "origin",
-                     share_slices=None, share_kinds=None, embed_slices=None) -> str:
+                     share_slices=None, share_kinds=None, embed_slices=None,
+                     embed_select=None) -> str:
     """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
     `share`, `[encoder]` naming where this node reaches the encoder, and
     `[reranker]` where it reaches the collection's reranker (05 §5.6).
@@ -150,6 +151,10 @@ def _codex_toml_text(path: Path, *, codex: str, profile: str | None,
     # what is held; carried through every rewrite
     if embed_slices is not None:
         lines.append("embed_slices = [%s]" % ", ".join(_toml_scalar(s) for s in embed_slices))
+    # 07 §7.8 `embed_select` (2026-11-02): which documents held are embedded;
+    # absent = the plugin's default, carried through every rewrite
+    if embed_select is not None:
+        lines.append(f"embed_select = {_toml_scalar(embed_select)}")
     lines.append(f"share = {'true' if share else 'false'}")
     # 07 §7.8 `share_slices` / `share_kinds` (2026-10-07): what serving is
     # narrowed to, carried through every rewrite like `source`
@@ -268,7 +273,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                             layers=None, title: str | None = None,
                             slices=None, kinds=None, share: bool = False,
                             reranker=None, source: str = "origin",
-                            share_slices=None, share_kinds=None, embed_slices=None) -> None:
+                            share_slices=None, share_kinds=None, embed_slices=None,
+                            embed_select=None) -> None:
     """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
     purpose: a call site that forgets it must fail loudly here, because
     the failure it would otherwise cause is silent and unrepairable.
@@ -293,7 +299,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             embed_mode=embed_mode, snapshot=snapshot, extras=extras,
             title=title, slices=slices, kinds=kinds, share=share,
             reranker=reranker, source=source,
-            share_slices=share_slices, share_kinds=share_kinds, embed_slices=embed_slices)
+            share_slices=share_slices, share_kinds=share_kinds, embed_slices=embed_slices,
+            embed_select=embed_select)
         return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
@@ -419,7 +426,8 @@ def _fields(c, raw: dict[str, Any]) -> dict[str, Any]:
         snapshot=c.snapshot, extras=c.extras, title=c.title, slices=c.slices,
         kinds=c.kinds, share=c.share, reranker=c.reranker, source=c.source,
         share_slices=c.share_slices, share_kinds=c.share_kinds,
-        embed_slices=getattr(c, "embed_slices", None))
+        embed_slices=getattr(c, "embed_slices", None),
+        embed_select=getattr(c, "embed_select", None))
 
 
 def rewrite(collection, **changes) -> Path:
@@ -457,6 +465,8 @@ SETTABLE: dict[str, str] = {
     "kinds": "member kinds, comma-separated (02 §2.6)",
     "share_slices": 'slice names, comma-separated; "all" serves every slice held',
     "embed_slices": 'slice names, comma-separated; "all" embeds every slice held',
+    "embed_select": 'all | smart (wikipedia: English, plus the longest other language where '
+                    'English is missing or shorter); "default" for the plugin\'s own',
     "share_kinds": 'member kinds, comma-separated; "all" serves every kind held',
     "encoder.url": "the encoder's server (07 §7.8)",
     "encoder.query_url": "the query side's server; empty when symmetric",
@@ -522,6 +532,13 @@ def _parse(key: str, text: str, where: str) -> Any:
             return "all" if text == "all" else collections_mod._parse_slices(_names(text), where)
         if key == "kinds":
             return collections_mod._parse_kinds(_names(text), where)
+        if key == "embed_select":
+            if text in ("", "default"):
+                return None
+            if text not in collections_mod.EMBED_SELECT:
+                raise ValueError(f"embed_select is one of {', '.join(collections_mod.EMBED_SELECT)} "
+                                 f"or default, got {text!r}")
+            return text
         if key in ("share_slices", "embed_slices"):
             if text in ("", "all"):
                 return None
@@ -607,7 +624,7 @@ def _apply(c, raw: dict[str, Any], path: Path, parsed: dict[str, Any], *,
             raise SetRefused(f"{c.name} is never-share: it is shared with nobody (04 §4.4)")
     plain = {"title": "title", "slices": "slices", "kinds": "kinds",
              "share_slices": "share_slices", "share_kinds": "share_kinds",
-             "embed_slices": "embed_slices"}
+             "embed_slices": "embed_slices", "embed_select": "embed_select"}
     for key, field in plain.items():
         if key in parsed:
             kw[field] = parsed[key]
@@ -666,7 +683,7 @@ def _read_back(back, kw: dict[str, Any], parsed: dict[str, Any]) -> None:
     that says something else."""
     got = {"title": back.title, "slices": back.slices, "kinds": back.kinds,
            "share_slices": back.share_slices, "share_kinds": back.share_kinds,
-           "embed_slices": back.embed_slices,
+           "embed_slices": back.embed_slices, "embed_select": back.embed_select,
            "share": back.share}
     enc, rr = back.embed, back.reranker
     if enc is not None:

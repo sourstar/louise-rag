@@ -1344,6 +1344,14 @@ def _offered_by_torrent_collection(collection: collections_mod.Collection) -> li
     return offered if found else None
 
 
+def _profile_label(collection: collections_mod.Collection) -> str:
+    """The card's profile: the file's, else the profiles of the slices it
+    holds, by name (operator, 2026-11-02: wikipedia read "(hand-populated)"
+    while holding eleven languages); "(hand-populated)" only where the file
+    names neither."""
+    return collection.profile or ",".join(_profile_held(collection)) or "(hand-populated)"
+
+
 def _profile_held(collection: collections_mod.Collection) -> list[str]:
     """The profiles a collection holds, as the additive grow dialog marks
     them (operator, 2026-11-01: wikipedia's held languages showed no check).
@@ -2336,7 +2344,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         # what each stage counts up to: one answer for the bar, the colour
         # and the ETA, so they cannot disagree about what done means
         "stage_targets": stage_targets,
-        "profile": collection.profile or "(hand-populated)",
+        "profile": _profile_label(collection),
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten
         # hex chars and a truncated display would call them equal

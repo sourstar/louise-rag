@@ -39,7 +39,7 @@ def write(path, c):
         title=c.title, slices=c.slices, kinds=c.kinds, share=c.share,
         reranker=c.reranker, source=c.source,
         share_slices=c.share_slices, share_kinds=c.share_kinds,
-        embed_slices=c.embed_slices)
+        embed_slices=c.embed_slices, embed_select=c.embed_select)
 
 
 # ---- the Codex half -------------------------------------------------------
@@ -88,6 +88,9 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         'share_kinds = ["records"]\n'
         # 07 §7.8 embed_slices (2026-10-31): away from None too
         'embed_slices = ["lang=en"]\n'
+        # 07 §7.8 embed_select (2026-11-02): away from None too ("smart" is
+        # wikipedia's only; this is gutenberg)
+        'embed_select = "all"\n'
         '\n[encoder]\n'
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back

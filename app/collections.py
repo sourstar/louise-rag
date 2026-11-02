@@ -390,6 +390,9 @@ DEFAULT_EMBED_MODE = "lazy"
 #: 07 §7.8, operator 2026-10-19). The Library shows the display names; the
 #: file and the API carry these tokens, as `lazy` for on-demand.
 EMBEDDING_MODES = ("lazy", "all", "p2p")
+#: 07 §7.8 `embed_select` (2026-11-02): which documents held the encoder
+#: spends on — every one, or the smart choice (app/embed_select.py)
+EMBED_SELECT = ("all", "smart")
 BACKFILL_MODES = ("all", "p2p")
 EMBED_MODE_LABELS = {"off": "off", "lazy": "on-demand", "all": "all local", "p2p": "all p2p"}
 
@@ -468,6 +471,12 @@ class Collection:
     # None = every slice held. A document outside them is marked "not
     # embedded here" by app/slice_scope.py and never offered to the encoder
     embed_slices: tuple[str, ...] | None = None
+    # 07 §7.8 `embed_select` (operator, 2026-11-02, wikipedia): WHICH of the
+    # documents held the encoder spends on — "all", or "smart" (English, plus
+    # for each Wikidata item the longest article in another language when
+    # the English one is missing or shorter; app/embed_select.py). None = the
+    # plugin's default (`embed_select.policy`)
+    embed_select: str | None = None
     #: why `embed_mode_default` is not what the file says: `embed = "p2p"`
     #: with `share = false` runs as `all` — p2p publishes what it embeds, and
     #: a node that does not share can publish nothing (07 §7.8, 2026-10-19)
@@ -589,6 +598,15 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
     share_kinds = _parse_share_list(raw.get("share_kinds"), "share_kinds", where)
     embed_slices = _parse_share_list(raw.get("embed_slices"), "embed_slices", where)
+    embed_select = raw.get("embed_select")
+    if embed_select is not None and embed_select not in EMBED_SELECT:
+        raise ValueError(f"{where}: embed_select is one of {', '.join(EMBED_SELECT)} (07 §7.8), "
+                         f"got {embed_select!r}")
+    if embed_select == "smart":
+        from .embed_select import SMART_PLUGINS
+        if codex.plugin not in SMART_PLUGINS:
+            raise ValueError(f"{where}: embed_select = \"smart\" groups Wikipedia's articles by "
+                             f"their Wikidata item; {codex.plugin} has no such grouping")
     if share_kinds is not None:
         bad = [k for k in share_kinds if k not in SHARE_KINDS]
         if bad:
@@ -689,6 +707,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         share_slices=share_slices,
         share_kinds=share_kinds,
         embed_slices=embed_slices,
+        embed_select=embed_select,
         source=source,
     )
 

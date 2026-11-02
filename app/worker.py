@@ -36,7 +36,8 @@ from typing import Callable
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
-               discovery, layers as layers_mod, parallel, embeddings, encoder_timeouts, entities,
+               discovery, embed_select, layers as layers_mod, parallel, embeddings,
+               encoder_timeouts, entities,
                fts, issues as issues_mod, model_load, model_pins, origin_missing, node_state,
                plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
 from .rage import card_record, dispatch
@@ -2917,6 +2918,14 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
                                 log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
         if out.get("deferred"):
             db.log_event(con, "info", "discover", f"slice scope waits: {out['deferred'][:400]}")
+        # WHICH DOCUMENTS THE ENCODER SPENDS ON (app/embed_select.py; operator,
+        # 2026-11-02: wikipedia's "smart" choice, its default), after the
+        # slices: computed for what the scan just made the manifest
+        if not held.is_set():
+            out = embed_select.apply(con, collection, stop=held,
+                                     log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
+            if out.get("deferred"):
+                db.log_event(con, "info", "discover", f"embed selection waits: {out['deferred'][:400]}")
     if held.fired is _parse_held:
         # the mode changed under a running scan: it ended at its next ref,
         # its progress committed and its cursor that far — and the rest is owed
@@ -4135,6 +4144,16 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                     _say_once(con, collection.name, "slice-scope",
                               "waiting for the slice scope: only the slices the "
                               "collection file holds are processed (app/slice_scope.py)")
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                if not embed_select.ready(con, collection):
+                    # the embed selection is not applied yet (the scan thread
+                    # does it): nothing is embedded that it would decline
+                    _say_once(con, collection.name, "embed-select",
+                              f"waiting for the embed selection ({embed_select.policy(collection)}): "
+                              f"it is computed after the next scan (app/embed_select.py)")
+                    if not scan_running(collection.name):
+                        _request_discovery(collection.name, "embed selection", acquire=False)
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 if not producers and owns_own_embed(collection):
