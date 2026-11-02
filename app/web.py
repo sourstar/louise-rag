@@ -160,6 +160,11 @@ def _human_eta(seconds: float | None) -> str | None:
         return f"~{days:.0f}d"
     return f"~{days / 365:.0f}y"
 
+
+# the same coarse duration in the Library's confirmations ("reprocess
+# lexical index…" quotes how long redoing the index takes at the rate measured)
+TEMPLATES.env.filters["eta"] = _human_eta
+
 ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
 
@@ -2336,6 +2341,10 @@ def _collection_shelf(collection: collections_mod.Collection,
         "p2p": _p2p_summary(collection),
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
+        # where its data came from: "remove…" defaults to forgetting a copy
+        # taken from peers and to retiring one built here (collection_remove);
+        # without it the dialog called every copy "built here from a corpus"
+        "source": getattr(collection, "source", "origin"),
         "stage_rates": stage_rates,
         "stage_etas": stage_etas,
         # the tooltip for the slot above, in words — built HERE because

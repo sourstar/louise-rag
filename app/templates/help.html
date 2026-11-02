@@ -832,14 +832,21 @@ rerank_model = "…"             # REQUIRED with the block: the body's model</pr
     are adopted, not fetched again.
   </p>
   <p class="note">
-    <b>Managing it.</b> Each collection card also offers:
+    <b>Managing it.</b> A collection card keeps its status, its embed mode
+    and its share box in sight; what it explains is under <i>Details</i> and
+    its buttons under <i>Options</i>. The buttons that discard work —
+    <i>clear errors &amp; retry…</i>, <i>reprocess lexical index…</i>,
+    <i>rescan…</i>, <i>remove…</i> — first say what they will do and what it
+    costs, and act only from the button that names the action. Options also
+    offers:
     <i>export bundle</i> — download this collection's vectors as a signed
     bundle (tar.gz) another node can import; <i>import bundle…</i> — upload
     a bundle into the collection's inbox, where the worker verifies and
     imports it next round (the full admission ladder applies — an upload is
     delivery, never trust); <i>remove…</i> — retire the collection's TOML
     (renamed aside, restorable) while its manifest, index and vectors stay
-    on disk untouched. Removing the synthesized default collection (a node
+    on disk untouched, or forget it: this node's copy is deleted, which
+    cannot be undone (the default for a copy taken from peers). Removing the synthesized default collection (a node
     that never declared a TOML) switches the node to TOML mode with zero
     collections; a node can have none. Create and remove both take effect
     live — the worker hot-reloads collections every round.
