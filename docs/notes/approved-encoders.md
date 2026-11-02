@@ -169,8 +169,15 @@ have just one vega-llama-cpp?") the wrapper probes only an EMBEDDER's load —
 LocalAI's ModelOptions `Embeddings` on and `Reranking` off
 (`vega_wrapper.loads_an_embedder`) — and passes a generation model or a
 reranker through, so ONE package, `vega-llama-cpp`, serves every llama.cpp
-model on the one engine. The `-gen`, `-p5`, `-up` and `-t5` packages retire
-with the move to LocalAI `16acc89`.
+model on the one engine that loads with `parallel:1`. MADLAD is the exception:
+it decodes 7 slots in waves, and the wrapper refuses any llama.cpp load
+without `parallel:1` (`determinism_lacks`), so it loads the engine
+(`louise-sycl-f16-llama-cpp-16acc89`) directly, as it did its own tar. The
+`-gen`, `-p5`, `-up` and `-t5` installs and the engines under them are
+removed once the gates on LocalAI `16acc89` pass (operator, 2026-11-02).
+The louise-python packages are renamed by what they run, `vega-louise-openvino`
+(was `-20261030`) and `vega-pytorch` (was `-20261021a`); their inner trees
+keep their names, so no run changes; `vega-llama-cpp-cpu` stays the CPU build.
 
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
