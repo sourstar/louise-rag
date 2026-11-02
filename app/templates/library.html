@@ -33,13 +33,27 @@
   <div class="note">{{ mode_says.get(worker_state, '') }}</div>
 </div>
 
-  <div class="note">counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %} — while this page is open each collection is recounted every 2 min, a large one less often (its card says when); after a time nobody looked, the first view shows the last count with its age</div>
+{# THE VERBOSE TEXT BEHIND ONE CLOSED LINE (operator, 2026-11-02: "Compact
+   all the verbose text information as 'details' … A crowded interface is a
+   bad interface"): the status stays in sight as the line itself, the
+   explanation is one tap away — `details.more`, the Ask tab's Settings look #}
+<details class="more" id="counts-age">
+  <summary>counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %}</summary>
+  <div class="note">While this page is open each collection is recounted every 2 min, a large one less often (its card says when); after a time nobody looked, the first view shows the last count with its age.</div>
+</details>
 <div class="grid">
 {% for c in shelves %}
 <div class="panel" data-collection="{{ c.name }}">
   <h2>{{ c.name }} <span class="badge">{{ c.plugin_label }}</span></h2>
   <div>
     <span class="badge brass">profile: {{ c.profile }}</span>
+    {# THE EMBEDDER (operator, 2026-11-02): the model `recipe_for` resolves —
+       the worker's own resolution — without VeGa's `vega-` prefix, and the
+       weights' quantization where the Codex states it (web._embedder_tag);
+       the full served name in the tooltip. No encoder, no tag. #}
+    {% if c.embedder %}
+    <span class="badge lapis embedder" title="served model: {{ c.embedder.served }}">embedder: {{ c.embedder.name }}{% if c.embedder.quant %} · {{ c.embedder.quant }}{% endif %}</span>
+    {% endif %}
     <span class="badge lapis">space: {{ c.space_id }}</span>
     {% if c.license.class %}
     {# The BORDER is the acknowledgement — green once these terms are
@@ -184,12 +198,12 @@
      on every card. #}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
-      <label style="margin:0 0 2px">Embed mode —
+      <label style="margin:0 0 2px">Embed mode{% if c.embed_device %} —
         {# which processor this collection's encoder actually spends: the
            GPU is the scarce, contended one; CPU encoders run beside it #}
         <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
               title="{{ 'shared GPU encoder' if c.embed_device == 'gpu' else 'CPU encoder container' }}">
-          {{ c.embed_device|upper }}</span>
+          {{ c.embed_device|upper }}</span>{% endif %}
       </label>
       {# persistent: writes embed_mode into the collection's TOML (Tier-2
          desired state, like create/ack) AND the runtime scope for
@@ -327,15 +341,19 @@
   <div class="panel" data-collection="{{ r.name }}" data-kind="refused">
     <h2>{{ r.name }} <span class="badge err">waiting</span></h2>
     <div class="note">{{ r.reason }}</div>
-    <div class="note">Its texts and the peers' vectors may still arrive; nothing is searched or embedded here until the reason above is gone.</div>
+    <details class="more"><summary>What this means</summary>
+      <div class="note">Its texts and the peers' vectors may still arrive; nothing is searched or embedded here until the reason above is gone.</div>
+    </details>
   </div>
   {% endfor %}
   {% endif %}
   <h2>Offered by peers <span class="badge">{{ offered|default([], true)|length }}</span></h2>
-  <div class="note">What live neighbours announce and this node does not hold. Nothing is fetched
-    that was not chosen here or with <code>louise share fetch</code>; <code>louise share offer</code>
-    lists the same. A collection taken here appears above once its Codex and snapshots are held;
-    its records and bundles follow at the worker's next fetch beat.</div>
+  <div class="note">What live neighbours announce and this node does not hold.</div>
+  <details class="more"><summary>Details</summary>
+    <div class="note">Nothing is fetched that was not chosen here or with <code>louise share fetch</code>;
+      <code>louise share offer</code> lists the same. A collection taken here appears above once its
+      Codex and snapshots are held; its records and bundles follow at the worker's next fetch beat.</div>
+  </details>
   {% if not offered|default([], true) %}<div class="note">Nothing is offered that this node does not already hold.</div>{% endif %}
   {% for o in offered|default([], true) %}
   <div class="panel" data-offer="{{ o.collection_id }}"{% if o.superseded_by %} style="opacity:.65"{% endif %}>
@@ -372,10 +390,13 @@
      targets are the collections its claims' uids name, from their newest
      snapshots. No server address, protocol, model name or Codex field is
      asked here: those are the command line's (shown below). #}
-  <div class="note">Choose the source and a name on this node. The node decides the rest — its
-    recipe for the source, the model on its server that runs the recipe's encoder, every slice,
-    embedding on demand — and says what it decided, or what is missing. The command line below
-    changes any of it.</div>
+  <div class="note">Choose the source and a name on this node.</div>
+  <details class="more"><summary>What the node decides</summary>
+    <div class="note">The rest — its recipe for the source, the model on its server that runs the
+      recipe's encoder, every slice, embedding on demand — and it says what it decided, or what is
+      missing: if no model there runs the encoder, nothing is created and the reason is said. The
+      command line changes any of it.</div>
+  </details>
   <div class="row">
     <div><label>Source</label>
       {# display names only — the internal id is minted into every document
@@ -394,16 +415,20 @@
     <div class="row">
       <div><label>Claims file (JSON Lines, one claim per line)</label><input type="file" id="na_claims" accept=".jsonl,.json,.ndjson,application/json,text/plain"></div>
     </div>
-    <div class="note">The node reads from the claims which held collections they are about (each
-      record's id names its source), checks every claim against each one's newest snapshot, titles
-      the collection after them and credits the claims' contributor. <b>Check</b> counts them and
-      writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and
-      signs its first snapshot.</div>
+    <details class="more"><summary>How the claims are checked</summary>
+      <div class="note">The node reads from the claims which held collections they are about (each
+        record's id names its source), checks every claim against each one's newest snapshot, titles
+        the collection after them and credits the claims' contributor. <b>Check</b> counts them and
+        writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and
+        signs its first snapshot.</div>
+    </details>
     <div class="actions">
       <button onclick="checkAnnotations()">Check claims</button>
       <button class="primary" onclick="createAnnotations()">Create on this node</button>
     </div>
-    <pre class="cli">louise hold collection create annotations --claims FILE --name &lt;name&gt; [--annotates &lt;collection&gt; --from-snapshot &lt;id&gt;] [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    <details class="more"><summary>Command line</summary>
+      <pre class="cli">louise hold collection create annotations --claims FILE --name &lt;name&gt; [--annotates &lt;collection&gt; --from-snapshot &lt;id&gt;] [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    </details>
     <div id="na_result"></div>
   </div>
   <div id="nc_std">
@@ -411,7 +436,9 @@
   <div class="actions">
     <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --name &lt;name&gt; [--encoder URL --api A --embed-model M --query-model M] [--space-from &lt;collection&gt;]</pre>
+  <details class="more"><summary>Command line</summary>
+    <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --name &lt;name&gt; [--encoder URL --api A --embed-model M --query-model M] [--space-from &lt;collection&gt;]</pre>
+  </details>
   <div id="nc_result"></div>
   </div>
 </div>
@@ -593,7 +620,8 @@ function explainCreate(){
   const plugin=document.getElementById('nc_plugin').value;
   const r=NODE_RECIPES[plugin];
   box.innerHTML=r
-    ? `The node creates it from its recipe for ${esc(plugin)} (<code>${esc(r)}</code>), with the model on its server that runs that recipe's encoder; the collection takes every slice and embeds on demand. If no model there runs it, nothing is created and the reason is said.`
+    // one line in sight; what the node then decides is behind "What the node decides"
+    ? `From this node's recipe for ${esc(plugin)}: <code>${esc(r)}</code>.`
     : `This node has no recipe for ${esc(plugin)}: a new ${esc(plugin)} collection's encoder, work budget and description are chosen once on the command line below. A ${esc(plugin)} collection a peer offers is taken from "Offered by peers" with no recipe at all.`;
 }
 async function createCollection(){

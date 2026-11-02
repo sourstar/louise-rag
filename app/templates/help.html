@@ -439,6 +439,17 @@
     the same function.
   </p>
   <p class="note">
+    Each card also names its <b>embedder</b> —
+    <span class="badge lapis">embedder: qwen3-embedding-4b · Q4_K_M</span> —
+    the model the collection's encoder is served as, resolved as the worker
+    resolves it, without the model server's <code>vega-</code> prefix; the
+    weights' quantization follows where the collection's Codex states it.
+    The tooltip gives the full served name. A collection with no encoder
+    shows none. On every page the longer explanations wait behind a closed
+    line (<i>Details</i>, <i>What this means</i>, <i>Command line</i> …):
+    a tap opens it.
+  </p>
+  <p class="note">
     Under <b>all</b>, the card reports the <i>dense backfill</i> still
     awaiting the encoder rather than the on-demand queue, which is empty by
     definition in that mode: backfill selects straight from the manifest and
