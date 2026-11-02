@@ -76,3 +76,48 @@ would change the space and force a re-embed (invariant 3).
 **Order:** A and B first: they are the largest and need no new language. C
 goes with the records-build redesign. D, E and F only after A and B are
 measured, since each saves ≤ 15 % of one path.
+
+## A, the walks: done 2026-11-02 (not deployed until the node's check passes)
+
+What changed in `app/plugins/wikipedia/wikitext.py`:
+- Each pass walks the tree once (`_walk`) and splices its edits into the
+  node lists that hold them (`_rewrite`). Before, every node was looked up
+  from the root again (`_do_strong_search`).
+- `parse_all` reads the page with one walk, and the templates are indexed
+  by name once. Before, it made 18 walks, 13 of them in `named_template`.
+- Nothing else moved. The same three `mwparserfromhell.parse` calls happen
+  per `parse_all`, and the rdf and fts stages still each parse.
+
+**Measured.** `parse_all`, perf_counter only. Reference and live rounds were
+interleaved, 11 rounds, and the median is shown. The 4-vCPU VM was shared
+with two other jobs, so read the ratios rather than the absolute times.
+
+| page | before | after | speed-up |
+|---|---|---|---|
+| test articles, mean of 4 (112–870 chars) | 2,916 µs | 1,987 µs | 1.47× |
+| SYNTHETIC 2k chars | 18.9 ms | 11.2 ms | 1.70× |
+| SYNTHETIC 5k chars | 49.7 ms | 21.2 ms | 2.34× |
+| SYNTHETIC 20k chars | 398 ms | 95 ms | 4.19× |
+
+- The cost per character is now flat at about 4.5 µs. Before, it rose
+  from 7 to 20 µs.
+
+**Identity.** The code before is kept verbatim in
+`tools/measure/wikitext_reference.py` and compared byte for byte by
+`json.dumps(sort_keys=True)`:
+- `tests/test_wikitext_identity.py` runs it on every string literal in
+  `tests/`, on 3,000 seeded adversarial pages and on 17 named edge cases.
+  It also compares the tree's shape after every pass.
+- A further 50,000 seeded pages (29.8 M chars) were compared once, outside
+  the suite: none differed.
+- Real pages go through `tools/measure/wikitext_identity.py`. Its verdict
+  must be IDENTICAL on ≥ 100,000 of the node's pages before this deploys.
+
+**What is left.** Of what remains, the three whole-page parses are about
+57 % on the 20k page (3 × 17 ms of ~88 ms) and about 80 % on a test page
+(3 × 1.1 ms of ~4 ms). Almost all of that is the library's Python tree
+builder: its C tokenizer is 10–18 %.
+- Two of the three parses are the same string. `parse_all` parses it, and
+  so does `_structured`, since `_tags` is idempotent. Sharing that one tree
+  would save a third, but it changes what a stage parses, so it belongs to
+  the "one parse" series. It was not done here.
