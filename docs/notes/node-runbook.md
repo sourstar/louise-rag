@@ -145,8 +145,8 @@ byte-identical (`tools/measure/records_ab.py`).
 | period | wikipedia build | GPU | gutenberg embed |
 |---|---|---|---|
 | 22:30–06:00 night | 12 cores | power limit 230 W (the card's own) | `all` |
-| 08:00–12:00, 13:30–16:30 day | 8 cores | 230 W | `all` |
-| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | stopped (SIGTERM, resumes at its next part) | power limit 110 W | `on-demand` |
+| 08:00–12:00, 13:30–16:30 day | 12 cores (8 until 2026-11-02) | 230 W | `all` |
+| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | 12 cores (stopped until 2026-11-02: the operator, "Use 12 CPU cores even in the quiet hours", a quieter CPU cooler) | power limit 110 W | `on-demand` |
 
   - The quiet limit is the B70's `power1_cap` (xe hwmon, PL1), the only lever on its
     noise: its blower has no pwm (firmware-controlled), and `fancontrol.py` reads its

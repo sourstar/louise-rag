@@ -11,11 +11,12 @@ profile = "06:00-08:00 quiet; 08:00-12:00 day; 12:00-13:30 quiet; 13:30-16:30 da
 # sat = "08:00-22:30 quiet; else night"
 
 [profiles.quiet]
-cpu_cores = 0       # background CPU work (records builds, the parse pool) pauses at the end of its unit
+cpu_cores = 12      # the operator, 2026-11-02: "Use 12 CPU cores even in the quiet hours" (a quieter
+                    # CPU cooler). 0 would pause background CPU work at the end of its unit
 gpu = "quiet"       # the card power-limited, still used: embedding goes on (operator, decision 3)
 
 [profiles.day]
-cpu_cores = 8
+cpu_cores = 12      # as quiet and night since 2026-11-02 (it was 8)
 gpu = "full"
 
 [profiles.night]

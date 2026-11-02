@@ -1,10 +1,12 @@
 #!/bin/bash
 # node-period.sh night|day|quiet — the operator's schedule (2026-10-26), every day, node time:
 #   22:30-06:00 night  build 12 cores   GPU uncapped, gutenberg embeds fully
-#   08:00-12:00 day    build 8 cores    GPU uncapped, gutenberg embeds fully (queries keep priority)
-#   13:30-16:30 day    build 8 cores    as the morning
-#   06:00-08:00, 12:00-13:30, 16:30-22:30 QUIET: build stopped, gutenberg on-demand, GPU power-limited
+#   08:00-12:00 day    build 12 cores   GPU uncapped, gutenberg embeds fully (queries keep priority)
+#   13:30-16:30 day    build 12 cores   as the morning
+#   06:00-08:00, 12:00-13:30, 16:30-22:30 QUIET: build 12 cores, gutenberg on-demand, GPU power-limited
 #     so the fan holds <= ~1,200 RPM
+# CPU: 12 cores in every period since 2026-11-02 (the operator: "Use 12 CPU cores even in the quiet
+# hours, I installed a new CPU cooler that is much more silent"); it was 8 by day and stopped when quiet.
 # TrueNAS cron runs it at each boundary. The build stops by SIGTERM and resumes at its next part
 # (wikipedia-build.sh); a start sets the container's cpu quota, and PARSE_PROCESSES follows it.
 set -u
@@ -24,7 +26,7 @@ gpu_limit() {  # $1 watts
 }
 case "$P" in
 night|day)
-  [ "$P" = night ] && cpus=12 || cpus=8
+  cpus=12
   bash "$S/set-embed.sh" gutenberg on-demand all
   gpu_limit "$FULL_W"
   # a build already running at another size (a manual start) is resized: stop, then start
@@ -32,7 +34,9 @@ night|day)
   CPUS=$cpus bash "$S/wikipedia-build.sh" start
   say "build $(tail -1 "$S/wikipedia-build.log" | cut -c1-160)" ;;
 quiet)
+  # the CPU no longer rests in the quiet periods (2026-11-02): the build goes on at 12 cores
   bash "$S/wikipedia-build.sh" stop
+  CPUS=12 bash "$S/wikipedia-build.sh" start
   say "build $(tail -1 "$S/wikipedia-build.log" | cut -c1-160)"
   bash "$S/set-embed.sh" gutenberg all on-demand
   gpu_limit "$QUIET_W" ;;
