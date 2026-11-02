@@ -416,3 +416,28 @@ def test_score_says_what_share_find_their_entity_within_each_reranker_depth(tmp_
     assert got["recall_at"] == {"@10": {"bge": 0.25}, "@40": {"bge": 0.5},
                                 "@50": {"bge": 0.75}, "@100": {"bge": 0.75}}
     assert got["recall10"]["bge"] == 0.25
+
+
+def test_each_language_has_its_own_table_and_pairs(tmp_path):
+    """The operator, 2026-11-02: "Split the results per language"."""
+    n, dim = 40, 8
+    rng = np.random.default_rng(5)
+    corpus = [{"uid": f"u{i}", "family": "en", "label": "", "chunks": ["c"]} for i in range(n)]
+    (tmp_path / "corpus.jsonl").write_text("".join(json.dumps(e) + "\n" for e in corpus))
+    qs = [{"uid": f"u{i}", "family": "en", "lang": "en" if i % 2 else "it", "query": "q"} for i in range(20)]
+    (tmp_path / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    docs = rng.normal(size=(n, dim)).astype("float32")
+    for enc, noise in (("bge", 1.0), ("nemotron", 0.05)):
+        np.save(tmp_path / f"vec-{enc}-00000.npy", docs)
+        np.save(tmp_path / f"qvec-{enc}.npy", docs[:20] + rng.normal(scale=noise, size=(20, dim)).astype("float32"))
+    got = ab.score(tmp_path)
+    assert set(got["languages"]) == {"en", "it"}
+    for lang in ("en", "it"):
+        lt = got["languages"][lang]
+        assert lt["queries"] == 10
+        assert set(lt["encoders"]["nemotron"]) == {"mrr10", "recall1", "@10", "@40", "@50", "@100"}
+        assert set(lt["pairs"]) == {"bge - nemotron"}
+    # the languages' means weigh back to the whole
+    whole = got["mrr10"]["nemotron"]
+    halves = [got["languages"][x]["encoders"]["nemotron"]["mrr10"] for x in ("en", "it")]
+    assert whole == pytest.approx(sum(halves) / 2, abs=1e-3)

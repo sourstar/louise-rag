@@ -529,6 +529,22 @@ def score(out: Path) -> dict:
             res["pairs"][f"{a} - {b}"] = {"mrr10": round(sum(d) / len(d), 4) if d else None,
                                          "p": round(randomization(d), 4) if d else None,
                                          "better": sum(x > 0 for x in d), "worse": sum(x < 0 for x in d)}
+    # EACH LANGUAGE ON ITS OWN (operator, 2026-11-02: "Split the results per
+    # language"): every metric and every pair, on that language's questions
+    res["languages"] = {}
+    for lang in sorted({q["lang"] for q in qs}):
+        idx = [i for i, q in enumerate(qs) if q["lang"] == lang]
+        table = {enc: {"mrr10": mean([rr[enc][i] for i in idx]),
+                       "recall1": mean([hit1[enc][i] for i in idx]),
+                       **{f"@{d}": mean([within[d][enc][i] for i in idx]) for d in DEPTHS}}
+                 for enc in names}
+        lp = {}
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                d = [rr[a][k] - rr[b][k] for k in idx]
+                lp[f"{a} - {b}"] = {"mrr10": round(sum(d) / len(d), 4), "p": round(randomization(d), 4),
+                                    "better": sum(x > 0 for x in d), "worse": sum(x < 0 for x in d)}
+        res["languages"][lang] = {"queries": len(idx), "encoders": table, "pairs": lp}
     # THE RULE (operator, 2026-10-31: "If bge is as good we switch to jina
     # because it's less disk space"): bge-m3 only if it finds entities BETTER
     # than jina-v3, on MRR@10 with p < 0.05; otherwise jina-v3 (512 dims)
