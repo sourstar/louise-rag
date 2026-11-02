@@ -121,3 +121,40 @@ builder: its C tokenizer is 10–18 %.
   so does `_structured`, since `_tags` is idempotent. Sharing that one tree
   would save a third, but it changes what a stage parses, so it belongs to
   the "one parse" series. It was not done here.
+
+## B, done (2026-11-02)
+
+`citations` (app/refs/normattiva.py) tries its two patterns only where a
+citation can start: before a digit run whose tail is a citation's (one
+`\d`-led regex, which `re` skips to in C), within the reach back the
+patterns allow (at most 15 or 23 runs of white space, no `;`), on one of
+the two-letter openings (`ar`, `le`, `l.`, `de`, …). The month pre-check is
+gone: the run's tail holds the month. No new dependency; RE2 was not needed.
+
+The patterns are unchanged byte for byte, and the answer is unchanged byte
+for byte against the verbatim old scan (tests/citations_reference.py) on:
+the fixtures, 80,000 generated texts (122 M characters) and 240 long ones
+(30–300 KB, 34 M), 543,831 citations in all (43,648 dated). 239 texts
+raised the same KeyError in both: a month spelled with ſ, ı or İ, which
+`re.I` matches and `str.lower` does not map back — the document an fts
+error. Fixed in a commit of its own (`normattiva._month`: the month read as
+the pattern matched it); those 239 now answer, as the old scan does once
+its month table reads the folds. The suite keeps 2,000 of the texts
+(tests/test_citations_fast_path.py).
+
+Measured: perf_counter, the median of 5 runs, then the median of 3 such
+runs; the 4-vCPU VM had other jobs on it (load 2.5–3.5), so ±30 %.
+
+| input | before | after |
+|---|---|---|
+| 400 KB of book prose, no digit | 152 ms | 2.1 ms |
+| the same with a citation, date or number every 0.5–4 KB | 245 ms | 3.2 ms |
+| 1,500-character abstract | 545 µs | 9.2 µs |
+| 400-character text | 133 µs | 3.0 µs |
+| a normattiva act's XML, 223 KB, 71 citations | 117 ms | 9.8 ms |
+| 1,500 characters of it | 855 µs | 86 µs |
+| gutenberg ~400 KB txt book: entity tagging | 204 ms | 20 ms |
+| the same book: the whole fts child | 176–200 ms | 25–39 ms |
+
+Tagging's largest cost is now `DictResolver`'s token `findall` (~15 ms of
+those 20; unchanged).
