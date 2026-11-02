@@ -63,8 +63,12 @@ def test_the_pool_runs_through_the_whole_search_stage_by_stage(tmp_path, monkeyp
         return [10.0 if query in t else 0.0 for t in texts]
     typed = pe.PlanStore(out / "typed.jsonl", lambda text: {
         "core": text, "translations": {}, "query_lang": "en", "only": [], "main": None, "status": "off"})
+    stored = np.load(out / "m" / "queries-bare.npy")
+
+    def encode(meta):
+        return lambda texts: [stored[["whale", "puppet"].index(t)].tolist() for t in texts]
     assert bake.rerank(out, 20_000, "gutenberg", RECIPE, _heads, plans=_plans(out), typed=typed,
-                       depths=[2, 4], call=call) == 0
+                       depths=[2, 4], call=call, encode=encode) == 0
     res = json.loads((out / bake.RERANKED / "pipeline.json").read_text())
     rows = res["rows"]
     # the row alone: book 2 third, book 4 fourth

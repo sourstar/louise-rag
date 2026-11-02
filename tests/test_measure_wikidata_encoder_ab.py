@@ -299,10 +299,18 @@ def test_the_sample_runs_through_the_whole_search_stage_by_stage(tmp_path, monke
     def call(recipe, query, texts, timeout):
         seen.append((query, [t.split("\n")[0] for t in texts]))
         return [10.0 if query.split()[0] in t else 0.0 for t in texts]
+    stored = {"bge": np.load(out / "qvec-bge.npy"), "harrier": np.load(out / "qvec-harrier.npy")}
+    typed_q = ["mountain snow", "castello torre"]
+
+    def encode(enc):
+        def fn(texts):
+            return [stored[enc][typed_q.index(t)].tolist() if t in typed_q else [0, 0, 1, 1, 0, 0, 0, 0]
+                    for t in texts]
+        return fn
     res = ab.rerank(out, "wikipedia", encoders=["bge", "harrier"], recipe=recipe,
                     plans=_plans(out, {"mountain snow": {"it": "neve montagna"},
                                        "castello torre": {"en": "castle tower"}}),
-                    typed=_plans(out / "typed", {}), depths=[2, 4], call=call)
+                    typed=_plans(out / "typed", {}), depths=[2, 4], call=call, encode=encode)
     rows = res["rows"]
     assert rows["bge [translated]"]["mrr@10"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
     assert rows["harrier [typed]"]["hit@1"] == 1.0
@@ -310,6 +318,7 @@ def test_the_sample_runs_through_the_whole_search_stage_by_stage(tmp_path, monke
     assert rows["bge + rerank@4 [translated]"]["hit@1"] == 1.0
     assert "bge + BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [translated]" in res["pairs"]
     assert "BM25 + rerank@4 [translated]  vs  BM25 + rerank@4 [typed]" in res["pairs"]
+    assert "bge per-language [translated]" in rows and "harrier per-language + BM25 [translated]" in rows
     variants = {q for q, _ in seen}
     assert {"neve montagna", "castle tower"} <= variants, "each record judged in its language"
     assert (out / "pipeline" / "pipeline.json").exists()

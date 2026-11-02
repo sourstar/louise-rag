@@ -487,8 +487,19 @@ def score(out: Path) -> dict:
 CHUNK_DEPTH = 2_000
 
 
+def _query_encoder(encoder: str):
+    """Texts through `encoder`'s query side as `embed` asked its questions
+    (`_recipe`, the production client, the encoder leased)."""
+    def encode(texts: list[str]) -> list[list[float]]:
+        from app import embeddings, encoder_use
+        recipe = _recipe(encoder)
+        with encoder_use.held(recipe, holder=encoder_use.holder(f"pipeline {encoder}"), query=True):
+            return embeddings.embed_calibration(recipe, texts, query=True, asked=False)
+    return encode
+
+
 def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, typed=None, depths=None,
-           doc_lang: str | None = None, call=None, index=None) -> dict:
+           doc_lang: str | None = None, call=None, index=None, encode=None) -> dict:
     """The whole search on this sample, stage by stage
     (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
     encoder alone and fused with BM25, and each after `recipe`'s reranker
@@ -512,6 +523,7 @@ def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, typed=N
                  for q in qs]
     pairs = [(d, j) for d, e in enumerate(corpus) for j in range(len(e["chunks"]))]
     rankings = {}
+    rankers = {}
     for enc in encoders:
         blocks = sorted(out.glob(f"vec-{enc}-[0-9]*.npy"))
         if not blocks or not (out / f"qvec-{enc}.npy").exists():
@@ -523,6 +535,13 @@ def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, typed=N
         dn = doc / np.linalg.norm(doc, axis=1, keepdims=True)
         qn = qv / np.linalg.norm(qv, axis=1, keepdims=True)
         sims = qn @ dn.T
+        # the per-language vector leg: translations embedded as this
+        # encoder's query side (jina's two sides are not reproduced here)
+        if enc not in ("jina", "jina-gguf"):
+            rankers[enc] = pe.QueryRanker(
+                out / "pipeline" / f"qvec-{enc}.jsonl",
+                (encode or _query_encoder)(enc), dn, pairs, depth=CHUNK_DEPTH,
+                check=([q["query"] for q in qs], qv))
         top = min(CHUNK_DEPTH, sims.shape[1])
         rankings[enc] = []
         for q in range(len(qs)):
@@ -530,7 +549,8 @@ def rerank(out: Path, collection, *, encoders: list[str], recipe, plans, typed=N
             best = best[np.lexsort((best, -sims[q][best]))]
             rankings[enc].append([pairs[int(i)] for i in best])
     return pe.evaluate(out / "pipeline", collection, docs, questions, rankings, recipe=recipe,
-                       plans=plans, typed=typed, depths=depths or pe.DEPTHS, call=call, index=index,
+                       plans=plans, typed=typed, query_rankers=rankers,
+                       depths=depths or pe.DEPTHS, call=call, index=index,
                        say=lambda m: print(m, file=sys.stderr))
 
 

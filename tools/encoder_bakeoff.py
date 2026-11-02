@@ -1027,8 +1027,25 @@ def _record(chunk_id: str) -> str:
     return chunk_id.rsplit(":", 2)[0]              # retrieval.record_of's split
 
 
+def _row_query_encoder(meta: dict):
+    """Texts through a row's own query side, as `embed` asked its questions:
+    a collection's served recipe (its instruction prefixed by the app), or
+    the row's url/model with its recorded prefix; the encoder leased."""
+    def encode(texts: list[str]) -> list[list[float]]:
+        from app import embeddings, encoder_use
+        if meta.get("from_collection"):
+            recipe, prefix = served_recipe(meta["from_collection"]), ""
+        else:
+            recipe = _recipe(meta["url"], meta["model"], meta.get("dim"), int(meta["ctx"]), 1,
+                             meta.get("api") or "openai")
+            prefix = meta.get("query_prefix") or ""
+        with encoder_use.held(recipe, holder=encoder_use.holder("pipeline row"), query=True):
+            return embeddings.embed_calibration(recipe, [prefix + t for t in texts], query=True)
+    return encode
+
+
 def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans, typed=None,
-           depths=None, only: list[str] | None = None, call=None) -> int:
+           depths=None, only: list[str] | None = None, call=None, encode=None) -> int:
     """The whole search on the pool, stage by stage
     (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
     encoder, each fused with BM25, and each after `recipe`'s reranker at
@@ -1056,7 +1073,7 @@ def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans, typed
                    chunks=[corpus.texts[p] for p in members[at[rec]]]) for rec in records]
     questions = [pe.Question(text=t, relevant=frozenset(where[p][0] for p in rel))
                  for t, rel in zip(queries.texts, queries.relevant)]
-    rankings = {}
+    rankings, rankers = {}, {}
     for run, meta in runs_in(out):
         if meta.get("kind") == "lexical" or meta.get("limit"):
             continue
@@ -1066,11 +1083,20 @@ def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans, typed
         qry = np.load(run / f"queries-{meta['slug']}.npy")
         rankings[label_of(meta)] = [[where[p] for p in r]
                                     for r in rank_dense(doc, qry, corpus, CHUNK_DEPTH)]
+        # the per-language vector leg: translations through this row's own
+        # query side (its recipe and its instruction), checked against its
+        # own question vectors before anything is measured with it
+        unit = doc / np.linalg.norm(doc, axis=1, keepdims=True)
+        rankers[label_of(meta)] = pe.QueryRanker(
+            out / RERANKED / f"qvec-{meta['slug']}-{run.name}.jsonl",
+            (encode or _row_query_encoder)(meta), unit, where, depth=CHUNK_DEPTH,
+            check=(queries.texts, qry))
     if not rankings:
         print(f"{out}: no embedded row to measure")
         return 0
     pe.evaluate(out / RERANKED, collection, docs, questions, rankings, recipe=recipe,
-                plans=plans, typed=typed, depths=depths or pe.DEPTHS, call=call)
+                plans=plans, typed=typed, query_rankers=rankers,
+                depths=depths or pe.DEPTHS, call=call)
     return 0
 
 
