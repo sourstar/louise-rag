@@ -36,7 +36,13 @@ have yet (the operator, 2026-11-02: "by using the translation model harrier
 is supposed to have a better score?"), "<encoder> per-language" also
 embeds each of the plan's translations into a language the set holds and
 fuses those vector lists as variants of the one vector leg, as the text
-leg's are (`_merge_rrf`: a record at its best rank across them). Scored per question on the
+leg's are (`_merge_rrf`: a record at its best rank across them). And
+"<encoder> translated-only" (the operator, 2026-11-02, on wikidata: "does it
+make sense to translate the query always to english for bge?") embeds the
+question in the set's languages only: as typed where its language is held,
+the plan's translations into the others, the typed question where the plan
+has none — on a set held in one language, the question in that language and
+nothing else. Scored per question on the
 rank of the first relevant record: MRR@5 and @10, hit@1/5/10, and what
 reached 40, 50 and 100 (the reranker's ceiling at that depth). Pairs, by
 Fisher's randomization test: the encoders against each other at each stage,
@@ -337,6 +343,7 @@ def metrics(ranks: Sequence[int], depths: Sequence[int] = DEPTHS) -> dict:
 TRANSLATED, TYPED = "translated", "typed"
 #: the vector leg run with each translation too (translated rows only)
 PER_LANGUAGE = "per-language"
+TRANSLATED_ONLY = "translated-only"
 
 
 def row_name(leg: str, depth: int | None, mode: str) -> str:
@@ -387,7 +394,8 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
     held_langs = {(d.lang or "").lower() for d in docs}
     rankers = query_rankers or {}
     legs = ["BM25"] + [f"{e}{s}" for e in rankings for s in ("", " + BM25")]
-    per_lang = [f"{e} {PER_LANGUAGE}" for e in rankings if e in rankers]
+    per_lang = [f"{e} {s}" for e in rankings if e in rankers
+                for s in (PER_LANGUAGE, TRANSLATED_ONLY)]
     legs_tr = legs + [f"{b}{s}" for b in per_lang for s in ("", " + BM25")]
     ranks: dict[tuple[str, str, int | None], list[int]] = {}
     langs: list[str | None] = []
@@ -413,11 +421,18 @@ def evaluate(out: Path, collection, docs: Sequence[Doc], questions: Sequence[Que
                 if mode == TRANSLATED and e in rankers:
                     variants = [t for lang, t in sorted(plan.translations.items())
                                 if lang in held_langs and t and t != plan.core]
-                    vecs = [vec] + [vector_list(r, docs, limit) for r in rankers[e](variants)]
+                    tvecs = [vector_list(r, docs, limit) for r in rankers[e](variants)]
+                    vecs = [vec] + tvecs
                     merged[f"{e} {PER_LANGUAGE}"] = retrieval._merge_rrf(
                         vecs, limit, query_lang=plan.query_lang)
                     merged[f"{e} {PER_LANGUAGE} + BM25"] = retrieval._merge_rrf(
                         texts + vecs, limit, own=own, query_lang=plan.query_lang)
+                    held = (plan.query_lang or "").lower() in held_langs
+                    only = ([vec] if held else []) + tvecs or [vec]
+                    merged[f"{e} {TRANSLATED_ONLY}"] = retrieval._merge_rrf(
+                        only, limit, query_lang=plan.query_lang)
+                    merged[f"{e} {TRANSLATED_ONLY} + BM25"] = retrieval._merge_rrf(
+                        texts + only, limit, own=own, query_lang=plan.query_lang)
             lists[mode] = (plan, merged)
         # the reranker's pairs: every list's top records, their matched
         # chunks, each against its form of the question; the deepest list

@@ -213,6 +213,28 @@ retrieval prompt, one text a request.
   re-embed decision (2026-11-02, "Choice A"); the reason is written in
   wikidata.toml.
 
+#### Which query the vector leg embeds (operator, 2026-11-02)
+
+"Being the summary of wikidata in english only, does it make sense to
+translate the query always to english for bge?"
+- **Where the translation goes today:** wikidata's texts are English. The
+  word search and the reranker already get the plan's English translation.
+  Only the vector leg embeds the question as typed.
+- **W1 says nothing either way.** bge-m3 scored Italian questions 0.663 and
+  English 0.636, on different entities.
+- **An English query does not close the gap to harrier by itself.** harrier
+  leads on the English questions too (0.777 against 0.636), where no
+  translation is involved.
+- **Measured on the same questions** in the whole-search run (`pipeline_eval`):
+  - `bge translated-only` is the proposal: the question in the set's
+    language alone, so the Italian question by its English translation;
+  - `bge per-language` keeps the typed question and adds the translation,
+    fused, which hedges against a mistranslated name;
+  - each is compared against `bge`, alone, fused with BM25 and reranked,
+    and the same for harrier.
+- **Its cost in production:** none for the translation, which the plan
+  already makes, and one more query embedding.
+
 #### The re-embed time (München, 2026-11-02 13:46–14:20, the card alone)
 
 W1's 21,348 chunks through VeGa at batch 16. "In flight" counts the requests
