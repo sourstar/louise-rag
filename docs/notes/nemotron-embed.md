@@ -432,6 +432,38 @@ The afternoon's 24.1 and 33.4 were the CPU twin's doing, not the engine's
 - **So the gutenberg row runs on the candidate engine,** where the count is
   expected to be 0.
 
+## Gutenberg, vector only (München 18:36–19:23, candidate engine, no other job)
+
+The pool: 53,621 documents, 490 queries judged by work. nemotron-up
+embedded from scratch, its prefixes, 2,048 dims, 4 in flight, one text a
+request.
+
+| model | hit@1 | hit@10 | MRR@10 | hit@40 | hit@50 | hit@100 |
+|---|---|---|---|---|---|---|
+| Qwen3-4B Q4 (stored, gutenberg's) | 0.7918 | 0.9776 | 0.8630 | 0.9939 | 0.9959 | 0.9980 |
+| **nemotron-up** | **0.8204** | 0.9612 | **0.8682** | 0.9918 | 0.9939 | **1.0000** |
+| harrier (gutenberg's instruction) | 0.7429 | 0.9041 | 0.7989 | 0.9469 | 0.9531 | 0.9633 |
+| bge-m3 F16 | 0.6939 | 0.9041 | 0.7618 | 0.9653 | 0.9714 | 0.9755 |
+
+- **Paired MRR@10:**
+  - nemotron − Qwen3-4B = +0.005, p = 0.68: level;
+  - nemotron − harrier = +0.069, p = 0.0002;
+  - nemotron − bge-m3 = +0.106, p = 0.0001.
+- **Against Qwen3-4B:** better at hit@1 (+0.029) and at depth 100, worse at
+  hit@10 (−0.016). None of these is tested.
+- **Speed:** 19.1 texts/s with the card 94.8 % busy, against gutenberg's
+  Qwen3-4B at 4.4 texts/s in production (batch 16): ~4.3× faster.
+
+**Across the three general collections,** nemotron is the best or tied-best
+on each:
+- wikidata: level with harrier, ahead on Italian;
+- wikipedia: ahead of bge-m3 and harrier;
+- gutenberg: level with Qwen3-4B.
+
+No other candidate is. The vector is 2,048 dims, or 1,024 cut for almost
+nothing. The re-embed is coarse: gutenberg ~5–6 card-days, wikidata ~7–9,
+wikipedia smart ~15, so ~4 weeks of card, ~1.5 months with the quiet hours.
+
 ## Both modes are part of a model's validation (operator, 2026-11-02)
 
 "About the validation of a model, both modes need to be tested. A model
