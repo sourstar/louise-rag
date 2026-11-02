@@ -421,9 +421,9 @@ Per collection, the candidates and the sets:
 
 | collection | candidates | sets |
 |---|---|---|
-| LEGI (fr) | bge-m3, Qwen3-Embedding-8B, lemone-embed-pro | BSARD (test), Syntec, FiscalQA Pro if its licence allows |
-| NeuRIS (de) | litil-embed-0.6b, dinghy-law-4b-v1, Nemotron-3-Embed-8B (if llama.cpp serves it), Qwen3-Embedding-8B; **BM25 and the hybrid** | GerLayQA (BGB, StGB, ZPO) on our § records; LegalQuAD and GerDaLIRSmall as the case-law check |
-| EU-en | Qwen3-Embedding-8B, Nemotron-3-Embed-8B (if llama.cpp serves it), bge-m3 | EU2UK test, EUR-Lex-Sum-en, LEMUR-en, MLEB GDPR |
+| LEGI (fr) | bge-m3, Qwen3-Embedding-8B, lemone-embed-pro, **Nemotron-3-Embed-1B** | BSARD (test), Syntec, FiscalQA Pro if its licence allows |
+| NeuRIS (de) | litil-embed-0.6b, dinghy-law-4b-v1, Nemotron-3-Embed-8B (if llama.cpp serves it), **Nemotron-3-Embed-1B**, Qwen3-Embedding-8B; **BM25 and the hybrid** | GerLayQA (BGB, StGB, ZPO) on our § records; LegalQuAD and GerDaLIRSmall as the case-law check |
+| EU-en | Qwen3-Embedding-8B, Nemotron-3-Embed-8B (if llama.cpp serves it), **Nemotron-3-Embed-1B**, bge-m3 | EU2UK test, EUR-Lex-Sum-en, LEMUR-en, MLEB GDPR |
 | EU-it | DAR-legal-it, Qwen3-Embedding-8B | JuriFindIT (EU acts) |
 | EU-fr, EU-de | the national winners | EUR-Lex-Sum, LEMUR in their language |
 | the other twenty | Qwen3-Embedding-8B, the compromise | EUR-Lex-Sum and LEMUR per language, as each collection is made |
@@ -431,3 +431,37 @@ Per collection, the candidates and the sets:
 Each set passes the licence gate before it is used (invariant 9). The
 NC-SA sets (BSARD, LLeQA, JuriFindIT, GDPR) are used for measurement
 only, as JuriFindIT already is.
+
+### Nemotron-3-Embed-1B — to evaluate (operator, 2026-11-02)
+
+The operator: "Note for the future legal collections: evaluate Neomotron 1b,
+I read that it has very good scores for legal contents in english, german
+end french". It joins the candidates above for LEGI (fr), NeuRIS (de) and
+EU-en, on the same sets. Its family's 8B already leads the open models on
+MLEB and on German case law here (§2, §3), and the 1B is distilled from it.
+
+**From its card, `nvidia/Nemotron-3-Embed-1B-BF16` [V]:**
+- NVIDIA, released 2026-07-16, OpenMDW-1.1 licence ("ready for commercial
+  use"; Apache-2.0 named as additional information).
+- 1.14 B parameters, pruned from Ministral-3-3B-Instruct-2512 and distilled
+  from Nemotron-3-Embed-8B.
+- Bidirectional attention, mean pooling, 2,048 dimensions. A Matryoshka cut
+  to 1,024 or 512 is allowed, renormalised. Context 32,768 tokens.
+- 34 languages evaluated, en, de, fr and it among them.
+- Its legal scores are not on the card. NVIDIA's blog claims RTEB's lead
+  for its size [U]. Our sets decide.
+
+**Before it can be measured here, three things to settle:**
+1. **Engine.** It is a Mistral-3 text model with bidirectional attention and
+   mean pooling. Whether llama.cpp (c0fd786) runs that arch non-causally is
+   unchecked. If not, the route is the torch backend (louise-python), as
+   jina-v3 was. The parity check against sentence-transformers on the CPU
+   applies either way (gutenberg-encoder-bakeoff.md: cosine ≥ 0.99).
+2. **A document prefix.** It wants `passage: ` on documents as well as
+   `query: ` on queries. Our space states only a query `instruction`
+   (09 §9.3), so a document-side prefix is a space-format change: ask
+   before using it, or measure whether it can be dropped.
+3. **The newer release.** `nvidia/Nemotron-3.5-Embed-1B-BF16` (2026-10-21,
+   tagged visual-document-retrieval) [U]: check whether its text path is
+   the better one before choosing between the two.
+
