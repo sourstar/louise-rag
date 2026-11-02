@@ -358,6 +358,19 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
 - **A first run is superseded.** The node's scratch tool left out the
   `passage: ` prefix, so its bit-identity column compared different inputs.
   Arms embed through `wikidata_encoder_ab.encoder_fn` from now on.
+- **The candidate engine is REPRODUCIBLE, exact** (invariant 12; München
+  21:01:54–21:34:55, #241's wrapper, exit 0):
+  - `vega_repro_check --model vega-nemotron-3-embed-1b-up --loads 3
+    --repeats 2 --window 8191`, exact mode;
+  - 528 of 528 texts (16 spread, 512 swept) bit-identical over 3,168
+    vectors: 3 fresh loads × 2 shuffled passes.
+- **So the candidate passes every correctness step:**
+  - tokens: 0 texts differ on W1, P3 and gutenberg;
+  - compare: ≥ 0.999999 on the 48 and on the 71;
+  - speed and scores: the live engine's;
+  - invariant 12: exact.
+
+  Whether it becomes the node's llama.cpp engine is the operator's decision.
 
 ## Wikipedia P3, vector only (München, 2026-11-02 16:38–16:48)
 
