@@ -370,7 +370,16 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
   - speed and scores: the live engine's;
   - invariant 12: exact.
 
-  Whether it becomes the node's llama.cpp engine is the operator's decision.
+  **Operator, 2026-11-02: A.** It becomes the node's ONE llama.cpp engine,
+  for every model, after that night's re-gates:
+  - the repo's series moved to its base (LocalAI `16acc89`), with P3 and P4
+    (MADLAD) rebased and checked on the CPU at `ddf48f8`
+    (docs/notes/localai-bugs.md, "Patches we carry");
+  - on the node: the sycl_f16 build from the series; every llama.cpp model
+    moved to it; each space gated on it; MADLAD's byte compare against the
+    old engine; then the old backends retired;
+  - the CPU variant moves with #241's rebuild, after the CPU reference
+    completes (RULE 1: the reference is not redone).
 
 ## Wikipedia P3, vector only (München, 2026-11-02 16:38–16:48)
 

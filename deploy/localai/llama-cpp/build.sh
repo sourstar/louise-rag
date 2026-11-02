@@ -17,10 +17,11 @@
 # tagged louise-llama-cpp:<variant>-<series digest>.
 #
 # SERIES_FILE=<path> builds from another series file: a CANDIDATE engine on a
-# newer base, beside the live one (2026-11-02: LocalAI master, whose llama.cpp
-# carries the SYCL host-wait and Tekken tokenizer fixes). Its lines are read
-# as the series' are; patch names resolve in deploy/localai/patches. The live
-# series and its tag are unchanged when it is unset.
+# newer base, beside the live one. Its lines are read as the series' are;
+# patch names resolve in deploy/localai/patches; the series and its tag are
+# unchanged when it is unset. (2026-11-02: the candidate on LocalAI master
+# 16acc89, llama.cpp ddf48f8, passed its checks and became the series, the
+# operator's A: one llama.cpp engine for every model.)
 #
 # Needs git, docker (BuildKit) and the network; nothing from Louise's image.
 # The engine it builds is a NEW engine (another tree than upstream's): each

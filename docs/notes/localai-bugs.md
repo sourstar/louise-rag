@@ -440,9 +440,23 @@ until 2026-10-09). A patch leaves the series when upstream merges it, or
 when a merged change makes it unnecessary. `tests/test_localai_patches.py`
 holds the series, the files and this section to each other.
 
+**Base since 2026-11-02: LocalAI master
+[`16acc89`](https://github.com/mudler/LocalAI/tree/16acc8926bb8a27b67dc4d419dbceaeb4110f7af)**
+(`LLAMA_VERSION` `ddf48f8`, which carries the Tekken pre-tokenizer fixes
+Nemotron-3-Embed needs and the SYCL host-wait removal). Operator, 2026-11-02,
+choice A: it becomes the ONE llama.cpp engine of every model on the node
+(docs/notes/nemotron-embed.md, "The candidate engine"). P1 and P5 apply
+unchanged (offsets only). P2 was rebased by München for the candidate build
+(two hunks re-placed, its added and removed lines identical). P3 and P4 were
+rebased onto `ddf48f8`'s `server-context.cpp` (P3 re-anchored; two hunks of P4
+re-placed by hand around upstream's new audio-stream and realtime conditions),
+their code unchanged, and pass the P3/P4 CPU checks again at `ddf48f8` (each
+entry below). The series as committed applies with no fuzz and no rejected
+hunk at every level. P6 and P7 (staged) are NOT rebased yet.
+
 ### P1. `GET /system` lists the options each loaded model was given
 
-*Base: `v4.12.1` [`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) since 2026-10-27; written on master
+*Base: master `16acc89` since 2026-11-02 (unchanged bytes, offsets only); `v4.12.1` [`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) from 2026-10-27; written on master
 [`58830f7`](https://github.com/mudler/LocalAI/tree/58830f7ac508845a6f4efa32cfca06af422d4d82)
 (2026-10-02). File: `0001-system-list-load-options.patch`. 9 files, 201
 lines added, none removed.*
@@ -496,8 +510,9 @@ which the DEBUG log already shows.
 
 ### P2. llama.cpp backend: `Embedding` embeds the token ids it is given
 
-*Base: `v4.12.1`
-[`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) since 2026-10-27 (first `v4.11.0` = `58830f7`),
+*Base: master `16acc89` since 2026-11-02 (rebased by München: two hunks
+re-placed, the same added and removed lines); `v4.12.1`
+[`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) from 2026-10-27 (first `v4.11.0` = `58830f7`),
 after P1 (they touch different files). File:
 `0002-llama-cpp-embed-token-ids.patch`. 5 files, 99 lines added, none
 removed.*
@@ -593,7 +608,8 @@ refused, as before.
 
 ### P3. llama.cpp backend: the encoder of encoder-decoder models runs
 
-*Base: `v4.12.1` (`ec92740`), after P1 and P2. File:
+*Base: master `16acc89` (llama.cpp `ddf48f8`) since 2026-11-02, re-anchored,
+the code unchanged; `v4.12.1` (`ec92740`) before. After P1 and P2. File:
 `0003-llama-cpp-encoder-decoder.patch`. It adds
 `backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch`, a
 llama.cpp patch that the backend's `prepare.sh` applies to llama.cpp
@@ -672,7 +688,10 @@ as one JSON prompt (translator-choice.md, "Code changes").
 
 ### P4. llama.cpp backend: encoder-decoder slots are encoded in waves
 
-*Base: `v4.12.1` (`ec92740`), after P1–P3. File:
+*Base: master `16acc89` (llama.cpp `ddf48f8`) since 2026-11-02: two hunks
+re-placed by hand in `release()` and in the loop that picks the generating
+slots, around upstream's new audio-stream and realtime conditions, the code
+unchanged; `v4.12.1` (`ec92740`) before. After P1–P3. File:
 `0004-llama-cpp-encoder-decoder-waves.patch`. It adds
 `backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch`,
 applied by the backend's `prepare.sh` after P3's. 173 lines added and 40
@@ -717,6 +736,20 @@ byte-identical to P3's; the same 7 prompts in 4 arrival orders give the
 same 7 outputs (T3); a request arriving while a wave decodes is answered
 after it; an input over `n_ubatch` and `n > 1` are refused with 400 and
 the server goes on; 60 requests after a burst leave every slot empty.
+**Checked again on CPU at `ddf48f8`** (P3 + P4 rebased, 2026-11-02;
+llama-server built from the tree the committed series produces): a
+random-weight T5 written with gguf-py (`test-llama-archs -o` no longer
+saves T5), weights N(0, 1) so the output follows the input, the TEST
+tokenizer plus an EOS id (P3's load probe encodes EOS; MADLAD has one), 7
+slots, ubatch 1024, `-kvu` (without it upstream's graph reserve asserts for
+T5 with several sequences; LocalAI's server sets `kv_unified` by default).
+A lone request equals llama-completion's greedy output, the library's own
+encoder-decoder path, on 7 of 7 prompts; 4 arrival orders give the same 7
+outputs; in-wave equals alone on 7 of 7; 1,200 tokens are refused with
+"input (1200 tokens) is too large for the encoder" and `n_cmpl: 2` with "an
+encoder-decoder model does not support n > 1", both 400, and the server
+goes on; after 60 requests all 7 slots are idle. The card gates follow on
+the node (below), with the MADLAD byte compare against today's engine.
 **On the card:** the gates in tools/measure/t5waves.py (T4 against P3's
 one-slot bytes, T3, in-wave vs alone, seconds per question), then the
 retrieval comparison on the 451 + 39 queries (translator-choice.md).
@@ -827,7 +860,8 @@ oneMKL path. The f32 cache stays until the P5 tar passes its gates.
 
 ### P5. llama.cpp backend (ggml-sycl): the batched F16 matmul converts src1 for the GEMM that runs
 
-*Base: `v4.12.1` (`ec92740`), after P1–P4 (independent of them: a ggml-sycl
+*Base: master `16acc89` since 2026-11-02 (unchanged bytes; at `ddf48f8` its
+hunks apply with offsets, no fuzz); `v4.12.1` (`ec92740`) before. After P1–P4 (independent of them: a ggml-sycl
 file). File: [`deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch`](../../deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch),
 which adds `backend/cpp/llama-cpp/patches/0005-sycl-batched-mul-mat-src1-strides.patch`
 (applies to plain `c0fd786`, checked with `patch --dry-run`). Written
@@ -908,7 +942,9 @@ rebuild carries P5 (approved-encoders.md "Known limits").
 
 ### P6 (staged). llama.cpp backend: the encoder output is kept per sequence
 
-*Base: `v4.12.1` (`ec92740`), after P1–P4. File:
+*Base: `v4.12.1` (`ec92740`), after P1–P4. NOT yet rebased onto `16acc89`:
+at `ddf48f8` its llama.cpp patch has 4 rejected hunks; it is rebased before
+its card gates. File:
 `deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`
 (staged: built and tested on the CPU 2026-10-28, NOT in `series` until its
 card gates pass — staged/README.md). It adds
@@ -975,7 +1011,8 @@ the retrieval comparison. Stage 2 (the device store) is P6 below.
 
 ### P7 (staged). llama.cpp backend: the encoder outputs live on the device
 
-*Base: `v4.12.1` (`ec92740`), after P1–P5. File:
+*Base: `v4.12.1` (`ec92740`), after P1–P5. NOT yet rebased onto `16acc89`
+(with P6). File:
 `deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`
 (staged with P5: built and tested on the CPU 2026-10-28, NOT in `series`
 until the card gates pass — staged/README.md). It adds
