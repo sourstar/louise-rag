@@ -335,6 +335,32 @@ def test_a_run_that_batches_differently_is_validated_for_single_texts_only():
     assert body["batch_invariant"] is False
 
 
+def test_a_batch_that_answers_only_the_long_texts_wrong_is_found():
+    """2026-11-02, gutenberg (München's gut-diag): batch 16 answered the five
+    longest texts of the set wrong — cosine 0.91–0.99 to the member — while
+    each alone was right, and the check, the sixteen short fingerprint texts,
+    said "as one text at a time". The batches now carry the set's longest
+    texts too, together in one request."""
+    codex = codex_768()
+    ref = reference()
+    texts = emb.gate_texts(codex, "document", None)
+    long = set(emb.longest(texts, emb.LONG_PROBE))
+    assert len(long) == emb.LONG_PROBE
+    assert min(map(len, long)) >= max(len(t) for t in texts if t not in long)
+
+    def together(batch):
+        """Right for short texts, wrong for a long text in a batch."""
+        return [fake_embed([t], tag=b"wrong" if len(batch) > 1 and t in long else b"")[0]
+                for t in batch]
+    run = emb.run_gate(codex, reference=ref, embed=lambda t: ref, seed=b"\x09" * 32,
+                       stated=a_stated_run(codex), embed_one=fake_embed, contribute=together)
+    assert run.batch_invariant is False, "the long texts' batch is compared too"
+    right = emb.run_gate(codex, reference=ref, embed=lambda t: ref, seed=b"\x09" * 32,
+                         stated=a_stated_run(codex), embed_one=fake_embed,
+                         contribute=fake_embed)
+    assert right.batch_invariant is True
+
+
 def test_an_asymmetric_spaces_query_run_is_gated_against_its_own_reference():
     codex = codex_768()
     seen = {}
