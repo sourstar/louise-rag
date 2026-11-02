@@ -126,7 +126,7 @@ byte-identical (`tools/measure/records_ab.py`).
   wrapped by `deploy/scheduled/set-pause.sh <collection> pause|resume`.
 - **Embedding mode**: `set-embed.sh <collection> <from> <to>` rewrites one line of
   the TOML and applies it.
-- **Cron jobs** (TrueNAS, `midclt call cronjob.query`):
+- **Cron jobs** (TrueNAS, `midclt call cronjob.query`). **All DISABLED as of 2026-11-02** (München, checked): 5–14 and 18–21. The in-app profiles (`platform.toml` `[schedule]`/`[profiles]`, app/node_profile.py, app/cpu_limit.py, the GPU governor) apply the day's periods; `node-period.sh` is kept, current, for a cron that runs it again. The table records what each was:
 
 | id | when | what |
 |---|---|---|
@@ -139,8 +139,8 @@ byte-identical (`tools/measure/records_ab.py`).
 | 5, 7–12 | — | DISABLED, kept: the earlier 06:00 switch, pubmed/wikidata/contribute windows |
 
 - **The day's periods** (the operator, 2026-10-26; replaces every earlier window; every
-  day, weekends too; the NAS is where people live). `deploy/scheduled/node-period.sh
-  night|day|quiet` applies one (log `/root/louise-scheduled/node-period.log`):
+  day, weekends too; the NAS is where people live). Applied by the in-app profiles; `deploy/scheduled/node-period.sh
+  night|day|quiet` did it while its crons ran (log `/root/louise-scheduled/node-period.log`). **Today the GPU is at 230 W in every period** (`[profiles.quiet] gpu = "full"`, node-profiles-design.md decision 4) and the CPU at 12 cores (decision 5); the table's 110 W quiet limit is the level kept declared, unused:
 
 | period | wikipedia build | GPU | gutenberg embed |
 |---|---|---|---|
