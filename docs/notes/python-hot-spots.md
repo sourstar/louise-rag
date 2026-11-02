@@ -202,3 +202,56 @@ so its floor is the reliable figure.
 - **The build's wall clock does not move yet.** It waits on its parent
   (children 42–56 % busy). This waits for the "child writes its part"
   redesign.
+
+## E, done (2026-11-02; not deployed until the node's check passes)
+
+`app/plugins/wikidata/textify.py` and `format.py` are compiled by mypyc
+2.4.0 in the image's build stage `native` (tools/build_native.py,
+requirements-build.txt). Python imports the compiled module where the image
+built it, and the `.py` everywhere else. The `.py` stays the source.
+
+- **No rewrite. Annotations only.** mypyc checks annotations at run time,
+  where Python never does. Compiled as it was, a label that is a number, a
+  statement list holding a string, or an integer latitude past 2**53 raised
+  or lost digits where the source renders them. Those annotations now say
+  `Any` (VENDORED.md lists each, and `format._dms`).
+- **names.py is not compiled.** It runs only for an entity with no label in
+  the language, `mul` or the fallback. The pack's passes import it too, so
+  compiling it would need its own proof on the pack's name table.
+- **A compiled class cannot be subclassed from Python.**
+  tools/wikidata_coverage.py now subclasses the source's `Normalizer`
+  (`pure.textify()`). Compiled, its lookups would have raised, and each would
+  have been counted as an entity the parse fails on.
+
+**Measured** (perf_counter, the p2 inputs, 21 interleaved rounds × 200
+passes, the median; µs an entity, `entity_text` + `history_text` in English;
+4-vCPU VM, ±30 %):
+
+| | Python 3.12 (the image's) | Python 3.13 |
+|---|---|---|
+| textify | 87.4 → 51.4 (1.70×) | 90.6 → 49.8 (1.82×) |
+| parse (fetch, json, textify) | 263 → 213 (1.23×) | 276 → 224 (1.23×) |
+| the fts child | 598 → 569 (1.05×) | 636 → 563 (1.13×) |
+
+On generated entities the gain is 1.27–1.35×. These are synthetic, larger
+(~24 KB of JSON each), and most go through names.py, which is not compiled.
+
+**Identity.** The compiled module is compared against the source loaded
+from its `.py` by path (app/plugins/wikidata/pure.py). The text, or the same
+exception's type and message, must match:
+
+- **The suite** (tests/test_plugins_wikidata_textify_compiled.py):
+  - every fixture entity, in 9 languages × 3 fallbacks × 3 label tables;
+  - 3,000 seeded generated entities;
+  - ~600 named edges;
+  - the switches and classes that no text reaches.
+- **Every text the suite asks for:** while the module is compiled,
+  tests/conftest.py checks each one against the source.
+- **Outside the suite:** 500,000 generated entities on 3.12 and 200,000 on
+  3.13. None differed; 2.2 % of calls raised in both (the malformed share).
+- **Generator coverage:** it covers every line and branch of format.py, and
+  of textify.py all but what no text reaches (that is tested directly).
+- **The build:** the image's stage stops unless 20,000 generated entities
+  are IDENTICAL. The same sources gave the same `.so` bytes twice.
+- **The node's entities:** tools/measure/textify_identity.py. It must say
+  IDENTICAL on ≥ 100,000 of them, in the built image, before the swap.

@@ -44,7 +44,21 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
 - the rank filter, the `external_ids`/`qualifiers`/`references` defaults
   and the connectives (`language_variables.json`, inlined) are upstream's,
   plus Italian (ours, parser 2; offered upstream in
-  docs/notes/upstream-reports/wmde-wikidata-textifier.md §3).
+  docs/notes/upstream-reports/wmde-wikidata-textifier.md §3);
+- ANNOTATIONS ONLY, for the compiled module (2026-11-02,
+  docs/notes/python-hot-spots.md "E"): the image compiles this file with
+  mypyc (tools/build_native.py), which CHECKS annotations at run time where
+  Python never does — a `str` given a number raises. Where a value comes
+  from the dump as it is, its annotation now says so: `Any` for
+  `_lang_val`'s result, an `Entity`'s `label` and `description` and a
+  `MonolingualText`'s `lang`; `list[Any]` for the statement and snak lists
+  `_filter_by_rank`, `_dropped_by_rank`, `_datatype` and `_snak_claim`
+  read (they skip what is not a dict); and one `# type: ignore[arg-type]`
+  on the `entity-type` lookup, a `dict.get` with a key of any type, as
+  written. Not one line of behaviour changes, and the compiled module's
+  text is the source's, byte for byte (tools/measure/textify_identity.py,
+  tests/test_plugins_wikidata_textify_compiled.py). The `.py` stays the
+  source: the compiled module is built from it in the image, never kept.
 
 `chunker.py` carries the cutting rule of **WikidataTextEmbedding**
 (`src/utils.py`, `chunk_item_text` and `_trim_to_length`, commit c9dc819),

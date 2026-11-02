@@ -20,6 +20,8 @@ venv/
 *.egg-info/
 dist/
 build/
+# compiled modules (tools/build_native.py): built by the image, never committed
+*.so
 
 # ── editors / OS ──
 .vscode/

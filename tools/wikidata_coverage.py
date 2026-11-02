@@ -53,7 +53,13 @@ from typing import Any, Callable, Iterable, Iterator
 
 import pyarrow.parquet as pq
 
-from app.plugins.wikidata import names, pack, textify
+from app.plugins.wikidata import names, pack, pure, textify
+
+#: the textifier's SOURCE, for the classes below that subclass it: a class
+#: the image compiled (mypyc) cannot be subclassed from Python — `_Lookups()`
+#: would raise, and be counted as an entity the parse fails on
+#: (app/plugins/wikidata/pure.py; the source gives the compiled bytes)
+_SOURCE = pure.textify()
 
 LANGS = ("en", "it", "de", "fr", "es")
 #: architectural structure, building, monument, archaeological site, event, occurrence
@@ -282,7 +288,7 @@ def statement_facts(obj: dict) -> Counter:
     return out
 
 
-class _Lookups(textify.Normalizer):
+class _Lookups(_SOURCE.Normalizer):
     """The textifier's own label lookups, recorded: every id whose label its
     text would write, in the order it asks."""
 
@@ -643,7 +649,7 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
 
 # ---- mul ------------------------------------------------------------------------------------
 
-class _Chain(textify.Normalizer):
+class _Chain(_SOURCE.Normalizer):
     """The textifier with a given label chain, its lookups counted."""
 
     def __init__(self, chain: tuple[str, ...], labels: Callable) -> None:

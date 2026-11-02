@@ -50,3 +50,46 @@ def test_the_image_compiles_its_own_code_once_copied():
     assert " app" in line and " tools" in line and " -x " not in line, line
     assert lines.index("COPY app ./app") < at[0] and lines.index("COPY tools ./tools") < at[0]
 
+
+def _stages(text: str) -> dict[str, list[str]]:
+    """Each stage's instruction lines, continuations joined, by its name."""
+    out: dict[str, list[str]] = {}
+    name = None
+    for ln in text.replace("\\\n", " ").splitlines():
+        ln = ln.strip()
+        if ln.startswith("FROM "):
+            name = ln.split(" AS ")[-1].strip() if " AS " in ln else ln
+            out[name] = [ln]
+        elif name and ln and not ln.startswith("#"):
+            out[name].append(ln)
+    return out
+
+
+def test_the_native_stage_compiles_checks_and_ships_only_its_files():
+    """wikidata's textifier compiled by mypyc (docs/notes/python-hot-spots.md
+    "E"): in a stage FROM base, with the pinned compiler, checked against its
+    source before anything leaves; dev and runtime take its .so files and
+    nothing else, so mypy and the C compiler never reach the node."""
+    stages = _stages((ROOT / "Dockerfile").read_text())
+    native = " ".join(stages["native"])
+    assert stages["native"][0] == "FROM base AS native"
+    assert "-c constraints.txt -r requirements-build.txt" in native
+    assert "python -m tools.build_native --out /native" in native
+    assert "python -m tools.measure.textify_identity --generated" in native
+    assert list(stages)[-1] == "runtime", "the default build is the runtime"
+    for stage in ("dev", "runtime"):
+        froms = [ln for ln in stages[stage] if "--from=native" in ln]
+        assert froms == ["COPY --from=native /native/ ./"], (stage, froms)
+    for f in ("constraints.txt", "requirements.txt"):
+        assert "mypy" not in {_name(ln) for ln in _lines(ROOT / f)}, f
+
+
+def test_the_compiler_is_pinned_and_agrees_with_the_image():
+    pins = {_name(ln): ln.split("==", 1)[1] for ln in _lines(ROOT / "constraints.txt")}
+    build = _lines(ROOT / "requirements-build.txt")
+    assert any(_name(ln) == "mypy" for ln in build)
+    for ln in build:
+        assert re.fullmatch(r"[A-Za-z0-9_.\-]+==[A-Za-z0-9_.+\-]+", ln), ln
+        if _name(ln) in pins:
+            assert ln.split("==", 1)[1] == pins[_name(ln)], f"{_name(ln)}: the build and the image disagree"
+

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Callable
+from typing import Any, Callable
 
 GREGORIAN = "Q1985727"
 JULIAN = "Q1985786"
@@ -156,7 +156,11 @@ def time_text(value: dict, lang: str = "en") -> str:
     return text + era
 
 
-def _dms(deg: float, decimals: int) -> tuple[int, int, str]:
+def _dms(deg: Any, decimals: int) -> tuple[int, int, str]:
+    # `deg: Any` — an int or a float as the dump gives it — never `float`:
+    # compiled by mypyc, a `float` (or `int | float`, which mypy reads as
+    # `float`) is a C double, and an integer past 2**53 would lose its last
+    # digits (docs/notes/python-hot-spots.md, E)
     d = abs(deg)
     whole = int(d)
     minutes_f = (d - whole) * 60
