@@ -2,7 +2,9 @@
 # Deploy a gated commit to the node (the pattern of deploy-louise-bundles-root.sh@c572c3b,
 # without its one-off steps: the bundles are on tank already, contribute.sh is
 # retired). /tmp/louise-src.tgz = git archive <sha> app tests tools docs
-# calibration deploy requirements.txt Dockerfile platform.toml.example;
+# calibration native deploy requirements.txt requirements-dev.txt requirements-build.txt
+# constraints.txt Dockerfile .dockerignore platform.toml.example (native/ and
+# requirements-build.txt since D + E: the image compiles louise_cdc and the textifier);
 # /tmp/louise-commit = <sha>.
 #   ssh root@<node> bash -s < deploy-louise-tip.sh
 # Run each deploy from a PRIVATE COPY (cp … /root/deploy-run-<sha>.sh; bash that copy):
@@ -35,8 +37,8 @@
 # Before it, deploy-louise-secrets.sh@c572c3b (16a4349); before that, deploy-louise-888a9be.sh@c572c3b — 888a9be: the possession index cache's own temp file, explain_part (29398cf); then a0c43b6: possession part entries without a shared temp file, a failed count no figure (f386934, 5863f81); then 50030dc: query processing first, corpus embedding last, corpus work stands aside on the card while a query step holds the claim (7cc6975, the claim per step); a reranker 5xx asked again once, the fallback carrying the server message, a person's requests read /system fresh (b573be4, ec26d80); on c3a7612; then c3a7612: annotation updates (next snapshot of the same collection; newer snapshots pulled), the BM25F knob, the network origin check, deploy/agent, the restated rule; then a fetched SHARD's content hashes fill the manifest's empty column (267a212 cherry-picked); then a record held in an accepted bundle file is carried, not embedded (2ef7b18, f2525db, 229b105 cherry-picked); then a refresh writes a delta, deltas merge past four (af5fd62), every mode write recorded (644c1f1), measuring.md clone lesson; then seed-only stands down settle-runs (8f2c394) and the publisher (979bdfe), the worker logs the mode it acts on (94964dd); then nothing statically pinned (11505cf), pins by use on any LocalAI model, summaries hold the chat model (5ace2dc); then a pin holder in flight is never dropped (abe1cf4), refresh/compaction 'started' lines (1069478); then scoped model pins with restore (1f59e16, 51a52c2), staged encoders unpinned (a819c6b), LocalAI threshold 0.85 in the repo (1b08113), staged YAMLs = deployed (29583b8), rewrite drains writers (3be0cf2), annotations cached snapshot (aa8edff), catalog fresh start (9c984c4); then every package pinned to the node's freeze (e264ae6, constraints.txt); tantivy==0.26.2 pinned (68a1835); fragment_count in the Lance layer (9ab13d8); the keep's Lance deletes sized from the fragment count, night steps capped (701c2d2); phase B review, predecessors.json locked, possession rebuilds logged (07b4a08); OpenAI vector stores and files over the collections (61d3be3); the search side reads the cached snapshot (f4ab0bf); one question, one search (484de1b); the Open WebUI pipe and /v1 sources (22a95fe); users and tokens, Ask open until the first user (a0edc9c); then coverage by possession across a same-space re-mint, phase B (dcdc0cf); plates by part root (9032303); then edition facts by part root (aca74d4); one passage one translation (52b1433), reader plates (3ea07f5); coverage by possession, withdraw-covered (a718a6c), the changed-record rule (33ff40b); provenance across a same-space carry (067a36f, 06547c8), edition facts by three columns (844923e), scan signature with the record's files (9ed5ed2); unindexable withdrawal (9a4d53c), the refusal in every reader (1652337); a cursor is valid only for its pair (c34c86e); gutenberg parser 10 (f9bdf66), annotations_from_titles v2 (db990c0), sort-merge keep (7b0f3e0), edition choice (0b3d245); on b561ef8
 set -euo pipefail
 ROOT=/mnt/ssd4/apps/louise-rag
-TREE="app tests tools docs calibration"
-FILES="requirements.txt requirements-dev.txt constraints.txt Dockerfile platform.toml.example"
+TREE="app tests tools docs calibration native"
+FILES="requirements.txt requirements-dev.txt requirements-build.txt constraints.txt Dockerfile .dockerignore platform.toml.example"
 TGZ=/tmp/louise-src.tgz
 COMMIT=$(cat /tmp/louise-commit)
 HOLD=/root/supervise/louise.hold
@@ -250,13 +252,31 @@ grep -q ':root\[data-theme="kelsch"\]' "$ROOT/src.new/app/static/admin.css"     
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
+grep -q '^def journal(root: Path, name: str, role: str' "$ROOT/src.new/app/hold/cpu_reference.py"   # #231: the CPU reference's roles journalled
+grep -q '^_NATIVE = None if _louise_cdc is None' "$ROOT/src.new/app/chunking.py" && test -s "$ROOT/src.new/native/louise_cdc/Cargo.lock"   # D: the compiled cdc loop (cdc_identity IDENTICAL, 100,000 wikipedia records, 2026-11-02)
+test -s "$ROOT/src.new/app/plugins/wikidata/pure.py" && test -s "$ROOT/src.new/requirements-build.txt"   # E: the compiled textifier (textify_identity IDENTICAL, 100,018 entities, 2026-11-02)
+grep -q '^def near_exact_relaxed' "$ROOT/src.new/deploy/vega/vega_wrapper.py"   # #241: one setting of a vendor's mode declared near-exact
+grep -q '^def loads_an_embedder' "$ROOT/src.new/deploy/vega/vega_wrapper.py"    # #248: one wrapper package for every llama.cpp model
+grep -q '^    exactness: str = "exact"' "$ROOT/src.new/app/collections.py"       # #244: bit-exact by default
+grep -q 'document_instruction: str | None = None' "$ROOT/src.new/app/hold/codex.py"   # #252: space.document.instruction (Codex 11), the long texts in the gate's batch check
 echo "staged: $(find "$ROOT/src.new" -name '*.py' | wc -l) python files"
 
 say "2. build louise-rag:staged"
 docker build -q -t louise-rag:staged "$ROOT/src.new"
 docker run --rm louise-rag:staged python -c "import app.web, app.worker, app.hold.carry; print('imports ok')"
 docker run --rm louise-rag:staged python -c "import orjson; v = orjson.__version__; print('orjson', v); assert v == '3.13.0', v"   # #221
-docker run --rm louise-rag:staged pip freeze > /tmp/staged-freeze.txt
+# D + E: the compiled modules are the live ones IN THE IMAGE (the tests below mount the
+# source tree over /srv, which hides the image's compiled textifier)
+docker run --rm louise-rag:staged python -c "
+from app import chunking
+from app.plugins.wikidata import pure
+c = pure.compiled()
+assert chunking._NATIVE is not None, 'louise_cdc is not imported'
+assert c and all(c.values()), c
+print('compiled: cdc', type(chunking._NATIVE).__name__, 'textifier', c)"
+# the wheel built from native/louise_cdc freezes as a file URL; constraints.txt pins its version
+docker run --rm louise-rag:staged pip freeze \
+  | sed -E 's|^louise-cdc @ file:///tmp/wheels/louise_cdc-([0-9.]+)-.*$|louise-cdc==\1|' > /tmp/staged-freeze.txt
 grep -v "^#" "$ROOT/src.new/constraints.txt" | grep -v "^$" | diff - /tmp/staged-freeze.txt && echo "staged freeze == constraints.txt" || { echo "the staged image moved off constraints.txt; NOT promoting"; exit 1; }
 docker run --rm louise-rag:staged lbzip2 --version 2>&1 | head -1
 
@@ -284,6 +304,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_embed_select.py tests/test_wikitext_identity.py tests/test_citations_fast_path.py tests/test_refs_normattiva.py tests/pack/test_ship_batches.py tests/test_layers.py tests/test_parallel.py tests/test_library_card_drawers.py tests/test_library_embedder_tag.py tests/test_web_compact_details.py tests/test_web_worker_modes.py tests/test_toml_roundtrip.py tests/test_pipeline_eval.py tests/test_encoder_bakeoff_rerank.py tests/test_profile_embed_stages.py \
     tests/test_vectors_by_chunk_id.py tests/test_profile_mode.py tests/test_worker_settle_runs.py tests/test_ask_relay_browser.py tests/test_endpoint_refusal_exit.py tests/test_deploy_supervise_pass.py tests/test_rage_bench.py tests/test_embed_materialize.py tests/test_rage_settings.py tests/hold/test_rage_settings.py tests/hold/test_rage_settings_cli.py tests/test_rage_name.py tests/test_card_record.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_embedder_cli.py tests/hold/test_cpu_reference.py tests/hold/test_near_exact.py tests/test_encoder_batch.py tests/test_slice_scope.py tests/hold/test_relocate.py tests/test_toml_roundtrip.py tests/test_measure_wikidata_encoder_ab.py tests/test_merge_by_relevance.py tests/test_record_rerank.py tests/test_measure_fusion_calibration.py tests/test_node_show.py tests/test_vega_repro_check.py tests/test_worker_boot_node_state.py tests/hold/test_embedder.py tests/hold/test_backend_engine.py tests/hold/test_engine_options.py tests/hold/test_pair_calibration.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py tests/hold/test_drift.py tests/test_record_source.py tests/test_lance_stable_row_ids.py tests/test_vector_rewrite.py \
+    tests/test_cdc_native.py tests/hold/test_cdc_identity.py tests/test_plugins_wikidata_textify_compiled.py tests/hold/test_codex.py tests/hold/test_codex_document_instruction.py tests/test_nemotron_conversion_tools.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
 # conftest `codex` fixture is not found (2026-10-27; alone and in the full suite it passes)
