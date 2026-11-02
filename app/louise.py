@@ -5765,7 +5765,8 @@ def main(argv=None) -> int:
         # only what may heal (07 §7.7; München, 2026-11-02: a refused load
         # exited 1 and was retried every minute).
         from app.embeddings import EndpointMisconfigured, EndpointRunRefused
-        if isinstance(e, (EndpointRunRefused, EndpointMisconfigured)):
+        from app.model_load import LoadRefused
+        if isinstance(e, (EndpointRunRefused, EndpointMisconfigured, LoadRefused)):
             print(f"louise: refused: {e}", file=sys.stderr)
             return 2
         print(f"louise: deferred: {e}", file=sys.stderr)

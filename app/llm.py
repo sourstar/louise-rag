@@ -59,9 +59,9 @@ def warm(level: Level = Level.CHAT) -> None:
     url, body = _request([{"role": "user", "content": "OK"}], stream=False,
                          temperature=0.0, max_tokens=1, num_ctx=0)
 
-    def send(bound_s: float) -> None:
+    def send(bound_s: float):
         with dispatch.interactive(level):
-            httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
+            return httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
 
     model_load.ensure_loaded(config.CHAT_URL, config.CHAT_MODEL, send,
                              caller=level.name.lower(), max_age_s=0.0)

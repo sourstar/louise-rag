@@ -71,6 +71,42 @@ PROBE_TIMEOUT_S = 2.0
 BOUNDS_FILE = Path(__file__).with_name("model_loads.json")
 
 
+#: What VeGa's wrapper answers a load it states no run for (vega_wrapper
+#: `_refuse_load`), carried inside the runner's error: LocalAI answers the
+#: load that failed with HTTP 500 "failed to load model … could not load
+#: model (no success): VeGa: no run can be stated: <why>", and every request
+#: after it with a 503 "load is in cooldown" that no longer says why
+#: (München, 2026-11-02, reproduced). Waiting does not heal it: the model's
+#: tree or YAML must change (CLAUDE.md invariant 12).
+VEGA_NO_RUN = "VeGa: no run can be stated"
+
+
+class LoadRefused(ConnectionError):
+    """The platform refused to load the model: VeGa states no run for it.
+    A ConnectionError, so the worker and a search read it as "not now" (no
+    document is touched, the leg is withheld with this reason); a command
+    exits 2, refused (app/louise.py), and `deploy/supervise-pass.sh` does
+    not run it again. Seen only on the request that made the load — the
+    warm — so it is raised there, for the warm's caller and every caller
+    that waited on it, instead of the cooldown the real request would meet."""
+
+    def __init__(self, message: str, *, model: str) -> None:
+        super().__init__(message)
+        self.model = model
+
+
+def refused_load(model: str, response) -> LoadRefused | None:
+    """The refusal in a runner's answer, or None."""
+    status = getattr(response, "status_code", None)
+    body = getattr(response, "text", "") or ""
+    if status is None or status < 500 or VEGA_NO_RUN not in body:
+        return None
+    at = body.index(VEGA_NO_RUN)
+    why = body[at:at + 400].split('","type"')[0].strip()
+    return LoadRefused(f"{model}: {why} — the model platform refuses to state a run for it; "
+                       f"nothing is written, and waiting does not change it", model=model)
+
+
 class LoadTimeout(httpx.ConnectTimeout):
     """The model was still loading when its load bound ran out. A deferral
     for every caller, as `dispatch.GateTimeout` is; the message is the
@@ -327,7 +363,11 @@ def load_timeout_s(model: str) -> float:
 def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], *,
                   caller: str, max_age_s: float | None = None) -> float | None:
     """Warm `model` on the runner behind `url` if the runner says it is not
-    loaded. `warm(bound_s)` sends one minimal request bounded by `bound_s`.
+    loaded. `warm(bound_s)` sends one minimal request bounded by `bound_s`,
+    and returns the runner's response where it has one: an answer of 400 or
+    more is a load that FAILED — never noted as loaded — and one carrying
+    VeGa's refusal raises `LoadRefused` (München, 2026-11-02: a refused load
+    was recorded "loaded" and the real request met the cooldown).
     The runner's answer may be `max_age_s` old: by default `SYSTEM_TTL_S`
     for corpus work and `INTERACTIVE_TTL_S` above it; a single request a
     person waits on (a rerank, a chat answer, a translation) passes 0.
@@ -355,14 +395,25 @@ def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], 
         t0 = time.monotonic()
         if not flight.done.wait(bound):
             raise LoadTimeout(_reason(model, bound), model=model, bound_s=bound)
-        if isinstance(flight.error, LoadTimeout):
+        if isinstance(flight.error, (LoadTimeout, LoadRefused)):
             raise flight.error
         return time.monotonic() - t0
     t0 = time.monotonic()
     outcome = "failed: interrupted"
     try:
-        warm(bound)
-        outcome = "loaded"
+        answer = warm(bound)
+        status = getattr(answer, "status_code", None)
+        if isinstance(status, int) and status >= 400:
+            refusal = refused_load(model, answer)
+            if refusal is not None:
+                flight.error = refusal
+                outcome = f"refused: {str(refusal)[:200]}"
+            else:
+                # a failed load: the request goes as it did before and meets
+                # its own fate (a cooldown is a busy answer, a deferral)
+                outcome = f"failed: HTTP {status}"
+        else:
+            outcome = "loaded"
     except httpx.ConnectTimeout:
         outcome = "failed: the server did not accept a connection"    # down, not loading
     except httpx.TimeoutException:
