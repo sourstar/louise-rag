@@ -213,6 +213,39 @@ retrieval prompt, one text a request.
   re-embed decision (2026-11-02, "Choice A"); the reason is written in
   wikidata.toml.
 
+#### The re-embed time (München, 2026-11-02 13:46–14:20, the card alone)
+
+W1's 21,348 chunks through VeGa at batch 16. "In flight" counts the requests
+really in flight (`EMBED_CONCURRENCY`); card busy is read from the PMU.
+
+| arm | chunks/s | card busy | bit-identical to |
+|---|---|---|---|
+| harrier, 1 in flight | 43.29 | 87.4 % | W1's batch-1 vectors, 21,348 / 21,348 |
+| harrier, 2 in flight | 50.28 | 96.6 % | the same, 21,348 / 21,348 |
+| harrier, 4 in flight | **51.57** | 99.1 % | the same, 21,348 / 21,348 |
+| bge-m3, 1 in flight | 57.71 | 84.2 % | the 10-31 production vectors, 21,348 / 21,348 |
+| bge-m3, 4 in flight | **72.49** | 98.3 % | the same, 21,348 / 21,348 |
+
+- **Every arm is exact.** harrier's batch 16 gives batch 1's bytes.
+- **The card saturates at 2–4 in flight.** More slots add nothing at 99 %,
+  and a `parallel:4` VeGa model cannot be stated (VeGa's contract).
+- **harrier ÷ bge-m3, both saturating:** 51.57 / 72.49 = **0.711** on
+  wikidata's ~100-token chunks.
+- **Re-embed, card time alone:**
+  - production's bge-m3 rate is 91.5 chunks/s (scheduling-log.md, lever 2
+    AFTER), so harrier there would be ≈ 65.1;
+  - 43.27 M × 1.0057 ≈ 43.52 M chunks;
+  - 43.52 M ÷ 65.1 ≈ 669,000 s ≈ **186 h (7.7 days)**;
+  - bge-m3 for all 43.27 M at 91.5 would be ≈ 131 h, less what it already
+    holds.
+  The schedule's hours and the sharing with wikipedia and gutenberg come on
+  top, for either model.
+- **Still owed before the decision:** wikidata's whole-search score
+  (`wikidata_encoder_ab.py rerank`: BM25 fused, reranked at 10/40/50/100,
+  translated and typed). It says whether the +0.146 survives the full
+  search pipeline, or whether the reranker closes the gap. The operator
+  asked that exact question.
+
 ### wikipedia (2026-11-02 ~12:40): bge-m3 stays
 
 5,000 articles (2,500 en, 2,500 it), 18,783 chunks, 400 questions written by
@@ -305,7 +338,8 @@ for these rows never reached the server).
   2 days 5 h, 14.3 % of LocalAI's periods were throttled (45,949 s).
   **The cap is 12 since 10:59:49** (operator: "Raise localai CPU cores cap to
   12 permanently"; STATUS.md 2026-11-02).
-- **Not yet measured:** slots with real requests in flight, and batches. They
-  are measured only if harrier wins wikidata or wikipedia. The contention A/B
+- **Requests in flight and batches:** measured on wikidata once harrier won it
+  (batch 16, 1/2/4 in flight, 51.57 chunks/s at saturation, every arm
+  exact): "The re-embed time" under wikidata above. The contention A/B
   (the twin at nice 0, then nice 19, and the quota) runs when the CPU
   reference resumes; its rows go in scheduling-log.md.
