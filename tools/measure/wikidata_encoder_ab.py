@@ -34,6 +34,16 @@ compares every pair of encoders it finds.
   embed    OUT_DIR --encoder jina|bge  each side through the PRODUCTION
            client (`embeddings.embed_calibration`, `_embed_texts` underneath) with the collection's recipe —
            wikidata's for jina-v3, wikipedia's for bge-m3; resumable by block
+  rerank   OUT_DIR --collection C [--encoders bge,harrier] [--depth 50 --depth 100]
+           [--doc-lang en] [--no-translate]
+           each encoder's entity ranking as a search reranks it (the operator,
+           2026-11-02: "5 results reranked over 50 results, more likely over
+           100 … Same for wikipedia and wikidata"): the top records re-ordered
+           by C's own reranker, each judged on its two best chunks under its
+           title, against the question in the record's language where the
+           search's language plan translated it (encoder_bakeoff's machinery:
+           one score per pair, kept; one plan per question, kept). Rows
+           before and after at each depth, scored on the first 5 results.
   score    OUT_DIR  the table — quality, speed (chunks/s), jina-v3 on llama.cpp
            against its torch reference — and the verdict (operator, 2026-10-31):
            bge-m3 only if it is BETTER on MRR@10 with p < 0.05, else jina-v3,
@@ -473,6 +483,155 @@ def score(out: Path) -> dict:
     return res
 
 
+# ---------------------------------------------------------------- rerank
+
+#: the first results a reader sees (the operator's setting, 2026-11-02)
+SHOWN = 5
+
+
+def _ranks_by_entity(best_row) -> list[int]:
+    """Entities best first, ties by position (a stable order)."""
+    import numpy as np
+    return [int(i) for i in np.lexsort((np.arange(len(best_row)), -best_row))]
+
+
+def _row_metrics(ranks: list[int], depths: list[int]) -> dict:
+    """Per-query metrics from the right entity's 1-based rank."""
+    def mean(xs):
+        return round(sum(xs) / len(xs), 4) if xs else None
+    m = {"mrr@5": mean([1 / r if r <= SHOWN else 0.0 for r in ranks]),
+         "hit@1": mean([float(r == 1) for r in ranks]),
+         "hit@5": mean([float(r <= SHOWN) for r in ranks]),
+         "mrr@10": mean([1 / r if r <= TOP else 0.0 for r in ranks])}
+    for d in depths:
+        m[f"reached@{d}"] = mean([float(r <= d) for r in ranks])
+    return m
+
+
+def rerank(out: Path, collection: str, *, encoders: list[str], depths: list[int], recipe=None,
+           plans=None, doc_lang: str | None = None, call=None, translate: bool = True,
+           timeout: float = 600.0) -> dict:
+    """The module docstring's `rerank`. Writes rerank-<model>/ (the kept
+    scores, the plans) and rerank.json; returns the table."""
+    import numpy as np
+    from app import retrieval
+    from tools import encoder_bakeoff as bake
+    from tools.measure.fusion_calibration import randomization
+    corpus = _jsonl(out / "corpus.jsonl")
+    qs = _jsonl(out / "queries.jsonl")
+    depths = sorted(set(depths or [retrieval.RERANK_TOP_N]))
+    deepest = depths[-1]
+    per_record = retrieval.JUDGED_CHUNKS
+    index = {e["uid"]: i for i, e in enumerate(corpus)}
+    target = [index[q["uid"]] for q in qs]
+    starts, texts, owner = [], [], []
+    for i, e in enumerate(corpus):
+        starts.append(len(texts))
+        texts += e["chunks"]
+        owner += [i] * len(e["chunks"])
+    starts.append(len(texts))
+
+    def lang_of_entity(i: int) -> str | None:
+        e = corpus[i]
+        fam = e.get("family") or ""
+        lang = e.get("lang") or (fam if len(fam) == 2 and fam.isalpha() else None) or doc_lang
+        if lang is None:
+            raise SystemExit("the records' language is not in the sample (wikidata's families are "
+                             "not languages): give --doc-lang, the language its chunks were embedded in")
+        return lang
+    lang_of_entity(0)
+    if recipe is None or (plans is None and translate):
+        from app import collections as collections_mod
+        c = collections_mod.by_name(collection)
+        if c is None:
+            raise SystemExit(f"no {collection} collection here")
+        recipe = recipe or collections_mod.reranker_for(c)
+        if recipe is None:
+            raise SystemExit(f"{collection} names no reranker and RERANK_URL is unset")
+        if translate and plans is None:
+            plans = bake.PlanCache(out / "rerank" / "plans.jsonl", bake.search_plan(c))
+    cache = bake.RerankCache(out / "rerank" / re.sub(r"[^A-Za-z0-9_.-]+", "_", recipe.model or "rerank"),
+                             {"url": recipe.url, "api": recipe.api, "model": recipe.model,
+                              "window": getattr(recipe, "window", None),
+                              "head_chars": retrieval.HEAD_CHARS, "translate": plans is not None,
+                              "collection": collection})
+
+    def text_of(c: int) -> str:
+        label = (corpus[owner[c]].get("label") or "")[:retrieval.HEAD_CHARS]
+        return f"{label}\n\n{texts[c]}" if label else texts[c]
+
+    # each encoder: per question, its records best first, each with its
+    # JUDGED_CHUNKS best chunks for that question (`_matched_chunks`)
+    lists: dict[str, list[list[tuple[int, list[int]]]]] = {}
+    before: dict[str, list[int]] = {}
+    for enc in encoders:
+        blocks = sorted(out.glob(f"vec-{enc}-[0-9]*.npy"))
+        if not blocks or not (out / f"qvec-{enc}.npy").exists():
+            raise SystemExit(f"{enc}: not embedded in {out}")
+        doc = np.concatenate([np.load(b) for b in blocks])
+        qv = np.load(out / f"qvec-{enc}.npy")
+        dn = doc / np.linalg.norm(doc, axis=1, keepdims=True)
+        qn = qv / np.linalg.norm(qv, axis=1, keepdims=True)
+        sims = qn @ dn.T
+        best = best_by_entity(doc, owner, qv, len(corpus))
+        lists[enc], before[enc] = [], []
+        for q in range(len(qs)):
+            order = _ranks_by_entity(best[q])
+            before[enc].append(order.index(target[q]) + 1)
+            head = []
+            for i in order[:deepest]:
+                a, b = starts[i], starts[i + 1]
+                local = np.argsort(-sims[q, a:b], kind="stable")[:per_record]
+                head.append((i, [a + int(x) for x in local]))
+            lists[enc].append(head)
+    retrieval._warm_reranker(recipe)
+    asked = 0
+    import time
+    t0 = time.monotonic()
+    for q, row in enumerate(qs):
+        want = {c for enc in encoders for _i, cs in lists[enc][q] for c in cs}
+        asked += bake.score_pairs(cache, q, row["query"], want, text_of,
+                                  lambda c: lang_of_entity(owner[c]), recipe, plans=plans,
+                                  call=call, timeout=timeout)
+        if q % 20 == 0:
+            print(f"  question {q + 1}/{len(qs)}: {asked} pairs scored, "
+                  f"{time.monotonic() - t0:.0f} s", file=sys.stderr)
+    rows: dict[str, dict[str, list[int]]] = {}
+    for enc in encoders:
+        rows[enc] = {"vector": before[enc]}
+        for d in depths:
+            ranks = []
+            for q in range(len(qs)):
+                head = lists[enc][q][:d]
+                scores = [max(cache.scores[(q, c)] for c in cs) for _i, cs in head]
+                order = [head[k][0] for k in retrieval._rerank_order(scores, fuse=False)]
+                ranks.append(order.index(target[q]) + 1 if target[q] in order else before[enc][q])
+            rows[enc][f"rerank@{d}"] = ranks
+    res: dict = {"collection": collection, "entities": len(corpus), "chunks": len(texts),
+                 "queries": len(qs), "translate": plans is not None, "depths": depths,
+                 "pairs_scored": len(cache.scores), "rows": {}, "by_language": {}, "pairs": {}}
+    for enc, by in rows.items():
+        for name, ranks in by.items():
+            res["rows"][f"{enc} {name}"] = _row_metrics(ranks, depths)
+            for lang in sorted({q["lang"] for q in qs}):
+                idx = [k for k, q in enumerate(qs) if q["lang"] == lang]
+                res["by_language"].setdefault(lang, {})[f"{enc} {name}"] = \
+                    _row_metrics([ranks[k] for k in idx], [])["mrr@5"]
+    # the encoders against each other at each stage, on mrr@5
+    for name in ["vector"] + [f"rerank@{d}" for d in depths]:
+        for i, a in enumerate(encoders):
+            for b in encoders[i + 1:]:
+                ra = [1 / r if r <= SHOWN else 0.0 for r in rows[a][name]]
+                rb = [1 / r if r <= SHOWN else 0.0 for r in rows[b][name]]
+                d_ = [x - y for x, y in zip(ra, rb)]
+                res["pairs"][f"{name}: {a} - {b}"] = {
+                    "mrr@5": round(sum(d_) / len(d_), 4), "p": round(randomization(d_), 4),
+                    "better": sum(x > 0 for x in d_), "worse": sum(x < 0 for x in d_)}
+    (out / "rerank.json").write_text(json.dumps(res, indent=2, ensure_ascii=False) + "\n",
+                                     encoding="utf-8")
+    return res
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -498,6 +657,14 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--encoder", choices=sorted(ENCODERS), required=True)
     sc = sub.add_parser("score")
     sc.add_argument("out", type=Path)
+    r = sub.add_parser("rerank")
+    r.add_argument("out", type=Path)
+    r.add_argument("--collection", required=True)
+    r.add_argument("--encoders", default="bge,harrier")
+    r.add_argument("--depth", type=int, action="append", default=None)
+    r.add_argument("--doc-lang", default=None,
+                   help="the chunks' language where the sample does not say it (wikidata: en)")
+    r.add_argument("--no-translate", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "sample":
         got = sample(a.out, entities=a.entities, families=tuple(a.families.split(",")), seed=a.seed)
@@ -508,6 +675,9 @@ def main(argv: list[str] | None = None) -> int:
         got = queries(a.out, n=a.n, seed=a.seed, prompt=a.prompt)
     elif a.cmd == "embed":
         got = embed(a.out, a.encoder)
+    elif a.cmd == "rerank":
+        got = rerank(a.out, a.collection, encoders=a.encoders.split(","), depths=a.depth or [],
+                     doc_lang=a.doc_lang, translate=not a.no_translate)
     else:
         got = score(a.out)
     print(json.dumps(got, indent=2, ensure_ascii=False))

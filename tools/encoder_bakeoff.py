@@ -130,10 +130,12 @@ each record at its best chunk's score, ties in the leg's order
 kept (resumable: a stopped run asks only what it has not). Two rows per
 scored row: its records BEFORE the reranker and after, both at record level
 (a query is answered by any book of its work), so the two compare the same
-unit. Not reproduced: the query's translations (a candidate in another
-language is judged against the query as typed, as the API's `translate
-false` path does), the catalogue leg's first place, and the grouping of a
+unit. Not reproduced: the catalogue leg's first place and the grouping of a
 work's editions after the reranker; the same for every row.
+TRANSLATIONS ARE (2026-11-02): each pair is judged against the question in
+its record's language when the search's own language plan translated it
+(`language_plan.plan`, kept per question), as `_rerank_list` does;
+`--no-translate` judges against the question as typed.
 """
 
 from __future__ import annotations
@@ -1143,22 +1145,88 @@ def _call_reranker(recipe, query: str, texts: list[str], timeout: float) -> list
     return [got[i] for i in range(len(texts))]
 
 
+class PlanCache:
+    """Each question's language plan as a search makes it (05 §5.2,
+    `language_plan.plan`, translate on): its core and its translations by
+    language, kept as JSON lines, so a rerun asks the models nothing again.
+    `make(text)` gives `(core, {lang: text})`."""
+
+    def __init__(self, path: Path, make) -> None:
+        self.path, self.make = path, make
+        self.rows: dict[int, dict] = {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    x = json.loads(line)
+                    self.rows[x["q"]] = x
+
+    def get(self, q: int, text: str) -> tuple[str, dict[str, str]]:
+        row = self.rows.get(q)
+        if row is None or row["query"] != text:
+            core, tr = self.make(text)
+            row = {"q": q, "query": text, "core": core, "tr": tr}
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            self.rows[q] = row
+        return row["core"], row["tr"]
+
+
+def search_plan(collection):
+    """`PlanCache`'s `make` for `collection`: the search's own plan."""
+    def make(text: str) -> tuple[str, dict[str, str]]:
+        from app import language_plan
+        plan = language_plan.plan(text, [collection], translate=True)
+        return plan.core, {k.lower(): v for k, v in (plan.translations or {}).items() if v}
+    return make
+
+
+def score_pairs(cache: RerankCache, q: int, query: str, wanted, text_of, lang_of, recipe, *,
+                plans: PlanCache | None = None, call=None, timeout: float = 600.0) -> int:
+    """The reranker's score of every `wanted` chunk for question `q` that
+    `cache` does not hold yet, as `_rerank_list` asks it: each chunk against
+    the question in its record's language where the plan translated it,
+    else against the question as typed — one call per variant (batches of
+    RERANK_BATCH), each text cut to the reranker's window. The pairs asked."""
+    from app import retrieval
+    call = call or _call_reranker
+    todo = sorted({c for c in wanted if (q, c) not in cache.scores})
+    if not todo:
+        return 0
+    core, variants = plans.get(q, query) if plans is not None else (query, {})
+    groups: dict[str, list[int]] = {}
+    for c in todo:
+        lang = (lang_of(c) or "").lower()
+        groups.setdefault(variants.get(lang) or core, []).append(c)
+    got: dict[int, float] = {}
+    for variant, cs in groups.items():
+        texts = retrieval.fit_to_window([text_of(c) for c in cs], recipe)
+        for k in range(0, len(cs), RERANK_BATCH):
+            got.update(zip(cs[k:k + RERANK_BATCH],
+                           call(recipe, variant, texts[k:k + RERANK_BATCH], timeout)))
+    cache.add(q, got)
+    return len(todo)
+
+
 def rerank(out: Path, max_chars: int, recipe, heads, *, depths: list[int] | None = None,
            per_record: int | None = None, only: list[str] | None = None,
-           timeout: float = 600.0, call=None) -> int:
+           timeout: float = 600.0, call=None, plans: PlanCache | None = None) -> int:
     """The module docstring's "THE RERANKER AFTER THE LEGS". `heads(records)`
     gives each record's `title — authors` line (`_attach_heads`' own).
     `depths`: how many records the reranker orders, one row each (the search's
     RERANK_TOP_N by default; the operator, 2026-11-02: "5 results reranked
     over 50 results, more likely over 100"). The deepest list's pairs cover
-    every shallower one, so the extra depths cost no request."""
+    every shallower one, so the extra depths cost no request. `heads(records)`
+    gives each record `{"head": its line, "lang": its language}`; `plans`
+    (a `PlanCache`) the question's translations, as a search with
+    translation on uses them; None judges every pair against the question
+    as typed (the API's `translate false`)."""
     from app import retrieval
     if suite_of(out) != POOL:
         raise SystemExit("`rerank` reads records from chunk ids: a `pool` set only")
     depths = sorted(set(depths or [retrieval.RERANK_TOP_N]))
     depth = depths[-1]
     per_record = per_record or retrieval.JUDGED_CHUNKS
-    call = call or _call_reranker
     corpus, queries = load(out, max_chars)
     chunk_ids = _pool_chunk_ids(out)
     rows = _scored_rows(out, corpus, queries, max_chars, only)
@@ -1171,26 +1239,21 @@ def rerank(out: Path, max_chars: int, recipe, heads, *, depths: list[int] | None
     cache = RerankCache(out / RERANKED / re.sub(r"[^A-Za-z0-9_.-]+", "_", recipe.model or "rerank"),
                         {"url": recipe.url, "api": recipe.api, "model": recipe.model,
                          "window": getattr(recipe, "window", None), "max_chars": max_chars,
-                         "head_chars": retrieval.HEAD_CHARS})
+                         "head_chars": retrieval.HEAD_CHARS, "translate": plans is not None})
+
+    def text_of(c: int) -> str:
+        line = (head.get(_record(chunk_ids[c])) or {}).get("head") or ""
+        return f"{line}\n\n{corpus.texts[c]}" if line else corpus.texts[c]
+
+    def lang_of(c: int) -> str | None:
+        return (head.get(_record(chunk_ids[c])) or {}).get("lang")
     retrieval._warm_reranker(recipe)
     asked = 0
     t0 = time.monotonic()
     for q, text in enumerate(queries.texts):
-        want = sorted({c for ls in lists.values() for rec, cs in ls[q] for c in cs
-                       if (q, c) not in cache.scores})
-        if not want:
-            continue
-        texts = []
-        for c in want:
-            line = head.get(_record(chunk_ids[c]), "")
-            texts.append(f"{line}\n\n{corpus.texts[c]}" if line else corpus.texts[c])
-        texts = retrieval.fit_to_window(texts, recipe)
-        got: dict[int, float] = {}
-        for k in range(0, len(want), RERANK_BATCH):
-            scores = call(recipe, text, texts[k:k + RERANK_BATCH], timeout)
-            got.update(zip(want[k:k + RERANK_BATCH], scores))
-        cache.add(q, got)
-        asked += len(want)
+        want = {c for ls in lists.values() for rec, cs in ls[q] for c in cs}
+        asked += score_pairs(cache, q, text, want, text_of, lang_of, recipe, plans=plans,
+                             call=call, timeout=timeout)
         if q % 20 == 0:
             print(f"  query {q + 1}/{len(queries.texts)}: {asked} pairs scored, "
                   f"{time.monotonic() - t0:.0f} s")
@@ -1231,14 +1294,23 @@ def manifest_heads(collection: str):
     if c is None:
         raise SystemExit(f"no collection {collection!r} is held here")
 
-    def heads(records: list[str]) -> dict[str, str]:
+    def heads(records: list[str]) -> dict[str, dict]:
         con = db.read_only_connect(c)
         hits = [{"book_id": rec.split(":", 1)[1], "_rec": rec} for rec in records]
+        langs: dict[str, str] = {}
         for k in range(0, len(hits), 500):
-            retrieval._attach_heads(con, c, hits[k:k + 500])
+            part = hits[k:k + 500]
+            retrieval._attach_heads(con, c, part)
+            if con is not None:
+                marks = ",".join("?" for _ in part)
+                for native, lang in con.execute(
+                        f"SELECT native_id, lang FROM documents WHERE source=? AND native_id IN ({marks})",
+                        [c.plugin] + [h["book_id"] for h in part]):
+                    langs[str(native)] = lang or ""
         if con is not None:
             con.close()
-        return {h["_rec"]: h[retrieval.HEAD] for h in hits if retrieval.HEAD in h}
+        return {h["_rec"]: {"head": h.get(retrieval.HEAD, ""), "lang": langs.get(h["book_id"])}
+                for h in hits}
     return c, heads
 
 
@@ -1439,6 +1511,9 @@ def main(argv=None) -> int:
                                 "(the search's RERANK_TOP_N by default)")
             p.add_argument("--only", action="append", default=None,
                            help="rerank only rows whose label contains this; repeatable")
+            p.add_argument("--no-translate", action="store_true",
+                           help="judge every pair against the question as typed (the API's "
+                                "translate false); by default, as a search translates")
         if cmd in ("embed", "lexical", "score", "rerank"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
@@ -1493,7 +1568,9 @@ def main(argv=None) -> int:
         recipe = collections_mod.reranker_for(c)
         if recipe is None:
             raise SystemExit(f"{a.from_collection} names no reranker and RERANK_URL is unset")
-        return rerank(a.out, a.max_chars, recipe, heads, depths=a.depth, only=a.only)
+        plans = None if a.no_translate else PlanCache(
+            a.out / RERANKED / "plans.jsonl", search_plan(c))
+        return rerank(a.out, a.max_chars, recipe, heads, depths=a.depth, only=a.only, plans=plans)
     return report(a.out)
 
 

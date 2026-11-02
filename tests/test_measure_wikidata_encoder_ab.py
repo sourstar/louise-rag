@@ -254,3 +254,93 @@ def test_sample_table_takes_documents_per_language_from_the_vector_table(tmp_pat
     assert r["family"] == "en" and r["label"] == f"Title {b}"
     assert r["chunks"] == [f"en {b} part 0", f"en {b} part 1", f"en {b} part 2"], "the first chunks, in seq order"
     assert len({x["uid"] for x in rows}) == 10
+
+
+# ---- rerank (the operator, 2026-11-02: "5 results reranked over 50 results,
+# more likely over 100 … Same for wikipedia and wikidata")
+
+def _rerank_set(tmp_path):
+    """Four articles, en 0-1 and it 2-3, two chunks each. Two questions, one
+    a language: q0 (en) asks for article 1, q1 (it) for article 3. Encoder
+    `a` ranks every question 0, 2, 1, 3 by chunk; `b` ranks the target first."""
+    out = tmp_path / "set"
+    out.mkdir()
+    rows = [{"uid": f"wikipedia:{i}", "family": "en" if i < 2 else "it", "label": f"Title {i}",
+             "chunks": [f"article {i} chunk 0", f"article {i} chunk 1"]} for i in range(4)]
+    (out / "corpus.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    qs = [{"uid": "wikipedia:1", "family": "en", "lang": "en", "query": "one"},
+          {"uid": "wikipedia:3", "family": "it", "lang": "it", "query": "tre"}]
+    (out / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    doc = np.eye(8, dtype="float32")
+    np.save(out / "vec-bge-00000.npy", doc)
+    np.save(out / "vec-harrier-00000.npy", doc)
+    weights_a = [8, 7, 4, 3, 6, 5, 2, 1]               # entities 0, 2, 1, 3
+    np.save(out / "qvec-bge.npy", np.asarray([weights_a, weights_a], dtype="float32"))
+    b0 = [1, 1, 9, 8, 1, 1, 1, 1]                      # article 1 first
+    b1 = [1, 1, 1, 1, 1, 1, 9, 8]                      # article 3 first
+    np.save(out / "qvec-harrier.npy", np.asarray([b0, b1], dtype="float32"))
+    return out
+
+
+def _judge(seen):
+    """The reranker: the asked article highest when the question is in its
+    record's language variant, a cross-language pair scored low."""
+    want = {"one": "article 1 ", "uno": "article 1 ", "three": "article 3 ", "tre": "article 3 "}
+
+    def call(recipe, query, texts, timeout):
+        seen.append((query, [t.split("\n")[0] for t in texts]))
+        return [10.0 if want[query] in t else 0.0 for t in texts]
+    return call
+
+
+def test_the_reranker_reorders_each_encoders_records_and_scores_five_results(tmp_path, monkeypatch):
+    from app import collections as collections_mod
+    from app import retrieval
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    out = _rerank_set(tmp_path)
+    recipe = collections_mod.RerankRecipe(url="http://r/v1/rerank", api="jina", model="rr")
+    seen = []
+    res = ab.rerank(out, "wikipedia", encoders=["bge", "harrier"], depths=[2, 4], recipe=recipe,
+                    call=_judge(seen), translate=False)
+    rows = res["rows"]
+    # bge's vector order puts article 1 third and article 3 fourth
+    assert rows["bge vector"]["mrr@5"] == pytest.approx((1 / 3 + 1 / 4) / 2, abs=1e-4)
+    # at depth 2 the reranker sees articles 0 and 2 only: nothing moves up
+    assert rows["bge rerank@2"]["reached@2"] == 0.0
+    # at depth 4 it sees all: each target first
+    assert rows["bge rerank@4"]["mrr@5"] == pytest.approx(1.0)
+    assert rows["harrier vector"]["hit@1"] == 1.0 and rows["harrier rerank@4"]["hit@1"] == 1.0
+    assert set(res["pairs"]) >= {"vector: bge - harrier", "rerank@4: bge - harrier"}
+    assert res["by_language"]["it"]["bge rerank@4"] == 1.0
+    # each candidate went under its title, its two chunks
+    assert all(t.startswith("Title ") for _q, ts in seen for t in ts)
+    assert json.loads((out / "rerank.json").read_text())["depths"] == [2, 4]
+
+
+def test_the_question_is_translated_to_each_records_language_as_a_search_does(tmp_path, monkeypatch):
+    from app import collections as collections_mod
+    from app import retrieval
+    from tools import encoder_bakeoff as bake
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    out = _rerank_set(tmp_path)
+    recipe = collections_mod.RerankRecipe(url="http://r/v1/rerank", api="jina", model="rr")
+    plans = bake.PlanCache(out / "rerank" / "plans.jsonl",
+                           lambda text: (text, {"one": {"it": "uno"}, "tre": {"en": "three"}}[text]))
+    seen = []
+    ab.rerank(out, "wikipedia", encoders=["bge"], depths=[4], recipe=recipe, plans=plans,
+              call=_judge(seen))
+    by_query = {}
+    for q, titles in seen:
+        by_query.setdefault(q, set()).update(titles)
+    assert by_query == {"one": {"Title 0", "Title 1"}, "uno": {"Title 2", "Title 3"},
+                        "tre": {"Title 2", "Title 3"}, "three": {"Title 0", "Title 1"}}
+
+
+def test_wikidata_records_need_their_language_said(tmp_path):
+    out = _rerank_set(tmp_path)
+    rows = [json.loads(x) for x in (out / "corpus.jsonl").read_text().splitlines()]
+    (out / "corpus.jsonl").write_text("".join(json.dumps(r | {"family": "person"}) + "\n" for r in rows))
+    with pytest.raises(SystemExit, match="--doc-lang"):
+        ab.rerank(out, "wikidata", encoders=["bge"], depths=[4], recipe=object(), translate=False)
