@@ -398,6 +398,25 @@ Gutenberg was not run (the operator narrowed the test). What it costs is
 speed: 0.39–0.54× bge-m3 at one in flight, about half at saturation on
 wikidata's chunks.
 
+## The candidate engine's scores (München, 17:58–18:12, no other job)
+
+W1 and P3 were re-embedded as `nemotron-up` (vector only, the questions as
+typed). The scores are identical to the live engine's on every question,
+on both sets:
+- W1: MRR@10 0.8184, 0 questions better or worse;
+- P3: MRR@10 0.9720, 0 questions better or worse;
+- the 1,024 cuts: also identical to the live engine's.
+
+So the 0.17 % tokenizer fault moved no question's rank: the candidate's gain
+is correctness, not rows.
+
+Speed at one request in flight, no CPU twin:
+- W1: 41.4 chunks/s;
+- P3: 68.3 chunks/s, against bge-m3's 86.4.
+
+The afternoon's 24.1 and 33.4 were the CPU twin's doing, not the engine's
+(B shows the two engines equal).
+
 ## Both modes are part of a model's validation (operator, 2026-11-02)
 
 "About the validation of a model, both modes need to be tested. A model
