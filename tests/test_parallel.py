@@ -283,8 +283,10 @@ def test_the_build_thread_names_uids_and_gets_back_lines(isolated_config, tmp_pa
 def test_the_line_crosses_compressed_and_the_writer_expands_it():
     """München's profile of wikidata's held build (2026-10-31): the build's
     own process spent `_recv` 34.8 %, `_send` 15.6 %, `dumps` 6.7 % moving
-    lines child → build → writer. The child ships its line zstd-compressed;
-    the writer gets back exactly the line the child encoded."""
+    lines child → build → writer. The child ships its line zstd-compressed —
+    its TASK's lines in one batch since 2026-11-02 (python-hot-spots.md
+    "C": a compress call a record cost a fixed 25-42 µs) — and the writer
+    gets back exactly the line the child encoded."""
     from types import SimpleNamespace
     from app.pack import build as pack_build, records
     rec = {"uid": "fake:1", "native_id": "1", "lang": "en", "title": "Doc " + "x" * 2000,
@@ -292,11 +294,14 @@ def test_the_line_crosses_compressed_and_the_writer_expands_it():
            "sections": [["Abstract", "text " * 400]], "extra": {}, "layer": 0, "chunks": 1,
            "content_hash": "00" * 16, "origin_hash": "11" * 16}
     want = records.canonical_line(dict(rec))
-    slim, _layer, _blob, _plates = pack_build.with_line(SimpleNamespace(codex=None),
-                                                       (dict(rec), 0, b"", {}))
-    shipped = slim[pack_build.LINE_KEY]
-    comp, size = shipped
-    assert size == len(want) and len(comp) < len(want) / 3, "it travels compressed"
+    answer = pack_build.with_line(SimpleNamespace(codex=None), (dict(rec), 0, b"", {}))
+    assert answer[0][pack_build.LINE_KEY] == want, "encoded in the child, as the writer would"
+    results = [(True, answer)]
+    pack_build.ship_lines(results)
+    shipped = results[0][1][0][pack_build.LINE_KEY]
+    (comp, size), start, end = shipped
+    assert (start, end) == (0, len(want)) and size == len(want)
+    assert len(comp) < len(want) / 3, "it travels compressed"
     assert pack_build._unship(shipped) == want
     assert pack_build._unship(want) == want, "a raw line still reads"
 
