@@ -29,6 +29,15 @@ COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 COPY app ./app
 COPY tools ./tools
+# BYTECODE COMPILED AT BUILD (2026-11-02, the operator asked whether the
+# scripts are pre-built). Otherwise every fresh container (a `docker run --rm`
+# tool, a deploy, the read-only gpu-probe) compiles the ~150 app modules it
+# imports first: app.worker + app.web + app.louise took 3.2-4.0 s cold against
+# 2.6-3.1 s warm. That is startup only: the same bytecode runs either way, so
+# the processing speed does not change. pip compiles the installed packages
+# already. A source tree bind-mounted over /srv hides these, as it hides the
+# rest of the image.
+RUN python -m compileall -q -j 0 app tools
 # RUNTIME DATA, not a fixture: `app/hold/calibration.py` resolves its sets
 # as `<parent of app>/calibration/<modality>.jsonl`, so `hold collection
 # create`, `hold embedder check` and `hold vectors export` all fail in a

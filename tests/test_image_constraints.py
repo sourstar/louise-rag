@@ -35,3 +35,18 @@ def test_the_image_installs_under_the_constraints():
     docker = (ROOT / "Dockerfile").read_text()
     installs = re.findall(r"pip install[^\n]*-r requirements[^\n]*", docker)
     assert installs and all("-c constraints.txt" in i for i in installs), installs
+
+
+def test_the_image_compiles_its_own_code_once_copied():
+    """Louise's own modules are compiled at build (2026-11-02), after both
+    COPYs and whole: a fresh container then imports bytecode instead of
+    compiling ~150 modules first (~1 s a container, a tool run, a restart)."""
+    text = (ROOT / "Dockerfile").read_text()
+    base = text.split("\nFROM ", 2)[0] if text.startswith("FROM ") else text
+    lines = [ln.strip() for ln in base.splitlines()]
+    at = [i for i, ln in enumerate(lines) if ln.startswith("RUN") and "compileall" in ln]
+    assert at, "the image compiles nothing"
+    line = lines[at[0]]
+    assert " app" in line and " tools" in line and " -x " not in line, line
+    assert lines.index("COPY app ./app") < at[0] and lines.index("COPY tools ./tools") < at[0]
+

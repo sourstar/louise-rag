@@ -157,12 +157,77 @@ document vectors are G1's (parallel:1, its repro check exact).
 - **Verdict by the rule:** harrier is significantly worse, so Qwen3 stays on
   gutenberg. The "one model" clause does not apply. On wikipedia and
   wikidata, harrier must be significantly better than bge-m3.
-- **Speed, card to itself:** harrier 7.97 texts/s, 7,199 tokens/s
-  (parallel:1, concurrency 2, card ~61–71 % busy). Qwen3's like-for-like
-  sample follows G3.
+- **Speed:** see "Speed, and what limits it" below. The 7.97 texts/s first
+  reported here was an average over two windows, one of them beside a CPU
+  job, sent one request at a time. With the card truly to itself harrier runs
+  12.84 texts/s.
 - The pool is easier than the whole collection, so these are not the
   search's own figures. A gap of 0.07 MRR@10 is well outside the noise.
 
 ### wikidata, wikipedia
 
 *Pending.*
+
+## Published benchmarks, against ours (checked 2026-11-02)
+
+The operator: "I have read benchmarks in which harrier was scoring much better
+than qwen3, please check".
+
+| model | MTEB v2 multilingual, mean | MTEB retrieval |
+|---|---|---|
+| harrier-oss-v1-0.6b | 69.0 | 70.8 \* |
+| Qwen3-Embedding-0.6B | 64.3 | 64.6 |
+| **Qwen3-Embedding-4B (gutenberg's)** | **69.45** | **69.6** |
+| harrier-oss-v1-27b | 74.3 | 78.3 \* |
+
+\* A third-party aggregator; not checked against MTEB's own leaderboard. The
+other figures are the model cards' own.
+
+- **Where "much better" comes from.** Microsoft's table compares harrier-0.6b
+  with Qwen3-Embedding-0.6B, the same size: +4.7. The other large gaps are
+  harrier-27b's. Against the 4B that gutenberg runs, harrier-0.6b is level
+  overall and ~1 point ahead on retrieval.
+- **Why ours differs.** MTEB's retrieval tasks are mostly short questions over
+  short passages. gutenberg's set finds a work from a description over long
+  literary passages (903 tokens on average), and there the 4B leads even at
+  4 bits (MRR@10 0.863 against 0.799, p = 0.0001).
+- **Not the instruction.** harrier scored 0.793 and 0.799 with two
+  instructions, against a gap of 0.07. Its MTEB numbers use a prompt per task
+  (`mteb_v2_eval_prompts.json` in its repository), and none of them is
+  book-finding.
+- **wikidata and wikipedia** are closer to MTEB's shape; their rows above
+  decide those two collections.
+
+Sources:
+- the [harrier-oss-v1-0.6b model card](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) and its `mteb_v2_eval_prompts.json`;
+- the [Qwen3-Embedding-4B model card](https://huggingface.co/Qwen/Qwen3-Embedding-4B);
+- the aggregators' [MTEB retrieval](https://www.madebyagents.com/benchmarks/mteb-retrieval) and [MTEB overall](https://www.madebyagents.com/benchmarks/mteb-overall) pages;
+- [The Decoder](https://the-decoder.com/microsofts-bing-team-open-sources-harrier-embedding-model/) on the release;
+- Microsoft's own post (blogs.bing.com) could not be read from the agent's network.
+
+## Speed, and what limits it (2026-11-02)
+
+harrier f16 on the B70 (`parallel:1`, threads 6, ubatch 8192, flash attention
+on, `GGML_SYCL_ENABLE_DNN=0`), gutenberg's pool texts, ONE request in flight
+(the tools' `EMBED_CONCURRENCY` is 1: the "concurrency 2/4/8" first written
+for these rows never reached the server).
+
+| run | beside it | texts/s | tokens/s | tokens a text |
+|---|---|---|---|---|
+| G1 through VeGa, 08:02–09:00 | gutenberg's CPU twin (4.2–5.4 cores) | 5.63 | 5,152 | 914 |
+| G1 through VeGa, 09:14–09:52 | nothing (the twin docker-paused) | **12.84** | **10,931** | 851 |
+| raw backend, same YAML but `backend`, ctx 32,768 and `parallel:4` | nothing | 12.27–12.63 | 11,303–11,354 | 923 |
+
+- **VeGa costs 3–4 %** (~3 ms a text): on the test harness 3.7 ms a request,
+  the wrapper's hop ~1.8 and the receipts GET ~1.8 (`louise dev
+  embedder-profile --stages`, #207).
+- **A CPU job beside the card halves it.** Every LocalAI backend is a child of
+  one `local-ai` process, in one container whose cgroup has an 8-core quota
+  (`cpu.max 800000 100000`) on the 12-thread host. The CPU twin's 4.2–5.4
+  cores plus one busy SYCL backend's ~3.4 cross it, and the kernel then stops
+  the whole container until the period ends, the card's feeder included. Over
+  2 days 5 h, 14.3 % of LocalAI's periods were throttled (45,949 s).
+- **Not yet measured:** slots with real requests in flight, and batches. They
+  are measured only if harrier wins wikidata or wikipedia. The contention A/B
+  (the twin at nice 0, then nice 19, and the quota) runs when the CPU
+  reference resumes; its rows go in scheduling-log.md.
