@@ -105,9 +105,16 @@ def test_warnings_that_ask_for_an_action_stay_in_sight(client):
     db.set_control(con, backend_gate.GATE_STATE_KEY, json.dumps(
         {"allowed": False, "reason": "probe cosine 0.41 < tau", "ts": 1}))
     page = _main(re.sub(r"\s+", " ", client.get("/admin/library").text))
-    for warning in ("2 blocked", "exhausted retries", "clear errors &amp; retry",
-                    "embedding paused", "probe cosine 0.41"):
+    for warning in ("embedding paused", "probe cosine 0.41"):
         assert in_sight(page, warning), warning
+    # the card's buttons are under Options and what it explains under Details
+    # (operator, the same day: "in each model card hide all the descriptive
+    # text in a Details expandable section and all the buttons in a Options
+    # section"): the blocked count stays in sight as its badge, which names
+    # where the action is; the sentence and the button are one tap away
+    assert in_sight(page, 'title="failed a stage or exhausted retries: Options › clear errors &amp; retry…">2 blocked</span>')
+    assert behind(page, "2 blocked: documents that failed a stage or exhausted retries")
+    assert behind(page, ">clear errors &amp; retry…</button>")
 
 
 # ---- System -----------------------------------------------------------------

@@ -75,12 +75,12 @@ def test_rescan_is_grey_wherever_the_mode_parses_nothing(client):
     when that mode still scanned what it downloaded."""
     for state in ("paused", "seed-only", "acquire-only"):
         node_state.set_worker_state(state)
-        btn = _button(client.get("/admin/library").text, "rescan all collections")
+        btn = _button(client.get("/admin/library").text, "rescan all collections…")
         assert "disabled" in btn, state
         assert "this mode parses nothing" in btn    # the title says why
 
     node_state.set_worker_state("running")
-    btn = _button(client.get("/admin/library").text, "rescan all collections")
+    btn = _button(client.get("/admin/library").text, "rescan all collections…")
     assert "disabled" not in btn
 
 

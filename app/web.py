@@ -160,6 +160,11 @@ def _human_eta(seconds: float | None) -> str | None:
         return f"~{days:.0f}d"
     return f"~{days / 365:.0f}y"
 
+
+# the same coarse duration in the Library's confirmations ("reprocess
+# lexical index…" quotes how long redoing the index takes at the rate measured)
+TEMPLATES.env.filters["eta"] = _human_eta
+
 ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
 
@@ -1344,6 +1349,16 @@ def _offered_by_torrent_collection(collection: collections_mod.Collection) -> li
     return offered if found else None
 
 
+def _embed_select_view(collection) -> dict | None:
+    """The card's "Embed which" control, where the plugin can group its
+    documents (`embed_select.SMART_PLUGINS`); None elsewhere."""
+    from . import embed_select
+    if getattr(collection, "plugin", None) not in embed_select.SMART_PLUGINS:
+        return None
+    return {"policy": embed_select.policy(collection),
+            "stated": getattr(collection, "embed_select", None)}
+
+
 def _profile_label(collection: collections_mod.Collection) -> str:
     """The card's profile: the file's, else the profiles of the slices it
     holds, by name (operator, 2026-11-02: wikipedia read "(hand-populated)"
@@ -2336,6 +2351,13 @@ def _collection_shelf(collection: collections_mod.Collection,
         "p2p": _p2p_summary(collection),
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
+        # where its data came from: "remove…" defaults to forgetting a copy
+        # taken from peers and to retiring one built here (collection_remove);
+        # without it the dialog called every copy "built here from a corpus"
+        "source": getattr(collection, "source", "origin"),
+        # WHICH documents the encoder spends on (07 §7.8 `embed_select`,
+        # app/embed_select.py): offered where the plugin can group them
+        "embed_select": _embed_select_view(collection),
         "stage_rates": stage_rates,
         "stage_etas": stage_etas,
         # the tooltip for the slot above, in words — built HERE because
@@ -3051,6 +3073,27 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
             "note": None if applied_now else
             "saved to the TOML; the manifest is busy, so the worker applies "
             "it within a round"}
+
+
+class EmbedSelectBody(BaseModel):
+    value: str
+
+
+@admin_router.post("/library/{name}/embed-select")
+def collection_embed_select(name: str, body: EmbedSelectBody):
+    """The Library's embed selection (07 §7.8 `embed_select`; operator,
+    2026-11-02, wikipedia's "smart"): written to the collection's file as
+    `hold config apply --set embed_select=…` writes it. The worker applies
+    it after its next scan (app/embed_select.py), the pipeline waiting for
+    it meanwhile."""
+    _collection_or_404(name)
+    if body.value not in collections_mod.EMBED_SELECT:
+        raise HTTPException(400, f"value is one of {', '.join(collections_mod.EMBED_SELECT)}")
+    try:
+        collection_file.set_values(name, {"embed_select": body.value})
+    except collection_file.SetRefused as e:
+        raise HTTPException(400, str(e)) from None
+    return {"ok": True, "embed_select": body.value, "persisted": True}
 
 
 class ShareBody(BaseModel):

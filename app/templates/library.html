@@ -26,10 +26,16 @@
     {% endfor %}
     {# Grey wherever the mode parses nothing, because it would genuinely do
        nothing: a scan is parsing, and only "run everything" parses. #}
-    <button onclick="rescanAll()"
+    <button onclick="confirmAction('rescan-all')"
             {% if not mode_scans %}disabled
-            title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan all collections</button>
+            title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan all collections…</button>
   </div>
+  {# a rescan of every card at once asks first, as each card's does #}
+  <template data-confirm="rescan-all" data-label="Rescan all collections">
+    <h2>Rescan all {{ shelves|length }} collection{{ '' if shelves|length == 1 else 's' }}?</h2>
+    <div class="note"><b>Every collection's corpus folder is examined again, none skipped,</b> one collection after the other: the record of what earlier scans saw is cleared. A new file is added; a file whose content changed has its document parsed, indexed and embedded again. Unchanged documents keep their work.</div>
+    <div class="note">On a large corpus this takes from minutes to hours, and the page waits until every scan is done.</div>
+  </template>
   <div class="note">{{ mode_says.get(worker_state, '') }}</div>
 </div>
 
@@ -60,7 +66,7 @@
        accepted, red while one is still needed. The class WORD keeps its
        own colour, so a yellow licence reads yellow inside a green
        border instead of the whole badge reading green. #}
-    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
+    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% elif c.license.needs_ack %} title="the terms are not yet acknowledged: Options › acknowledge license…"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
     {% endif %}
     {% if c.copy_state and c.copy_state.state != 'in-use' %}
     {# 03 §3.6: a copy this peer has not finished testing. Red once the node
@@ -89,8 +95,6 @@
   <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif mode_fetches %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
       <span{% if c.fetched.docs_total %} title="documents (files)"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="extra formats — local only">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fetch }}">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
-  {% else %}
-  <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
   {% endif %}
   {% if c.counts_pending %}
   <div class="note">counting — the bars below read 0 until the first scan lands.</div>
@@ -142,54 +146,15 @@
   {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
   <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ dense_target|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min while the page is viewed: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/dense_target)|round(1) if dense_target else 0 }}%;background:var(--lapis)"></span></div></div>
-  <div class="note">
-    delta freshness: {{ c.last_discover_text }} ·
-    {% if c.embed_mode in ('all', 'p2p') %}
-      {# backfill selects from the manifest directly and never touches the
-         lazy queue, so the queue count is always 0 here and says nothing #}
-      {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
-      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.standalone %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
-      {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
-      {% endif %}
-    {% elif c.embed_mode == 'lazy' %}
-      on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
-    {% else %}
-      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
-    {% endif %}
-  </div>
+  {# WARNINGS THAT ASK FOR AN ACTION stay in sight, as their badge and,
+     where it is the action, their reason; what each means is in Details #}
   {% if c.blocked %}
-  <div class="note">
-    <span class="badge err">{{ c.blocked }} blocked</span>
-    document{{ '' if c.blocked == 1 else 's' }} failed a stage or exhausted retries —
-    “clear errors &amp; retry” puts them back in the pipeline.
-  </div>
-  {% endif %}
-  {% if c.unindexable %}
-  <div class="note">
-    <span class="badge">{{ c.unindexable }} not indexable</span>
-    no usable content in the source (no text, or retracted upstream)
-  </div>
-  {% endif %}
-  {% if c.issues %}
-  {# 06 §6.1, amended 2026-10-25: the origin's inconsistencies the parses met #}
-  <div class="note">
-    <span class="badge">{{ c.issues.values()|sum }} origin inconsistenc{{ 'y' if c.issues.values()|sum == 1 else 'ies' }}</span>
-    {% for code, n in c.issues|dictsort %}{{ code }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}
-    — <code>louise hold issues list {{ c.name }}</code>
-  </div>
+  <div class="note"><span class="badge err" title="failed a stage or exhausted retries: Options › clear errors &amp; retry…">{{ c.blocked }} blocked</span></div>
   {% endif %}
   {% if c.gate and not c.gate.allowed %}
   <div class="note">
     <span class="badge err">embedding paused</span> {{ c.gate.reason }}
   </div>
-  {% endif %}
-  {% if c.genesis %}
-  {# PRE-EMBEDDED DATA, ONE LINE (operator, 2026-10-13: "a one line note like
-     'N pre embedded vectors by XYZ', remove all the rest", for every
-     collection): the vectors the archive brought, from the import ledger,
-     and who produced them, from the Codex's credits. The rest — fetch meter,
-     range rows, rejected shards — lives in the System log and `node health`. #}
-  <div class="note">{{ c.genesis.imported_vectors|num }} pre-embedded vectors by {{ c.genesis.producer }}</div>
   {% endif %}
   {# ONE knob on EVERY card's main box (operator: "single knob"). It
      governs the LOCAL encoder only; an archive imports whenever the
@@ -216,6 +181,18 @@
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
       </select></div>
+    {% if c.embed_select %}
+    {# WHICH documents the encoder spends on (07 §7.8 `embed_select`;
+       operator, 2026-11-02: wikipedia's "smart" choice, its default) —
+       in sight beside the mode it narrows, saved to the collection's file #}
+    <div style="flex:0 1 auto">
+      <label style="margin:0 0 2px">Embed which</label>
+      <select data-embed-select onchange="setEmbedSelect('{{ c.name }}', this.value)"
+              title="smart: every English article, plus for each Wikidata item the longest article in another language when the English one is missing or shorter; the rest held and word-searchable, not embedded — saved to collections/{{ c.name }}.toml">
+        <option value="smart" {{ 'selected' if c.embed_select.policy == 'smart' }}>smart (English + the longest other language)</option>
+        <option value="all" {{ 'selected' if c.embed_select.policy == 'all' }}>every article</option>
+      </select></div>
+    {% endif %}
     {% if c.shareable %}
     {# the OTHER axis, independent of the encoder's: what this node makes
        available — its records and every embedding it holds, as bundles
@@ -234,27 +211,117 @@
   {% if c.embed_mode_note %}
   <div class="note"><span class="badge err">runs as all local</span> {{ c.embed_mode_note }}</div>
   {% endif %}
-  {% if c.p2p is not none %}
-  <div class="note" title="the bounty list is the open parts of the current snapshot (04 §4.5); a part is covered by the bundles accepted here (09 §9.10)">
-    p2p: {{ c.p2p.covered_pct }} % of chunks covered by bundles ·
-    bounty list {{ c.p2p.open|num }} open of {{ c.p2p.parts|num }} part{{ '' if c.p2p.parts == 1 else 's' }}{% if c.p2p.leads is not none %}, this node leads {{ c.p2p.leads|num }}, {{ c.p2p.left|num }} left to {{ c.p2p.peers - 1 if c.p2p.peers > 0 else 0 }} peer{{ '' if c.p2p.peers == 2 else 's' }}{% endif %} ·
-    {{ c.p2p.from_here|num }} chunk{{ '' if c.p2p.from_here == 1 else 's' }} bundled here, {{ c.p2p.from_peers|num }} taken from peers
-  </div>
-  {% endif %}
-  <div class="actions">
-    <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
-    <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
-    <button onclick="libReset('{{ c.name }}','fts')">reprocess lexical index</button>
-    <button onclick="libDiscover('{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan</button>
-  </div>
-  <div class="actions">
-    {% if c.license.needs_ack %}
-    <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
+  {# THE CARD: STATUS IN SIGHT, PROSE AND BUTTONS BEHIND TWO CLOSED LINES
+     (operator, 2026-11-02: "in each model card hide all the descriptive
+     text in a Details expandable section and all the buttons in a Options
+     section, keep embed mode and share check box visible"). In sight: the
+     name, the badges, the stage bars, the warnings that ask for an action,
+     the embed mode and share. `data-drawer` names each for scripts and
+     tests; the class stays exactly "more", the one look. #}
+  <details class="more" data-drawer="details">
+    <summary>Details</summary>
+    {% if not c.fetched %}
+    <div class="note">fetch stage: off — acquisition is not enabled for this collection</div>
     {% endif %}
-    <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
-    <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
-    <button onclick="removeCollection('{{ c.name }}', '{{ c.source }}')">remove…</button>
-  </div>
+    <div class="note">
+      delta freshness: {{ c.last_discover_text }} ·
+      {% if c.embed_mode in ('all', 'p2p') %}
+        {# backfill selects from the manifest directly and never touches the
+           lazy queue, so the queue count is always 0 here and says nothing #}
+        {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
+        {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.standalone %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
+        {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
+        {% endif %}
+      {% elif c.embed_mode == 'lazy' %}
+        on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
+      {% else %}
+        embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
+      {% endif %}
+    </div>
+    {% if c.blocked %}
+    <div class="note">
+      {{ c.blocked }} blocked: document{{ '' if c.blocked == 1 else 's' }} that failed a stage or exhausted retries —
+      “clear errors &amp; retry…” under Options puts them back in the pipeline.
+    </div>
+    {% endif %}
+    {% if c.unindexable %}
+    <div class="note">
+      <span class="badge">{{ c.unindexable }} not indexable</span>
+      no usable content in the source (no text, or retracted upstream)
+    </div>
+    {% endif %}
+    {% if c.issues %}
+    {# 06 §6.1, amended 2026-10-25: the origin's inconsistencies the parses met #}
+    <div class="note">
+      <span class="badge">{{ c.issues.values()|sum }} origin inconsistenc{{ 'y' if c.issues.values()|sum == 1 else 'ies' }}</span>
+      {% for code, n in c.issues|dictsort %}{{ code }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}
+      — <code>louise hold issues list {{ c.name }}</code>
+    </div>
+    {% endif %}
+    {% if c.genesis %}
+    {# PRE-EMBEDDED DATA, ONE LINE (operator, 2026-10-13: "a one line note like
+       'N pre embedded vectors by XYZ', remove all the rest", for every
+       collection): the vectors the archive brought, from the import ledger,
+       and who produced them, from the Codex's credits. The rest — fetch meter,
+       range rows, rejected shards — lives in the System log and `node health`. #}
+    <div class="note">{{ c.genesis.imported_vectors|num }} pre-embedded vectors by {{ c.genesis.producer }}</div>
+    {% endif %}
+    {% if c.p2p is not none %}
+    <div class="note" title="the bounty list is the open parts of the current snapshot (04 §4.5); a part is covered by the bundles accepted here (09 §9.10)">
+      p2p: {{ c.p2p.covered_pct }} % of chunks covered by bundles ·
+      bounty list {{ c.p2p.open|num }} open of {{ c.p2p.parts|num }} part{{ '' if c.p2p.parts == 1 else 's' }}{% if c.p2p.leads is not none %}, this node leads {{ c.p2p.leads|num }}, {{ c.p2p.left|num }} left to {{ c.p2p.peers - 1 if c.p2p.peers > 0 else 0 }} peer{{ '' if c.p2p.peers == 2 else 's' }}{% endif %} ·
+      {{ c.p2p.from_here|num }} chunk{{ '' if c.p2p.from_here == 1 else 's' }} bundled here, {{ c.p2p.from_peers|num }} taken from peers
+    </div>
+    {% endif %}
+  </details>
+  <details class="more" data-drawer="options">
+    <summary>Options</summary>
+    {# What discards work or data asks first (operator, 2026-11-02: "for the
+       buttons reprocess/rescan/remove add a confirmation step with a warning
+       on the effect, to prevent accidental clicks"): `confirmAction` shows
+       the card's own <template data-confirm>, written here beside the
+       numbers it quotes, and posts only from its labelled button. #}
+    <div class="actions">
+      <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
+      <button onclick="confirmAction('errors', '{{ c.name }}')">clear errors &amp; retry…</button>
+      <button onclick="confirmAction('reprocess', '{{ c.name }}')">reprocess lexical index…</button>
+      <button onclick="confirmAction('rescan', '{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan…</button>
+    </div>
+    <div class="actions">
+      {% if c.license.needs_ack %}
+      <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
+      {% endif %}
+      <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
+      <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
+      <button onclick="removeCollection('{{ c.name }}', '{{ c.source }}')">remove…</button>
+    </div>
+    {# THE WARNINGS say what each route does (app/web.py): `reset` with
+       stage "errors" (db.apply_reset: stage errors and spent retries
+       cleared, in the background) and "fts" (every indexed document back
+       to unindexed; the vectors untouched); `discover` (the scan cursor
+       cleared, then discovery.sync_collection inline — a changed file's
+       document loses every stage); `remove` (retire or forget,
+       collection_remove — its dialog is removeCollection's). #}
+    <template data-confirm="errors" data-for="{{ c.name }}" data-label="Clear errors on {{ c.name }}">
+      <h2>Clear the errors of {{ c.name }}?</h2>
+      <div class="note">{% if c.blocked %}<b>The {{ c.blocked|num }} blocked document{{ '' if c.blocked == 1 else 's' }} lose{{ 's' if c.blocked == 1 else '' }} the error recorded on {{ 'it' if c.blocked == 1 else 'them' }}</b> and get{{ 's' if c.blocked == 1 else '' }} {{ 'its' if c.blocked == 1 else 'their' }} retries back, as does any document part-way through its retries, and go{{ 'es' if c.blocked == 1 else '' }} back into the pipeline from the stage that failed.{% else %}No document is blocked now: only a document part-way through its retries, if any, gets them back.{% endif %} One that fails again is blocked again; the errors stay in the System log.</div>
+      <div class="note">Finding them reads the whole manifest: it runs in the background, and the counts update when it is done.</div>
+    </template>
+    <template data-confirm="reprocess" data-for="{{ c.name }}" data-label="Reprocess {{ c.name }}">
+      <h2>Reprocess the lexical index of {{ c.name }}?</h2>
+      <div class="note"><b>The lexical index is rebuilt from the start:</b> the {{ c.fts_done|num }} document{{ '' if c.fts_done == 1 else 's' }} indexed now {{ 'is' if c.fts_done == 1 else 'are' }} chunked and indexed again, and the indexed (lexical) bar drops to 0 and climbs back as it goes.
+        {% if c.stage_rates and c.stage_rates.fts and c.fts_done %}At the indexing rate measured here ({{ c.stage_rates.fts|num }} documents an hour) that takes {{ (c.fts_done * 3600 / c.stage_rates.fts)|eta }}.{% else %}It takes about as long as indexing them took the first time.{% endif %}</div>
+      <div class="note">The vectors are kept: nothing is embedded again. Search keeps answering from the old entries until each document's new ones replace them; documents still waiting for the encoder wait for their re-index.</div>
+    </template>
+    <template data-confirm="rescan" data-for="{{ c.name }}" data-label="Rescan {{ c.name }}">
+      <h2>Rescan {{ c.name }}?</h2>
+      <div class="note"><b>Every file of its corpus folder is examined again, none skipped:</b> the record of what earlier scans saw is cleared ({{ c.total|num }} document{{ '' if c.total == 1 else 's' }} known now). A new file is added; a file whose content changed has its document parsed, indexed and embedded again. Unchanged documents keep their work.</div>
+      <div class="note">On a large corpus this takes from minutes to hours, and the page waits until the scan is done.</div>
+    </template>
+    <template data-confirm="remove" data-for="{{ c.name }}">
+      <div class="note">It holds {{ c.total|num }} document{{ '' if c.total == 1 else 's' }}: {{ c.fts_done|num }} indexed, {{ c.embed_done|num }} embedded.</div>
+    </template>
+  </details>
 </div>
 {% endfor %}
 {# 02 §2.10: annotations collections — claims about another collection's
@@ -287,10 +354,8 @@
     <span class="badge brass" title="{{ a.copy_state.reasons | join(' · ') }}">tests open — in use by decision</span>
     {% endif %}
   </div>
-  {% if a.title %}<div class="note"><b>{{ a.title }}</b>{% if a.summary %} — {{ a.summary }}{% endif %}</div>{% endif %}
   <div class="note">
     {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}{{ a.note }}{% endif %}
-    · kinds: {{ a.kinds | join(', ') }}
   </div>
   <div class="row">
     <div>
@@ -299,18 +364,32 @@
                onchange="setShare('{{ a.name }}', this.checked, '')">share</label>
     </div>
   </div>
+  {# the same two closed lines as a held collection's card (operator,
+     2026-11-02): the description behind Details, every button behind Options #}
+  <details class="more" data-drawer="details">
+    <summary>Details</summary>
+    {% if a.title %}<div class="note"><b>{{ a.title }}</b>{% if a.summary %} — {{ a.summary }}{% endif %}</div>{% endif %}
+    <div class="note">kinds: {{ a.kinds | join(', ') }}</div>
+  </details>
   {# updated, not replaced (operator, 2026-10-23): the next snapshot of the
      SAME collection — the claims re-checked against the targets' newest
-     snapshots, or a new claims file as the whole set from now on #}
-  <div class="actions">
-    <button title="re-check every claim against the newest snapshot of what it annotates; a claim whose record is gone is withdrawn"
-            onclick="updateAnnotations('{{ a.name }}', null)">re-check claims</button>
-    <button title="a new claims file is the whole claim set from now on: a claim kept keeps its id, a new one is added, one left out is withdrawn"
-            onclick="document.getElementById('upd_{{ a.name }}').click()">update with a claims file…</button>
-    <input type="file" id="upd_{{ a.name }}" accept=".jsonl,.ndjson,.json" style="display:none"
-           onchange="if(this.files[0])updateAnnotations('{{ a.name }}', this.files[0]); this.value=''">
-    <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
-  </div>
+     snapshots, or a new claims file as the whole set from now on; both
+     check first and ask with what they would change (updateAnnotations) #}
+  <details class="more" data-drawer="options">
+    <summary>Options</summary>
+    <div class="actions">
+      <button title="re-check every claim against the newest snapshot of what it annotates; a claim whose record is gone is withdrawn"
+              onclick="updateAnnotations('{{ a.name }}', null)">re-check claims</button>
+      <button title="a new claims file is the whole claim set from now on: a claim kept keeps its id, a new one is added, one left out is withdrawn"
+              onclick="document.getElementById('upd_{{ a.name }}').click()">update with a claims file…</button>
+      <input type="file" id="upd_{{ a.name }}" accept=".jsonl,.ndjson,.json" style="display:none"
+             onchange="if(this.files[0])updateAnnotations('{{ a.name }}', this.files[0]); this.value=''">
+      <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
+    </div>
+    <template data-confirm="remove" data-for="{{ a.name }}">
+      <div class="note">It holds {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}its claims{% endif %}.</div>
+    </template>
+  </details>
   <div id="upd_result_{{ a.name }}"></div>
 </div>
 {% endfor %}
@@ -468,6 +547,28 @@ async function rescanAll(){
   {% for c in shelves %}await libDiscover('{{ c.name }}',true);{% endfor %}
   toast('rescan triggered for every collection');
 }
+// A CONFIRMATION BEFORE WHAT DISCARDS WORK (operator, 2026-11-02: "for the
+// buttons reprocess/rescan/remove add a confirmation step with a warning on
+// the effect, to prevent accidental clicks"). The warning is the card's own
+// <template data-confirm>, rendered beside the numbers it quotes; the request
+// is posted only from the button that names the action. Cancel comes first
+// and has the focus, so Enter or a second stray tap posts nothing.
+const CONFIRMED={
+  errors:name=>libReset(name,'errors'),
+  reprocess:name=>libReset(name,'fts'),
+  rescan:name=>libDiscover(name),
+  'rescan-all':()=>rescanAll(),
+};
+function confirmAction(what,name){
+  const t=document.querySelector(`template[data-confirm="${what}"]`+(name?`[data-for="${CSS.escape(name)}"]`:''));
+  if(!t||!CONFIRMED[what])return;
+  showModal(t.innerHTML+`<div class="actions">
+      <button class="primary" id="confirm-cancel" onclick="hideModal()">Cancel</button>
+      <button class="danger" id="confirm-go">${esc(t.dataset.label)}</button>
+    </div>`);
+  document.getElementById('confirm-go').onclick=()=>{hideModal();CONFIRMED[what](name)};
+  document.getElementById('confirm-cancel').focus();
+}
 async function libDiscover(name,quiet){
   try{await postJSON('/admin/library/'+name+'/discover',{})}catch(e){toast('rescan failed: '+e);return}
   if(!quiet){toast('rescanned '+name);location.reload()}
@@ -480,6 +581,12 @@ async function setEmbedMode(name,mode,shared){
     toast(name+': embed mode → '+(EMBED_LABELS[mode]||mode)+(d.share_enabled?' — sharing enabled':'')+' — saved to collections/'+name+'.toml');
     if(d.share_enabled){location.reload()}}
   catch(e){toast('embed mode failed: '+e);location.reload()}
+}
+async function setEmbedSelect(name,value){
+  try{await postJSON('/admin/library/'+name+'/embed-select',{value});
+    toast(name+': embed '+(value==='smart'?'smart (English + the longest other language)':'every article')+
+          ' — saved to collections/'+name+'.toml; applied after the next scan')}
+  catch(e){toast('embed selection failed: '+e);location.reload()}
 }
 async function setShare(name,on,mode){
   if(!on&&mode==='p2p'&&!confirm(name+' embeds in all p2p mode, which publishes what it embeds; disabling sharing switches it to all local. Proceed?')){location.reload();return}
@@ -786,18 +893,24 @@ async function waitForJob(id,onState){
 // Two removals, in plain words, the default by where the collection came
 // from (operator, 2026-10-20: a copy removed and taken again under another
 // name was refused — "retire" had kept its directory, and so its id).
+// The warning says what each does (app/web.py collection_remove,
+// app/hold/forget.py) and what the card holds (its <template
+// data-confirm="remove">); Cancel has the focus, as in confirmAction.
 async function removeCollection(name, source){
   const copy=(source==='shard');
+  const held=document.querySelector(`template[data-confirm="remove"][data-for="${CSS.escape(name)}"]`);
   showModal(`<h2>Remove ${esc(name)}?</h2>
+    ${held?held.innerHTML:''}
     <div class="note">${copy?'This collection was taken from peers: its data is theirs to serve again.':'This collection was built here from a corpus.'}</div>
-    <label><input type="radio" name="rm_mode" value="forget" ${copy?'checked':''}> <b>Forget</b> — remove this node's copy and its state. It can be taken again later, under any name.</label>
-    <label><input type="radio" name="rm_mode" value="retire" ${copy?'':'checked'}> <b>Retire</b> — stop running it; keep everything on disk (manifest, index, vectors). Restorable by renaming its file back. While retired, its id stays bound to this name: taking it again under another name is refused.</label>
+    <label style="text-transform:none;letter-spacing:0;margin:6px 0"><input type="radio" style="width:auto" name="rm_mode" value="forget" ${copy?'checked':''}> <b>Forget</b> — deletes this node's copy now: its records, lexical index, vectors and state, and the corpus files it downloaded unless another collection reads them. <b>It cannot be undone</b>: to have it again it is taken from peers, or fetched, parsed, indexed and embedded again. It can then be taken under any name.</label>
+    <label style="text-transform:none;letter-spacing:0;margin:6px 0"><input type="radio" style="width:auto" name="rm_mode" value="retire" ${copy?'':'checked'}> <b>Retire</b> — the node stops running it within one round: it is no longer searched, embedded or shared. Nothing on disk is deleted (manifest, index, vectors); restorable by renaming its file back. While retired, its id stays bound to this name: taking it again under another name is refused.</label>
     <div class="note">Type the collection name to confirm.</div>
     <input id="rm_confirm" placeholder="${esc(name)}">
     <div class="actions">
-      <button class="primary" onclick="doRemove('${esc(name)}')">Remove</button>
-      <button onclick="hideModal()">Cancel</button>
+      <button class="primary" id="confirm-cancel" onclick="hideModal()">Cancel</button>
+      <button class="danger" id="confirm-go" onclick="doRemove('${esc(name)}')">Remove ${esc(name)}</button>
     </div>`);
+  document.getElementById('confirm-cancel').focus();
 }
 async function doRemove(name){
   if(document.getElementById('rm_confirm').value.trim()!==name){toast('name does not match');return}
