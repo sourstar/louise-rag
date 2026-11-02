@@ -437,6 +437,38 @@ that bit exactness is achievable, give me the speed mode numbers."
   enforcement). Serving the speed mode through VeGa needs the operator's
   change to that rule first.
 
+## The speed mode (München 18:12–18:2x; candidate engine, raw, no other job)
+
+The same 5,000 W1 chunks, batch 16, `GGML_SYCL_FA_ONEDNN=0` in both modes.
+
+| arm | chunks/s | card busy | against | byte-identical | worst cosine | NaN |
+|---|---|---|---|---|---|---|
+| exact c1 | 46.20 | 85.3 % | exact c4 | 5,000/5,000 | — | 0 |
+| exact c4 | 55.27 | 98.9 % | — | — | — | 0 |
+| exact c8 | 55.22 | 98.8 % | exact c4 | 5,000/5,000 | — | 0 |
+| speed c1 | 47.53 | 85.4 % | its c4 | 133/5,000 | 0.9999992 | 0 |
+| speed c4 | 56.83 | 98.7 % | exact c4 | 121/5,000 | 0.9999983 | 0 |
+| speed c8 | 57.00 | 98.8 % | its c4 | 133/5,000 | 0.9999925 | 0 |
+| speed c4, fresh load 1 | 56.85 | 98.7 % | its first c4 | 133/5,000 | 0.9999930 | 0 |
+| speed c4, fresh load 2 | 57.07 | 98.8 % | its first c4 | 133/5,000 | 0.9999979 | 0 |
+
+The speed mode is oneDNN's matmuls: `GGML_SYCL_ENABLE_DNN=1`.
+
+- **Speed:** +2.8 to +3.3 % against the exact mode, at every concurrency.
+- **The speed mode is near-exact, not exact:**
+  - only 133 of 5,000 vectors give back their bytes;
+  - the worst self-cosine over orders, concurrency and two fresh loads is
+    0.9999925, within invariant 12's 0.99999;
+  - no NaN in any run.
+- **Parity with the fp32 references:** worst 0.999999 on the 48 and on the 71,
+  the same as the exact mode, with none under 0.999.
+- **Raw against VeGa:** 3,082 of 5,000 vectors are byte-equal. That is the
+  read path, not the engine: VeGa reads base64 float32 and normalises, the
+  raw tool reads JSON floats.
+- **Reading:** bit exactness is achievable, since the exact mode is
+  byte-identical at 1, 4 and 8 in flight. The speed mode buys ~3 % for
+  byte-level reproducibility, within near-exact's bound.
+
 ## What the operator gets
 
 Per collection:
