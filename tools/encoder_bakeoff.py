@@ -277,7 +277,9 @@ SUITES[POOL] = {"repo": "(made by `pool` from a held collection)", "layout": "be
 # conservative floor, which keeps the worst-tokenising text inside 8192.
 DEFAULT_MAX_CHARS = 20_000
 SHARD = 512
-KS = (1, 3, 5, 10, 20, 40, 60, 80, 100)
+#: 50 joins 2026-11-02 (the operator: "a simple benchmark comparison like @10
+#: @40 @50 @100"): the depths a reranker reads, the encoder alone
+KS = (1, 3, 5, 10, 20, 40, 50, 60, 80, 100)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1267,7 +1269,7 @@ def report(out: Path) -> int:
         print(f"{out}: no scored run yet (`embed`, then `score`)")
         return 0
     # nDCG@10 and MRR@10: what MTEB, MLEB and the legal papers report
-    shown = (["hit@1", "hit@5", "mrr@5", "hit@10", "mrr@10", "hit@40", "hit@100"]
+    shown = (["hit@1", "hit@5", "mrr@5", "hit@10", "mrr@10", "hit@40", "hit@50", "hit@100"]
              if suite_of(out) == POOL else
              ["recall@3", "recall@5", "recall@10", "recall@100",
               "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"])

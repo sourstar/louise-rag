@@ -734,3 +734,13 @@ def test_each_side_is_embedded_under_its_lease(tmp_path, monkeypatch) -> None:
                         seen.append((now[0], query)) or [[1.0, 0.0] for _ in texts])
     assert bake.embed(tmp_path, "m", "http://x", "harrier", None, 8192, 1, 20_000) == 0
     assert seen == [(("harrier", False), False), (("harrier", True), True)]
+
+
+def test_the_reranker_depths_are_all_scored() -> None:
+    """The operator, 2026-11-02: "a simple benchmark comparison like @10 @40
+    @50 @100" — each depth a reranker reads is a column, 50 included."""
+    from tools.encoder_bakeoff import KS, metrics_of
+    assert {10, 40, 50, 100} <= set(KS)
+    queries = Queries(texts=["q"], relevant=[[45]])
+    got = metrics_of([list(range(100))], queries)
+    assert got["hit@40"] == 0.0 and got["hit@50"] == 1.0 and got["hit@100"] == 1.0
