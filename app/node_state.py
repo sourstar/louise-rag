@@ -121,10 +121,31 @@ MODE_SAYS = {
 }
 
 
-def runs(state: str, activity: str) -> bool:
-    """Does the node, in this mode, do this? A mode this does not know runs
-    nothing — the reading of an unreadable state everywhere else too."""
+def mode_runs(state: str, activity: str) -> bool:
+    """Does this MODE, by the table alone, run this? A mode this does not
+    know runs nothing — the reading of an unreadable state everywhere else."""
     return activity in MODE_RUNS.get(state, frozenset())
+
+
+def profile_runs(activity: str) -> bool:
+    """Does the node PROFILE in force let this run? Its `mode`
+    (app/node_profile.py; operator 2026-11-02: "suspend processing during
+    the quiet time frames"), read through app/cpu_limit.py's cache — one file
+    read per 30 s or at the schedule's own boundary, the last good one kept
+    when the file does not load. No profile, or one in `running`, holds
+    nothing."""
+    from . import cpu_limit
+    lim = cpu_limit.current()
+    return lim.mode is None or mode_runs(lim.mode, activity)
+
+
+def runs(state: str, activity: str) -> bool:
+    """Does the node, in this mode and in the profile in force now, do this?
+    The STRICTER of the two wins (node-profiles-design.md decision 6): the
+    activity runs only where both the node's mode and the profile's mode run
+    it. Every gate asks here, so the worker, the seeder, `node health`, the
+    jobs and the Library cannot disagree about what runs."""
+    return mode_runs(state, activity) and profile_runs(activity)
 
 
 def path() -> Path:

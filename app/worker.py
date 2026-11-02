@@ -3820,10 +3820,11 @@ def _cpu_paused(con, collection) -> bool:
     """Whether the node's profile pauses this collection's parse-pool work
     now (cpu_cores = 0): rdf, fts and the archive pass. Asked at the unit
     boundary — the unit already running finishes and commits — and cheap
-    (a cached read, app/cpu_limit.py). It never pauses embedding, bundles or
-    scans: a profile limits background CPU, and a collection's own `embed`
-    runs in every profile (decision 3, docs/notes/node-profiles-design.md).
-    The N-core limit itself is applied by the pool (`parallel.compute`)."""
+    (a cached read, app/cpu_limit.py). Cores never pause embedding, bundles
+    or scans; the profile's `mode` does, through `node_state.runs` like the
+    node's own mode (decision 6, docs/notes/node-profiles-design.md: the quiet
+    windows suspend processing). The N-core limit itself is applied by the
+    pool (`parallel.compute`)."""
     watch = _cpu_watches.setdefault(str(collection.manifest_path), cpu_limit.Watch())
     lim, line = watch.see()
     if line is not None:
@@ -4152,8 +4153,8 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # THE NODE PROFILE (app/cpu_limit.py): cpu_cores = 0 pauses
                 # the parse-pool work below at this unit boundary — the last
                 # unit committed, nothing begun — in a bounded sleep that
-                # re-checks the stop. Bundles above go on: p2p embedding
-                # runs in every profile (decision 3)
+                # re-checks the stop. Bundles above go on under cores = 0;
+                # a profile's mode stops them with everything else (decision 6)
                 if _cpu_paused(con, collection):
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
@@ -4874,6 +4875,24 @@ def _say_mode(state: str) -> None:
                           f"(read from {node_state.path()})")
 
 
+_profile_watch: list = []
+
+
+def _say_profile() -> None:
+    """ONE LINE when the node profile in force changes — above all when its
+    mode suspends processing and when it lets it run again (operator,
+    2026-11-02: "suspend processing during the quiet time frames"): "profile
+    quiet: processing suspended until 08:00 (downloads, seeding and searches
+    go on)". The gates themselves read it through `node_state.runs`."""
+    from . import cpu_limit
+    if not _profile_watch:
+        _profile_watch.append(cpu_limit.Watch(_node_line("control")))
+    try:
+        _profile_watch[0].limit()
+    except Exception:   # noqa: BLE001 — a log line never stops the round
+        pass
+
+
 def _note_pause_from_state(state: str) -> None:
     """Set `_paused` if the node's state says so, and NEVER clear it — see
     the comment at the call in `_stats_publisher`. Stopping late is the
@@ -5133,9 +5152,12 @@ def _settle_runs_for_search() -> None:
         # for it (operator, 2026-10-23: the node suspended because the
         # operator needs the GPU). Nor for a collection the node has paused.
         # The vector leg of an unsettled collection waits; search answers
-        # from its other legs meanwhile.
+        # from its other legs meanwhile. The node's MODE alone, not the
+        # profile's: a settle serves searches, and a profile never limits a
+        # query (decision 6) — a worker restarted in a quiet window would
+        # otherwise answer without its vector leg until the window ended.
         try:
-            embeds = node_state.runs(node_state.worker_state(), node_state.EMBED)
+            embeds = node_state.mode_runs(node_state.worker_state(), node_state.EMBED)
             paused = node_state.paused_collections()
         except Exception:   # noqa: BLE001 — unreadable: runs nothing, as everywhere
             embeds, paused = False, set()
@@ -5583,6 +5605,7 @@ def run_forever():
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = node_state.worker_state(node_con)
             _say_mode(state)
+            _say_profile()
             # WHAT A MODE RUNS is one table (app/node_state.py: MODE_RUNS;
             # operator, 2026-09-19), read here and by every other gate.
             if not node_state.runs(state, node_state.FETCH):
