@@ -227,6 +227,8 @@ for these rows never reached the server).
   cores plus one busy SYCL backend's ~3.4 cross it, and the kernel then stops
   the whole container until the period ends, the card's feeder included. Over
   2 days 5 h, 14.3 % of LocalAI's periods were throttled (45,949 s).
+  **The cap is 12 since 10:59:49** (operator: "Raise localai CPU cores cap to
+  12 permanently"; STATUS.md 2026-11-02).
 - **Not yet measured:** slots with real requests in flight, and batches. They
   are measured only if harrier wins wikidata or wikipedia. The contention A/B
   (the twin at nice 0, then nice 19, and the quota) runs when the CPU
