@@ -321,6 +321,16 @@ The set: 400 questions over 21,348 chunks of 19,998 entities.
     of the sets (step 0, no card). Each text that differs joins the
     reference and the compare. A sample finds what is common, and a
     tokenizer fault is rare by construction.
+- **The candidate engine PASSES correctness** (München 17:47–17:51; built
+  as louise-llama-cpp:sycl_f16-f96fd5e3f0a4, tar sha256 b5d7ad6a…; P5 applied
+  without fuzz at ddf48f8):
+  - `st_parity tokens` on all of W1 and P3 (40,931 texts, 8,140,608
+    tokens): 0 texts and 0 tokens differ from NVIDIA's tokenizer;
+  - `compare` on the 48: worst 0.999999 (documents), 1.0 (queries);
+  - `compare` on the 71 that failed on the live engine: worst 0.999999,
+    none under 0.999;
+  - so on the candidate nemotron is NVIDIA's model on every checked text.
+    Speed, scores and the repro check follow.
 - **The candidate engine:**
   - LocalAI master (16acc89, 2026-11-02) pins llama.cpp ddf48f8 (10-31),
     which carries both tokenizer fixes, the fattn-mkl host-wait removal
