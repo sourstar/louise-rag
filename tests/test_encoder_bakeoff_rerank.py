@@ -60,7 +60,9 @@ def _reranker(calls):
 
 
 def _heads(records):
-    return {r: f"Title {r.split(':')[1]}" for r in records}
+    """Books 1 and 2 are English, 3 and 4 Italian."""
+    return {r: {"head": f"Title {r.split(':')[1]}", "lang": "en" if int(r.split(":")[1]) < 3 else "it"}
+            for r in records}
 
 
 def test_a_ranking_becomes_records_each_once_with_its_first_chunks():
@@ -138,3 +140,39 @@ def test_a_shallower_depth_reranks_only_its_records_and_asks_nothing_more(tmp_pa
     d4 = json.loads((out / "m" / "reranked-d4-bare.json").read_text())
     assert d2["hit@2"] == 0.0 and d2["mrr@5"] == pytest.approx((1 / 3 + 1 / 4) / 2)
     assert d4["mrr@5"] == pytest.approx(1.0) and d4["hit@4"] == 1.0
+
+
+def test_each_pair_is_judged_against_the_question_in_its_records_language(tmp_path, monkeypatch):
+    """As `_rerank_list` does with the plan's translations: Italian books
+    against the Italian variant, English ones against the question typed;
+    one call per variant, the plan asked once per question and kept."""
+    out, _ids = _pool(tmp_path)
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    asked = []
+
+    def make(text):
+        asked.append(text)
+        return text, {"it": {"two": "due", "four": "quattro"}[text]}
+    plans = bake.PlanCache(out / "rerank" / "plans.jsonl", make)
+    seen = []
+
+    def call(recipe, query, texts, timeout):
+        seen.append((query, sorted({t.split(chr(10))[0] for t in texts})))
+        return [1.0] * len(texts)
+    bake.rerank(out, 20_000, RECIPE, _heads, depths=[50], call=call, plans=plans)
+    assert ("two", ["Title 1", "Title 2"]) in seen and ("due", ["Title 3", "Title 4"]) in seen
+    assert ("four", ["Title 1", "Title 2"]) in seen and ("quattro", ["Title 3", "Title 4"]) in seen
+    assert asked == ["two", "four"]
+    again = bake.PlanCache(out / "rerank" / "plans.jsonl", lambda text: pytest.fail("asked again"))
+    assert again.get(0, "two") == ("two", {"it": "due"})
+
+
+def test_a_translated_run_never_reads_an_untranslated_cache(tmp_path, monkeypatch):
+    out, _ids = _pool(tmp_path)
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    bake.rerank(out, 20_000, RECIPE, _heads, call=_reranker([]))
+    plans = bake.PlanCache(out / "rerank" / "plans.jsonl", lambda text: (text, {}))
+    with pytest.raises(SystemExit, match="different settings"):
+        bake.rerank(out, 20_000, RECIPE, _heads, call=_reranker([]), plans=plans)
