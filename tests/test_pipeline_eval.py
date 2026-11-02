@@ -170,6 +170,46 @@ def test_the_vector_leg_run_with_each_translation_is_its_own_row(tmp_path, monke
     assert "a per-language [translated]  vs  a [translated]" in res["pairs"]
 
 
+def test_translated_only_embeds_the_question_in_the_sets_language_alone(tmp_path, monkeypatch):
+    """The operator, 2026-11-02, on wikidata (its texts in English only): "does
+    it make sense to translate the query always to english for bge?" —
+    "<encoder> translated-only" embeds the question in the set's languages
+    alone: the Italian question by its English translation only, the English
+    question as typed."""
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda recipe: None)
+    monkeypatch.setattr(retrieval, "fit_to_window", lambda texts, recipe: texts)
+    docs = [pe.Doc(lang="en", title="Moby-Dick", chunks=["the white whale and captain ahab at sea"]),
+            pe.Doc(lang="en", title="Walden", chunks=["life in the woods by a pond"])]
+    questions = [pe.Question(text="white whale", relevant=frozenset({0}), lang="en"),
+                 pe.Question(text="balena bianca", relevant=frozenset({0}), lang="it")]
+    plan = {"white whale": {"core": "white whale", "translations": {"it": "balena bianca"},
+                            "query_lang": "en", "only": [], "main": None, "status": "ok"},
+            "balena bianca": {"core": "balena bianca", "translations": {"en": "white whale"},
+                              "query_lang": "it", "only": [], "main": None, "status": "ok"}}
+    right, wrong = [(0, 0), (1, 0)], [(1, 0), (0, 0)]
+    asked = []
+
+    def ranker(texts):
+        asked.extend(texts)
+        return [right for _ in texts]
+
+    def typed(text):
+        return dict(plan[text], translations={}, status="off")
+    res = pe.evaluate(tmp_path / "out", "set", docs, questions, {"a": [right, wrong]},
+                      recipe=RECIPE, plans=pe.PlanStore(tmp_path / "p.jsonl", lambda t: dict(plan[t])),
+                      typed=pe.PlanStore(tmp_path / "t.jsonl", typed), query_rankers={"a": ranker},
+                      depths=[2], say=lambda m: None,
+                      call=lambda recipe, q, texts, timeout: [0.0] * len(texts))
+    rows = res["rows"]
+    assert rows["a [translated]"]["mrr@10"] == pytest.approx(0.75, abs=1e-4)
+    assert rows["a translated-only [translated]"]["mrr@10"] == pytest.approx(1.0, abs=1e-4)
+    assert asked == ["white whale"], "the English question is not translated, the Italian one is"
+    assert "a translated-only [typed]" not in rows
+    assert "a translated-only + BM25 + rerank@2 [translated]" in rows
+    assert "a translated-only [translated]  vs  a [translated]" in res["pairs"]
+    assert "a per-language [translated]  vs  a translated-only [translated]" in res["pairs"]
+
+
 def test_a_query_side_that_does_not_reproduce_the_rows_vectors_is_refused(tmp_path):
     import numpy as np
     stored = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
