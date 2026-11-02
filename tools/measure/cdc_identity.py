@@ -15,8 +15,8 @@ BEFORE ANY DEPLOY OF AN IMAGE CARRYING THE EXTENSION, München runs it in
 that image on at least 100,000 real records whose layer is `cdc`, and
 deploys only on IDENTICAL:
 
-  python -m tools.measure.cdc_identity --collection wikipedia-v8 --records 100000
-  python -m tools.measure.cdc_identity --collection wikipedia-v8 --part FILE [--part FILE …]
+  python -m tools.measure.cdc_identity --collection wikipedia --records 100000
+  python -m tools.measure.cdc_identity --collection wikipedia --part FILE [--part FILE …]
   python -m tools.measure.cdc_identity --generated 20000      # seeded texts, no collection
 
 THE VERDICT. IDENTICAL needs every compared record identical AND at least
@@ -362,7 +362,7 @@ def parts_for(a) -> tuple[str, str, list[str]]:
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--collection", default="wikipedia-v8", help="whose records and layers")
+    p.add_argument("--collection", default="wikipedia", help="whose records and layers")
     p.add_argument("--snapshot", default=None, help="a snapshot id (default: the latest)")
     p.add_argument("--part", action="append", help="a record part file, instead of the snapshot's")
     p.add_argument("--root", default=None, help="the collections root (default: the node's)")
