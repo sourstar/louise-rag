@@ -174,9 +174,40 @@ document vectors are G1's (parallel:1, its repro check exact).
 - The pool is easier than the whole collection, so these are not the
   search's own figures. A gap of 0.07 MRR@10 is well outside the noise.
 
-### wikidata, wikipedia
+### wikidata (2026-11-02 ~11:50): harrier wins against bge-m3
 
-*Pending.*
+The 10-31 known-item set: 19,998 entities, 21,348 chunks, 400 queries (200
+en, 200 it). Measured by München (W1); harrier through VeGa with its own
+retrieval prompt, one text a request.
+
+| encoder | MRR@10 | recall@1 | recall@10 |
+|---|---|---|---|
+| **harrier-0.6b f16** | **0.7951** | **0.7525** | **0.8800** |
+| bge-m3 F16 (wikidata's encoder) | 0.6496 | 0.5750 | 0.7950 |
+| jina-v3 torch / GGUF | 0.5100 / 0.5087 | 0.4200 / 0.4175 | 0.6925 |
+
+- **harrier − bge-m3, MRR@10:** +0.146, p = 0.0001 (114 queries better, 22
+  worse). **By the rule, harrier wins wikidata.**
+- **By family (bge-m3 → harrier):**
+  - person 0.743 → 0.934 (89 queries);
+  - place 0.373 → 0.742 (50);
+  - heritage 0.384 → 0.534 (80);
+  - built 0.788 → 0.885 (43);
+  - organization 0.917 → 0.954 (54);
+  - work 0.651 → 0.718 (49);
+  - scholarly 0.808 → 0.870 (18);
+  - property 0.844 → 0.859 (16);
+  - event 1.0 → 1.0 (1).
+- **By language:** en 0.636 → 0.777; it 0.663 → 0.813.
+- **Speed:** harrier 25.43 chunks/s at batch 1, one request in flight.
+  bge-m3 was not timed on this set.
+- **What follows (the operator's rule):** bge-m3's optimisations for wikidata
+  stop; harrier's are measured (batches and requests in flight, through VeGa,
+  since wikidata cuts by tokens); then the time to re-embed wikidata with it.
+
+### wikipedia
+
+*Pending (P3).*
 
 ## Published benchmarks, against ours (checked 2026-11-02)
 
