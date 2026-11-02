@@ -58,6 +58,40 @@ here):**
 - **Normal embedding stays suspended** for the whole evaluation (the
   operator: "Suspend normal embedding during harrier evaluation").
 
+## The verdict rule, fixed before the data (2026-11-02)
+
+The operator: "If the numbers justify the new model over qwen3 and/or bge,
+suspend the losing models' optimizations, work on the optimization of the
+candidate model instead, then give me some numbers about the time to
+re-embed with it." What "justify" means, per collection, written before any
+score is read:
+
+| incumbent | harrier is chosen when | why |
+|---|---|---|
+| **Qwen3-4B Q4_K_M** (gutenberg) | it is **not significantly worse** on MRR@10: harrier ≥ Qwen, or Qwen's lead has p ≥ 0.05 (paired randomization test) | harrier is ~7× smaller, its vectors 2.5× smaller (1,024 against 2,560), exact on this card, and its card time is several times less. Equal quality is worth it |
+| **bge-m3 F16** (wikipedia, wikidata) | it is **significantly better** on MRR@10: harrier > bge-m3 with p < 0.05 | the same size class and the same 1,024 dimensions: a re-embed of tens of millions of chunks is paid for by quality only |
+
+hit@10 / recall@10 and the per-language rows are reported beside it, but
+they do not decide.
+
+**Meanwhile** (the operator: "Suspend wikipedia and wikidata embedding until
+we have the numbers about the candidate model"), wikipedia and wikidata
+embed nothing after the evaluation until the verdict. Their `embed` is set
+to `off`, the previous value recorded and restored by whichever verdict
+keeps the incumbent.
+
+**After a verdict for harrier:**
+- the losing models' optimisation work stops: lever 3 (wikipedia's bge-m3
+  at 4 lanes), the bge-m3 lane tuning for wikidata, and gutenberg's Qwen3
+  CPU reference, gate and near-exact work, as the case may be;
+- the work moves to harrier: its LocalAI slots (`parallel`), batch and
+  ubatch, and the collection's concurrency, each setting gated
+  (reproducibility over loads, orders and batches, as invariant 12 asks)
+  and timed on the collection's own chunks (`louise dev embedder-profile`);
+- the re-embed time per collection = its chunks (wikipedia: the smart
+  selection's count) ÷ the best gated chunks/s, over the hours the schedule
+  leaves for embedding.
+
 ## The gutenberg set
 
 - **Queries:** gutenberg's own, judged by the WORK they name. These are the
