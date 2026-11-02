@@ -36,10 +36,13 @@ def test_the_operators_schedule(profiles, hhmm, name):
 
 def test_each_profile_carries_its_cores_and_gpu_level(profiles):
     quiet = profiles.active(_at("07:00"))
-    assert quiet.profile.cpu_cores == 0 and quiet.level.name == "quiet"
+    # 12 cores in every profile since 2026-11-02 (the operator: "Use 12 CPU
+    # cores even in the quiet hours", a quieter CPU cooler); 0 pausing is
+    # tests/test_cpu_limit.py's
+    assert quiet.profile.cpu_cores == 12 and quiet.level.name == "quiet"
     assert quiet.level.power_limit == "50%" and quiet.level.fan_max_rpm == 1200
     day, night = profiles.active(_at("09:00")), profiles.active(_at("23:00"))
-    assert (day.profile.cpu_cores, day.level.power_limit) == (8, "max")
+    assert (day.profile.cpu_cores, day.level.power_limit) == (12, "max")
     assert (night.profile.cpu_cores, night.level.power_limit) == (12, "max")
 
 

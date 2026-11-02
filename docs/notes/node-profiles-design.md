@@ -91,3 +91,7 @@ cores): the kernel's limit, while the app limits itself below it.
    applied 230 W at 21:31:20. The quiet profile still pauses background CPU
    work (`cpu_cores = 0`). The `[gpu.levels.quiet]` table stays declared and
    unused. Backup: `/root/platform.toml.bak-20261027-gpufull`.
+5. *(2026-11-02, supersedes the CPU halves of the schedule.)* The operator:
+   "Use 12 CPU cores even in the quiet hours, I installed a new CPU cooler
+   that is much more silent." `cpu_cores = 12` in every profile — quiet
+   (was 0) and day (was 8) as night. The GPU's levels are unchanged.

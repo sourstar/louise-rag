@@ -9,7 +9,7 @@ hours under the 12-core records build. Monday's daytime queue
 (the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
 stop) did not run and moves to the next day. The rerank AFTER pass stopped
 at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
-cron 6 and 5), from 2026-10-26. THE NODE'S SCHEDULE (operator, 2026-10-26, every day, node time): QUIET
+cron 6 and 5), from 2026-10-26. THE NODE'S SCHEDULE — **CPU amended 2026-11-02: 12 cores in every period (the operator: "Use 12 CPU cores even in the quiet hours, I installed a new CPU cooler that is much more silent"; `[profiles.*] cpu_cores = 12`, node-profiles-design.md decision 5); the GPU's periods below are unchanged** — (operator, 2026-10-26, every day, node time): QUIET
 06:00–08:00, 12:00–13:30 and 16:30–22:30 — the records build stopped, the GPU
 power-limited (fan ≤ ~1,200 RPM) with on-demand embedding only; DAY
 08:00–12:00 and 13:30–16:30 — the build at 8 cores, the GPU uncapped and
