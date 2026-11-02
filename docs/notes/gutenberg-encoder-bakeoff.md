@@ -250,6 +250,15 @@ really in flight (`EMBED_CONCURRENCY`); card busy is read from the PMU.
   BM25, reranked over the top 100, the query translated (production's
   search: "5 results reranked over 50 results, more likely over 100").
   Depth 50 and the typed query are reported beside it and do not decide.
+  - The pair, as `pipeline_eval` names it: `bge + BM25 + rerank@100
+    [translated]  vs  harrier + BM25 + rerank@100 [translated]`. Its
+    `mrr@10` is bge − harrier, so harrier wins iff mrr@10 < 0 and p@10 < 0.05.
+  - Armed on the node (München, `louise-wikidata-decide`): it runs when the
+    `pipeline-wikidata` step exits 0.
+    - harrier: wikidata stays off and the marker is WIKIDATA-HARRIER.
+    - bge-m3: `hold config apply wikidata --set embed=all` (the recorded
+      value) and WIKIDATA-BGE.
+    - A failed step or a missing pair changes nothing ("NOT decided").
 - **Still owed before the decision:** wikidata's whole-search score
   (`wikidata_encoder_ab.py rerank`: BM25 fused, reranked at 10/40/50/100,
   translated and typed). It says whether the +0.146 survives the full
