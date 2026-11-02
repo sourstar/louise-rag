@@ -162,7 +162,8 @@ def measure(space_dir: Path, *, url: str, api: str, model: str, query_model: str
                                          for i in picked[:len(pairs)]],
                              "level": level}
             if pairs:
-                entry["twin"]["line"] = emb.cpu_line_from(twin_stats["worst"])
+                entry["twin"]["line"] = emb.cpu_line_from(
+                    twin_stats["worst"], full_precision=(level or "").upper() in emb.FULL_PRECISION)
                 say(f"{role}: card vs its CPU twin {twin}: worst {twin_stats['worst']:.6f}, "
                     f"p1 {twin_stats['p1']:.6f}, median {twin_stats['median']:.6f}, "
                     f"below {REVIEW_LINE}: {twin_stats['below']} of {twin_stats['n']}")

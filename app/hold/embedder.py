@@ -87,9 +87,20 @@ MEASURED_CPU_WORST: dict[str, float] = {
     # engine's twin, 512 texts one a request: worst 0.989292 (a 39-token
     # text), p1 0.996898, median 0.998358 (München, m6, 2026-11-01)
     "Q4_K_M": 0.989292,
+    # 16-bit (operator, 2026-11-02: "Lift the cap for 16-bit as recommended"):
+    # the worst across EVERY vendor measured, so a peer's card is judged by
+    # what cards of its kind were seen to do. bge-m3 F16 on AMD ROCm 7.2,
+    # RX 9060 XT (Perugia, 2026-10-18) against its CPU twin, 512 texts:
+    # 0.998362. On the node's Arc B70: 0.999930 (wikipedia's gate, 11-01);
+    # pubmed's MedCPT-Query f16: 0.999951. Line 0.997
+    "F16": 0.998362,
 }
-#: weights with no rounding of their own: the operator's 0.995 (2026-10-18)
+#: weights with no rounding of their own. Their line is the operator's 0.995
+#: (2026-10-18) as a FLOOR since 2026-11-02: as strict as the level's
+#: cross-vendor measurement allows, never looser than 0.995
 FULL_PRECISION = frozenset({"F32", "FP32", "F16", "FP16", "BF16"})
+#: the spellings of one 16- or 32-bit level, as MEASURED_CPU_WORST keys them
+_FULL_LEVEL = {"F32": "F32", "FP32": "F32", "F16": "F16", "FP16": "F16", "BF16": "BF16"}
 #: llama.cpp's GGUF type tags, as a weights file is named after them
 _LEVEL = re.compile(
     r"(?i)(?:^|[-_.])((?:I?Q[1-8](?:_[A-Z0-9]+)*)|MXFP4|BF16|FP?16|FP?32)(?=[-_.]|$)")
@@ -121,13 +132,16 @@ def quant_level(engine: Any) -> str | None:
     return found[-1].upper() if found else None
 
 
-def cpu_line_from(worst: float) -> float:
+def cpu_line_from(worst: float, *, full_precision: bool = False) -> float:
     """THE RULE: a level's review line from the worst card-vs-CPU-twin
     cosine measured for it — CPU_LINE_MARGIN times its distance from 1 below
-    1, rounded DOWN to 0.001, and never above CPU_REVIEW_LINE."""
+    1, rounded DOWN to 0.001. A quantised level's is never above
+    CPU_REVIEW_LINE; a 16- or 32-bit level's never below it (operator,
+    2026-11-02: the cap lifted for 16-bit, whose rounding gap is small)."""
     line = 1.0 - CPU_LINE_MARGIN * (1.0 - float(worst))
     # rounded first to 1e-9: 1 - 1.5 x 0.05 is 0.92499999… in binary floating point
-    return min(CPU_REVIEW_LINE, math.floor(round(line, 9) * 1000) / 1000)
+    line = math.floor(round(line, 9) * 1000) / 1000
+    return max(CPU_REVIEW_LINE, line) if full_precision else min(CPU_REVIEW_LINE, line)
 
 
 def cpu_review_line(engine: Any) -> float | None:
@@ -136,8 +150,11 @@ def cpu_review_line(engine: Any) -> float | None:
     computed from its measurement (`MEASURED_CPU_WORST`, `cpu_line_from`);
     None for a quantised level not yet measured."""
     level = quant_level(engine)
-    if level is None or level in FULL_PRECISION:
+    if level is None:
         return CPU_REVIEW_LINE
+    if level in FULL_PRECISION:
+        worst = MEASURED_CPU_WORST.get(_FULL_LEVEL[level])
+        return CPU_REVIEW_LINE if worst is None else cpu_line_from(worst, full_precision=True)
     worst = MEASURED_CPU_WORST.get(level)
     return None if worst is None else cpu_line_from(worst)
 
@@ -277,7 +294,7 @@ class Run:
         elif self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
             parts.append(f"against the stored CPU reference the worst of the 512 is "
                          f"{self.cpu_worst:.6f}, below the review line {self.cpu_line} "
-                         f"({'full precision, operator 2026-10-18' if self.quant in (None, *FULL_PRECISION) else f'{self.quant}, computed from its measurement'}): "
+                         f"({'full precision: 0.995, the operator (2026-10-18)' if self.quant is None else (f'{self.quant}: its cross-vendor measurement, never looser than 0.995 (operator 2026-11-02)' if self.quant in FULL_PRECISION else f'{self.quant}, computed from its measurement')}): "
                          f"nothing is written from this run until a person has reviewed "
                          f"it (docs/notes/near-exact-runs.md)")
         return "; ".join(parts)

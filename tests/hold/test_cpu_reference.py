@@ -208,14 +208,23 @@ def test_the_level_is_the_type_tag_of_the_weights_localai_loaded(model, level):
 def test_the_rule_gives_headroom_over_the_worst_measured_and_never_tightens_full_precision():
     assert emb.cpu_line_from(0.989292) == 0.983, "gutenberg's Q4_K_M: 1 - 1.5 x 0.010708"
     assert emb.cpu_line_from(0.99) == 0.985
-    assert emb.cpu_line_from(0.99993) == 0.995, "never stricter than the operator's 0.995"
+    assert emb.cpu_line_from(0.99993) == 0.995, "a quantised level: never stricter than 0.995"
     assert emb.cpu_line_from(0.95) == 0.925
+
+
+def test_a_sixteen_bit_level_is_as_strict_as_its_measurement_and_never_looser_than_0995():
+    # operator, 2026-11-02: "Lift the cap for 16-bit as recommended"
+    assert emb.cpu_line_from(0.998362, full_precision=True) == 0.997, "AMD's bge-m3 F16"
+    assert emb.cpu_line_from(0.99993, full_precision=True) == 0.999
+    assert emb.cpu_line_from(0.99, full_precision=True) == 0.995, "never looser than 0.995"
 
 
 @pytest.mark.parametrize("model,line", [
     ("Qwen3-Embedding-4B-Q4_K_M.gguf", 0.983),     # measured: worst 0.989292
-    ("bge-m3-FP16.gguf", 0.995),
-    ("MedCPT-Query-Encoder-f16.gguf", 0.995),
+    ("bge-m3-FP16.gguf", 0.997),                   # F16: the cross-vendor worst 0.998362
+    ("MedCPT-Query-Encoder-f16.gguf", 0.997),
+    ("harrier-oss-v1-0.6b-f16.gguf", 0.997),
+    ("x-BF16.gguf", 0.995),                        # BF16 not measured: the floor
     ("dar-legal-it", 0.995),                       # no tag: a full-precision backend
     ("bge-m3-Q8_0.gguf", None),                    # quantised, not measured: no line
     ("x-IQ4_XS.gguf", None),
@@ -244,7 +253,7 @@ def test_a_level_is_held_to_its_own_measured_line():
     gutenberg = perturbed(ref, indices=(235,), to=0.989292)
     assert _gated(codex, _engine("Qwen3-Embedding-4B-Q4_K_M.gguf"), gutenberg).ok
     full = _gated(codex, _engine("bge-m3-FP16.gguf"), gutenberg)
-    assert not full.ok and "below the review line 0.995" in full.why()
+    assert not full.ok and "below the review line 0.997" in full.why()
     broken = _gated(codex, _engine("Qwen3-Embedding-4B-Q4_K_M.gguf"),
                     perturbed(ref, indices=(7,), to=0.126))
     assert not broken.ok and "below the review line 0.983" in broken.why(), \
