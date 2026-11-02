@@ -1,5 +1,5 @@
 {
-  "backend": "vega-louise-python-20261021a",
+  "backend": "vega-pytorch",
   "context_size": 8192,
   "embeddings": true,
   "env": {

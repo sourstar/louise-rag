@@ -7,7 +7,7 @@
 # JSON, which is YAML.
 {
   "name": "louise-rerank-medcpt",
-  "backend": "vega-louise-python-20261030",
+  "backend": "vega-louise-openvino",
   "reranking": true,
   "context_size": 512,
   "threads": 6,

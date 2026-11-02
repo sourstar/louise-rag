@@ -16,10 +16,17 @@
 # (localai-bugs.md P5), and the F16 cache is gated on engine c68167b65cb0: 379/379 =
 # P3's bytes, in-wave == alone 616/626, retrieval paired-equal to torch, 16.3 ms per
 # token (f32: 29.2), 0.68 s per question in waves (f32: 1.12; torch 3.2).
+# 2026-11-0x (operator's A, 2026-11-02: one llama.cpp engine for every model): the
+# series moved to LocalAI 16acc89 / llama.cpp ddf48f8 (tag 089b1da509fe, P3/P4
+# rebased, localai-bugs.md), and MADLAD left its own tar install for the one
+# engine, louise-sycl-f16-llama-cpp-16acc89, loaded directly as before: VeGa's
+# wrapper refuses a llama.cpp load without parallel:1 (determinism_lacks), and
+# MADLAD decodes 7 slots in waves. The gates above are re-run on it (t5waves
+# T4/T3/in-wave), the old engine's bytes the reference.
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad",
-  "backend": "vega-llama-cpp-t5",
+  "backend": "louise-sycl-f16-llama-cpp-16acc89",
   "context_size": 4096,
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",

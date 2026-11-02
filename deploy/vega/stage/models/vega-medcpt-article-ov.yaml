@@ -1,5 +1,5 @@
 {
-  "backend": "vega-louise-python-20261030",
+  "backend": "vega-louise-openvino",
   "context_size": 512,
   "embeddings": true,
   "env": {

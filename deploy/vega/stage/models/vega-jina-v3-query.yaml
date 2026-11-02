@@ -13,7 +13,7 @@
 # JSON, which is YAML.
 {
   "name": "vega-jina-v3-query",
-  "backend": "vega-louise-python-20261021a",
+  "backend": "vega-pytorch",
   "embeddings": true,
   "pinned": false,
   "context_size": 1024,
