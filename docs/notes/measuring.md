@@ -212,3 +212,33 @@ happens".
 - **Fresh loads are for reproducibility, not for speed.** The "same bytes
   over three fresh loads" check reloads on purpose. Its answers are compared
   for bytes, and the speed is read from warm answers after each load.
+
+## 11. Added 2026-11-03 — what is validated: an embedder, not a chat model
+
+The operator, 2026-11-03: "Skip the cpu tolerance, it makes sense to
+validate a new embedder, not a chat model. Fucking up embedding is BAD, we
+assume that a chat model works, unless we patched llama.cpp ourselves to run
+it and we must be confident."
+
+- **An embedder is validated in full before any vector is written**:
+  - the CPU reference and the tolerance (`hold embedder cpu-reference`,
+    `hold embedder calibrate`);
+  - the gate's reproducibility (invariant 12);
+  - parity with the reference implementation.
+
+  A wrong vector is stored, shared and searched; it is never recalled.
+- **A chat model is assumed to work** when it runs on an engine as
+  published. It gets no CPU tolerance and no same-bytes-over-fresh-loads
+  check. What is measured is what decides the choice:
+  - it loads on the card, and fits beside the embedders and the reranker;
+  - no thinking text reaches the content;
+  - warm speed (§10);
+  - the task's own scores (tools/measure/chat_eval.py).
+- **The exception is our patch.** When we patched llama.cpp ourselves to
+  run a model, that model is checked until we are confident of the patch:
+  - the same answer as the unpatched or reference runtime;
+  - no garbage;
+  - the same bytes where the engine promises them.
+
+  P1–P5 on our engine are for embedding and T5; none of them was made to
+  run a chat model.
