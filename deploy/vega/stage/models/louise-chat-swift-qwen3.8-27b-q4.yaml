@@ -1,3 +1,8 @@
+# LICENCE (2026-11-03): UkisAI's Swift Open License v1.0 on the Swift Contribution, Qwen3.8-27B under Apache-2.0
+# beneath (NOTICE). Its text is kept beside the model on the node (llama-cpp/models/Swift-Qwen3.8-27B-Q4_K_M/LICENSE,
+# sha256 915ffe920f90088d…, and NOTICE), from huggingface.co/ukisai/Swift-Qwen3.8-27b. Apache-like grant, but §5:
+# Commercial Use is licensed only below US$1M gross revenue (with affiliates); §12 terminates on any breach. The
+# operator decides before it is ever served to peers.
 # louise-chat-swift-qwen3.8-27b-q4: the operator's install of 2026-11-03 or before (gallery entry in docs/notes/nemotron-embed.md, the chat
 # model), run on OUR engine: the measured SYCL set, p1, 16k, thinking off, no projector, the entry's sampling; MTP
 # speculative decoding kept where the entry has it (it does not change the target's outputs). A chat candidate.
