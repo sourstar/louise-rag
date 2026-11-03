@@ -4,7 +4,8 @@
   "files": [
     {
       "filename": "llama-cpp/models/c4ai-command-r7b-12-2024-Q4_K_M.gguf",
-      "uri": "https://huggingface.co/bartowski/c4ai-command-r7b-12-2024-GGUF/resolve/main/c4ai-command-r7b-12-2024-Q4_K_M.gguf"
+      "uri": "https://huggingface.co/bartowski/c4ai-command-r7b-12-2024-GGUF/resolve/bfc7a934c45cb839d84c8ca01d87f1cfa51aaa3f/c4ai-command-r7b-12-2024-Q4_K_M.gguf",
+      "sha256": "0653c1915f7e4819a980deea8e9ba86b0a78cbb283712785cbf091c3ffbe3b13"
     }
   ],
   "overrides": {
