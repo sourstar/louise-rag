@@ -26,6 +26,7 @@ collection's uids.
 """
 import hashlib
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -416,6 +417,11 @@ _SEED_DUTY = 0.05
 # document must cost one paced probe, never a vector that never comes (the
 # scheduler's IDLE_REPROBE_S rule, scheduling.md §11)
 _RESEED_S = 3600.0
+# every this many windows the seed says where it is, with its pace and the
+# time left, and saves its cursor beside the manifest (`_seed_file`): a
+# worker restart resumes the seed instead of starting it at rowid 0 again
+# (München, 2026-11-03: restarted at 04:39 and 05:26, 1,233 windows to go)
+_SEED_REPORT = 100
 # an announced document not yet visible as a candidate (its fts marks were
 # not committed when the drain looked) is looked for again this many times
 _ANNOUNCE_TRIES = 3
@@ -586,6 +592,7 @@ class _Walk:
     next_at: float = 0.0          # monotonic: when the seed may take its next window
     finished_at: float = 0.0      # monotonic: when the seed last finished
     busy: bool = False            # a thread is walking or placing
+    loaded: bool = False          # the saved cursor was read (`_load_seed`)
     started: float = 0.0          # monotonic: when this seed's first window was read
     windows: int = 0              # this seed's windows so far
     read_s: float = 0.0           # this seed's time spent reading them
@@ -632,6 +639,44 @@ def _drop_demand(collection, shard: str | None = None, uids=frozenset()) -> None
                     del w.demand[name]
 
 
+def _seed_file(collection) -> Path:
+    """Beside the manifest, keyed on its path: where the seed's cursor
+    survives a restart. A hint, never state: lost or unreadable, the seed
+    starts at rowid 0, as it always could."""
+    m = Path(collection.manifest_path)
+    return m.with_name(m.name + ".genesis-seed.json")
+
+
+def _load_seed(collection, w: _Walk) -> None:
+    """Under `_demand_lock`, once per walk: resume the saved cursor, or keep
+    a seed finished less than _RESEED_S ago finished. What the seed had
+    found before the restart and the drain had not yet read is found again
+    by the next seed; fts announces everything new meanwhile."""
+    w.loaded = True
+    try:
+        saved = json.loads(_seed_file(collection).read_text())
+        cursor, done_at = int(saved.get("cursor") or 0), saved.get("done_at")
+    except (OSError, ValueError, TypeError, AttributeError):
+        return
+    if done_at is not None:
+        age = time.time() - float(done_at)
+        if 0 <= age < _RESEED_S:
+            w.done, w.finished_at = True, time.monotonic() - age
+        return
+    w.cursor = max(0, cursor)
+
+
+def _save_seed(collection, cursor: int, done: bool) -> None:
+    path = _seed_file(collection)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps({"cursor": cursor,
+                                   "done_at": time.time() if done else None}))
+        os.replace(tmp, path)
+    except OSError:
+        pass                    # a hint: the seed simply starts over next time
+
+
 def announce(collection, uids) -> None:
     """THE FTS STAGE'S: these documents were just indexed, so they are embed
     candidates once its marks commit. Only a LOCAL archive keeps demand; for
@@ -661,6 +706,8 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
         _forget_demand(collection)
     with _demand_lock:
         w = _walks.setdefault(key, _Walk())
+        if not w.loaded and not _WALK_EVERY_CALL:
+            _load_seed(collection, w)
         if w.busy:
             return list(w.demand.values())
         now = time.monotonic()
@@ -703,12 +750,15 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
         _merge(w, found)
         for u, n in retry.items():
             w.announced.setdefault(u, n)
-        said = None
+        said, save = None, None
         if seed:
-            if w.cursor == 0:
+            if w.cursor == 0 or w.windows == 0:
                 w.started, w.windows, w.read_s = time.monotonic(), 0, 0.0
                 said = (f"archive demand seed started: windows of {_SEED_WINDOW:,} rowids "
-                        f"up to rowid {top:,}, paced to {_SEED_DUTY:.0%} of the thread")
+                        f"up to rowid {top:,}, paced to {_SEED_DUTY:.0%} of the thread"
+                        if w.cursor == 0 else
+                        f"archive demand seed resumed at rowid {w.cursor:,} of {top:,} "
+                        f"(its saved cursor), paced to {_SEED_DUTY:.0%} of the thread")
             w.windows += 1
             w.read_s += took
             w.cursor, w.done = cursor, done
@@ -717,11 +767,23 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
                 said = (f"archive demand seed reached the end: {w.windows:,} window(s) to "
                         f"rowid {top:,} in {w.finished_at - w.started:,.0f} s "
                         f"({w.read_s:,.1f} s reading), {len(w.demand)} shard(s) demanded")
+                save = (cursor, True)
+            elif w.windows % _SEED_REPORT == 0:
+                total, at = -(-top // _SEED_WINDOW), cursor // _SEED_WINDOW
+                mean = w.read_s / w.windows
+                said = (f"archive demand seed: window {at:,} of {total:,} (rowid {cursor:,}), "
+                        f"{mean:.2f} s reading a window, ~{(total - at) * mean / _SEED_DUTY / 3600:.1f} h "
+                        f"to the end at {_SEED_DUTY:.0%}, {len(w.demand)} shard(s) demanded")
+                save = (cursor, False)
             w.next_at = time.monotonic() + took * (1.0 / _SEED_DUTY - 1.0)
         result = list(w.demand.values())
-    if said is not None and not _WALK_EVERY_CALL:
-        # two lines a seed (an hour apart at the least), for its AFTER row
-        db.log_event(con, "info", "genesis", said)
+    if not _WALK_EVERY_CALL:
+        if save is not None:
+            _save_seed(collection, *save)
+        if said is not None:
+            # a few lines a seed: started or resumed, every _SEED_REPORT
+            # windows, the end — what its AFTER row times
+            db.log_event(con, "info", "genesis", said)
     if released:
         # the local encoder's (amendment 11); out of any demand that held them
         _add_residual(collection, _RELEASED, released)

@@ -2154,6 +2154,26 @@ Python. The fts stage announces the documents it indexed, and they are placed by
 its shard's demand, and a demand is re-checked by primary key before its ~10 s read. A finished seed starts
 again after an hour, so an edge the announcements miss costs one paced probe.
 
-**AFTER — to fill:** the same py-spy (`_walk_candidate_shards` gone; `_candidate_shards` under 1 % once the
-seed ends), the seed's duration to the end of 14.6 M, fts ms/doc by the same fit, and genesis imports still
-landing for newly indexed documents (the es/042 kind).
+**AFTER, first deploy (#255/#256, 0e062598, 04:40–05:12) — a REGRESSION.** wikipedia fts ~8× slower:
+7,921 documents in 32 min, against ~58,000 in 30 before. py-spy put 89.4 % of the pipeline thread in
+`_by_uid`. With 500 uids in the `IN` list and no `sqlite_stat1`, SQLite planned idx_documents_scope, not the
+uid key: 11.8 s per 500 uids. The plan test had used 2 uids (scheduling.md §5, 20).
+
+**AFTER (#257, a1837f8c, 05:27:34–05:59:35, München).**
+
+| | thread waiting / running | walk's own time | fts docs/s (wall) | chunks/s | chunks/doc |
+|---|---|---|---|---|---|
+| BEFORE (b7538039, 02:53–03:22; py-spy 04:05) | 51 / 49 % | 23.5 % | 29.0 | 160 | 5.48 |
+| regression (0e062598) | 8 / 92 % | 89.4 % (`_by_uid`) | 4.1 | 25 | — |
+| **AFTER (a1837f8c)** | **82 / 18 %** | 3.3 % (the seed, paced to 5 %) | **30.7 (+6 %)** | **177 (+11 %)** | 5.76 |
+
+- The 500-uid lookup on the live manifest: 0.30 ms with the uid key, against 11.8 s.
+- The pipeline thread now waits on the parse pool 82 % of the time, so the pool is the fts limit. Its
+  children spend their time decoding record JSON and reading parts (04:05 profile).
+- The OLS fit gave nothing here: docs and chunks per line correlate at 0.994, and R² came out negative.
+  The wall rates are the row.
+- The seed restarted at rowid 0 on each deploy (04:39, then 05:26), and its end was not in sight after
+  33 min. Its cursor is now saved beside the manifest every 100 windows, and a progress line gives the
+  pace and the time left.
+- Genesis imports: none in the 33 min. Before, they came every 1–2 h (es/042), so this is still to be
+  read.
