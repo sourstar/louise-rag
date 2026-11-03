@@ -342,6 +342,7 @@ The fields, with their values:
 | `chunk_id` | the record's best chunk (§5.1); in a reranked list, the chunk that scored the record (§5.6, *amended 2026-10-10*) |
 | `layer` | the layer that cut the chunk, derived from the Codex (02 §2.3) |
 | `rank` | the record's position in the list as presented |
+| `title`, `authors`, `lang` | the record's title, its authors as the record names them, and its language. `authors` was *added 2026-11-03* (operator, A): with no author, a model asked "who wrote it?" answered from its own memory; `null` where the record names none |
 | `legs` | `{text, vector, catalog}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
 | `trust_level` | `unverified` · `checked` · `verified` · `flagged` (§3.6) |
 | `certification` | `{certified_by, anchor_state}` — the certifier's key and `anchored` · `stale` · `mismatch` (§3.7); `null` for an open collection |

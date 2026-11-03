@@ -392,3 +392,18 @@ def test_louise_s_searches_run_in_the_asking_thread_s_context(chat_model):
     model = scripted(("ok", []), rewrite="a title")
     chat.ask("q", call=lambda n, a: seen.append(var.get()) or {"lists": []}, model=model)
     assert seen == ["the reader's", "the reader's"]
+
+
+def test_the_model_reads_who_wrote_each_source(chat_model):
+    """Operator, 2026-11-03, A: a source shows its authors (05 §5.3's
+    `authors`), so "who wrote it?" is answered from the record, not from
+    the model's memory."""
+    result = {"lists": [{"hits": [{"uid": "gutenberg:2759", "title": "Le Collier de la Reine",
+                                   "authors": "Dumas, Alexandre, 1802-1870", "lang": "fr", "text": "t"},
+                                  {"uid": "gutenberg:1", "title": "Anon", "lang": "en", "text": "t"}]}]}
+    model = scripted(("Dumas [1].", []))
+    out = chat.ask("q", call=lambda n, a: result, model=model)
+    asked = model.seen[0][0][-1]["content"]
+    assert "[1] Le Collier de la Reine — Dumas, Alexandre, 1802-1870 (fr) · gutenberg:2759" in asked
+    assert "[2] Anon (en) · gutenberg:1" in asked, "no authors, no dash"
+    assert out["sources"][0]["authors"] == "Dumas, Alexandre, 1802-1870"
