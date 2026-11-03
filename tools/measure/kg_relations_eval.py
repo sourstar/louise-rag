@@ -45,10 +45,11 @@ import json
 import re
 import sys
 import threading
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 DATA_URL = "https://huggingface.co/datasets/tonytan48/Re-DocRED/resolve/main/{name}"
 SPLITS = ("test_revised.json", "dev_revised.json")
@@ -122,7 +123,7 @@ def prompt_hash(names: dict[str, str]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-_JSON = re.compile(r"\{.*\}", re.S)
+_JSON = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def parse(answer: str, n_entities: int, allowed: set[str]) -> tuple[set[tuple[int, str, int]], bool]:

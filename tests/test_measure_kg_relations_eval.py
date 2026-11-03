@@ -56,11 +56,11 @@ def test_the_prompt_hash_names_the_fixed_parts_only(tmp_path):
     ('```json\n{"relations": [{"head": "0", "relation": "P17", "tail": "1"}]}\n```',
      {(0, "P17", 1)}, True),
     ('{"relations": []}', set(), True),
-    ('{"relations": [{"head": 0, "relation": "P999", "tail": 1}, '
-     '{"head": 0, "relation": "P17", "tail": 0}, {"head": 0, "relation": "P17", "tail": 7}]}',
+    (('{"relations": [{"head": 0, "relation": "P999", "tail": 1}, '
+      '{"head": 0, "relation": "P17", "tail": 0}, {"head": 0, "relation": "P17", "tail": 7}]}'),
      set(), True),
-    ('{"relations": [{"head": 0, "relation": "P17", "tail": 1}, '
-     '{"head": 0, "relation": "P17", "tail": 1}]}', {(0, "P17", 1)}, True),
+    (('{"relations": [{"head": 0, "relation": "P17", "tail": 1}, '
+      '{"head": 0, "relation": "P17", "tail": 1}]}'), {(0, "P17", 1)}, True),
     ("I think Turin is in Italy.", set(), False),
     ('{"relations": "none"}', set(), False),
     ("{not json}", set(), False),
