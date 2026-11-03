@@ -1,0 +1,50 @@
+{
+  "id": "localai@mistralai_ministral-3-3b-instruct-2512-multimodal",
+  "name": "louise-chat-ministral-3-3b-q8",
+  "files": [
+    {
+      "filename": "llama-cpp/models/Ministral-3-3B-Instruct-2512-Q8_0.gguf",
+      "uri": "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q8_0.gguf"
+    }
+  ],
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "draft_model": "",
+    "function": {
+      "automatic_tool_parsing_fallback": true,
+      "grammar": {
+        "disable": true
+      }
+    },
+    "gpu_layers": 999,
+    "known_usecases": [
+      "chat"
+    ],
+    "mmap": true,
+    "mmproj": "",
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "seed": 0,
+      "batch": 2048,
+      "temperature": 0.1,
+      "repeat_penalty": 1,
+      "model": "llama-cpp/models/Ministral-3-3B-Instruct-2512-Q8_0.gguf"
+    },
+    "template": {
+      "use_tokenizer_template": true
+    },
+    "threads": 6
+  }
+}
