@@ -93,3 +93,24 @@ def test_everything_withheld_is_said_not_asked_of_the_search(node, monkeypatch):
                         lambda names, **kw: [{"collection": "x", "reason": "quarantine"}])
     out = results.search("q", run=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no collections to search")))
     assert out["lists"] == [] and out["withheld"] == [{"collection": "x", "reason": "quarantine"}]
+
+
+def test_a_collection_named_as_the_space_narrows_to_it_and_says_so(node, monkeypatch):  # noqa: F811
+    """2026-11-03, Ask's benchmark: the chat model put `space: "gutenberg"`
+    and every search of the answer was refused. A held collection by that
+    name narrows the search as `collections` would; the result says so."""
+    g = SimpleNamespace(name="gutenberg", plugin="gutenberg", codex=None)
+    w = SimpleNamespace(name="wikipedia", plugin="wikipedia", codex=None)
+    monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [g, w])
+    monkeypatch.setattr(query_service, "withheld_from", lambda names, **kw: [])
+    asked = []
+
+    def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False, filters=None):
+        asked.append(list(names))
+        return {"hits": []}
+    out = results.search("q", space="gutenberg", run=run)
+    assert asked == [["gutenberg"]] and out["space_read_as_collections"] == ["gutenberg"]
+    plain = results.search("q", run=run)
+    assert "space_read_as_collections" not in plain
+    with pytest.raises(results.AskError, match="collections are named in `collections`"):
+        results.search("q", space="nowhere", run=run)
