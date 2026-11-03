@@ -55,8 +55,9 @@ def test_the_model_calls_a_tool_and_answers_from_what_it_returned(chat_model):
                    history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"},
                             {"role": "tool", "content": "never replayed"}])
     assert out["answer"] == "Ahab hunts the whale [gutenberg:2701]." and out["rounds"] == 2 and not out["exhausted"]
-    assert called == [("louise_search", {"query": "white whale", "collections": ["gutenberg"]})], \
-        "the collections asked for reach the tool"
+    assert called == [("louise_search", {"query": "white whale", "collections": ["gutenberg"],
+                                         "translate": True})], \
+        "the collections asked for reach the tool, and translation is on as on the Ask tab"
     (turn,) = out["turns"]
     assert turn["tool"] == "louise_search" and turn["result"] is SEARCH_RESULT and turn["error"] is None
     first, _ = model.seen[0]
@@ -290,3 +291,14 @@ def test_any_other_refusal_is_raised_not_answered_around(chat_model, before_any_
         return "", [search], {"role": "assistant", "content": ""}
     with pytest.raises(httpx.HTTPStatusError):
         chat.ask("q", call=lambda n, a: _big_search(0), model=model)
+
+
+def test_the_models_searches_translate_as_the_ask_tab_does_unless_it_says_otherwise(chat_model):
+    """2026-11-03: the Ask tab searches with translation on; the tool's
+    default is off and no model was told to ask for it."""
+    called = []
+    model = scripted(("", [llm.ToolCall(None, "louise_search", {"query": "a"}),
+                           llm.ToolCall(None, "louise_search", {"query": "b", "translate": False})]),
+                     ("ok", []))
+    chat.ask("q", call=lambda n, a: called.append(a) or {"lists": []}, model=model)
+    assert [a.get("translate") for a in called] == [True, False]

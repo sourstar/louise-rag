@@ -199,12 +199,14 @@ def faithfulness(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, Any]]:
-    """No model: the question searched as typed, through the same tool the
-    model calls — the reference row for "conveys"."""
+    """No model: the question searched as typed, as the Ask tab searches it
+    (translation on), through the same tool the model calls — the reference
+    row for "conveys"."""
     from app.ask import mcp
 
     def ask(question: str, collections: list[str] | None = collections) -> dict[str, Any]:
-        args: dict[str, Any] = {"query": question}
+        # as the Ask tab searches it: translation on (web._ask_result)
+        args: dict[str, Any] = {"query": question, "translate": True}
         if collections:
             args["collections"] = list(collections)
         result = mcp._call_tool("louise_search", args)

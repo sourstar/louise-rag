@@ -259,6 +259,15 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
             args = c.arguments if isinstance(c.arguments, dict) else {}
             if collections and c.name == "louise_search" and not args.get("collections"):
                 args = {**args, "collections": list(collections)}
+            if c.name == "louise_search" and "translate" not in args:
+                # THE SEARCH THE ASK TAB RUNS (2026-11-03, the operator: "Compare louise web
+                # gui ask tab with what the model is sending to louise"). The page searches
+                # with translation on (web._ask_result: run_search(..., translate=True));
+                # the tool's default is off (05 §5.2: on per request), and a model is not
+                # told to ask for it, so an Italian question about a book held in French
+                # was searched in Italian only. The loop asks for it on the model's behalf,
+                # per request as 05 §5.2 says; a model that sets it keeps its choice.
+                args = {**args, "translate": True}
             t0 = time.monotonic()
             try:
                 result = call(c.name, args)

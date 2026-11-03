@@ -241,7 +241,8 @@ def test_the_direct_row_searches_the_question_as_typed(monkeypatch):
     seen = []
     monkeypatch.setattr(mcp, "_call_tool", lambda name, args: seen.append((name, args)) or {"lists": []})
     out = ev.ask_direct(["gutenberg"])("romanzo sulla collana")
-    assert seen == [("louise_search", {"query": "romanzo sulla collana", "collections": ["gutenberg"]})]
+    assert seen == [("louise_search", {"query": "romanzo sulla collana", "translate": True,
+                                       "collections": ["gutenberg"]})], "as the Ask tab searches"
     assert out["answer"] == "" and out["turns"][0]["tool"] == "louise_search"
 
 
