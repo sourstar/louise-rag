@@ -236,31 +236,214 @@ def test_local_shards_listing(collection):
     assert shards == ("data/tr/000.parquet", "data/tr/001.parquet")
 
 
-def test_the_candidate_walk_is_not_repeated_for_every_round(collection, monkeypatch):
-    """A COST test. The walk pages through up to 65,536 candidates from the
-    start of the index, and the drain calls it once per round: on the node,
-    2026-09-22, that was 142 ms every round of wikipedia's pipeline thread —
-    30 % of the worker's CPU — to rediscover the same five stragglers, while
-    the thread's own rdf and fts waited behind it.
 
-    The answer is memoised for a few seconds, and dropped the moment this
-    process changes what the archive covers."""
-    monkeypatch.setattr(genesis, "_DEMAND_TTL_S", 60.0)
+
+# ---- the candidate demand: announced and seeded (2026-11-03) ----------------
+
+def _windows(con) -> list[str]:
+    seen: list[str] = []
+    con.set_trace_callback(lambda q: seen.append(q) if "rowid<=" in q else None)
+    return seen
+
+
+def _uid_lookups(con) -> list[str]:
+    seen: list[str] = []
+    con.set_trace_callback(lambda q: seen.append(q) if "uid IN (" in q else None)
+    return seen
+
+
+def _seed_to_the_end(con, collection) -> None:
+    key = str(collection.manifest_path)
+    while not genesis._walks.get(key, genesis._Walk()).done:
+        genesis._candidate_shards(con, collection)
+
+
+@pytest.fixture
+def announced(monkeypatch):
+    """The production demand: announced and seeded, not walked per call."""
+    monkeypatch.setattr(genesis, "_WALK_EVERY_CALL", False)
+    monkeypatch.setattr(genesis, "_SEED_DUTY", 1.0)       # no pacing, unless a test sets it
+    genesis.reset_revisit_state()
+
+
+def test_the_candidate_walk_is_not_repeated_for_every_round(collection, announced, monkeypatch):
+    """A COST test. The walk used to page up to 65,536 candidates FROM THE
+    START every 10 s: on wikipedia, whose embedding is off, 14.6 M
+    candidates, the same first 65,536 read every time and nothing found —
+    23.5 % of the pipeline thread (München's py-spy, 2026-11-03 04:05).
+
+    Now the seed reads ONE rowid window per call from a cursor and STOPS at
+    the end of the table; after that a call reads nothing."""
+    monkeypatch.setattr(genesis, "_SEED_WINDOW", 2)
     con = db.connect(collection)
     _make_eligible(con)
     con.commit()
+    windows = _windows(con)
 
-    pages: list[str] = []
-    con.set_trace_callback(lambda s: pages.append(s) if "rowid>" in s else None)
     first = genesis._candidate_shards(con, collection)
-    assert first and pages, "the first call walks"
+    assert len(windows) == 1, "one window per call"
+    while not genesis._walks[str(collection.manifest_path)].done:
+        before = len(windows)
+        genesis._candidate_shards(con, collection)
+        assert len(windows) == before + 1
+    top = con.execute("SELECT max(rowid) FROM documents").fetchone()[0]
+    assert len(windows) == -(-top // 2), "windows of 2 rowids up to the table's last"
+    found = genesis._candidate_shards(con, collection)
+    assert {d.shard for d in found} == {"data/tr/000.parquet", "data/tr/001.parquet"}
+    assert first, "what a window finds is demand at once"
 
-    pages.clear()
-    again = genesis._candidate_shards(con, collection)
-    assert [d.shard for d in again] == [d.shard for d in first]
-    assert pages == [], "a second call inside the window walks nothing"
+    windows.clear()
+    for _ in range(5):
+        assert genesis._candidate_shards(con, collection) == found
+    assert windows == [], "a finished seed reads nothing"
 
-    # …and anything that changes what the archive covers drops it at once
-    genesis._record_residual(collection, first[0].shard, [first[0].uids[0]])
+
+def test_the_seed_is_paced_to_its_share_of_the_thread(collection, announced, monkeypatch):
+    monkeypatch.setattr(genesis, "_SEED_WINDOW", 1)
+    monkeypatch.setattr(genesis, "_SEED_DUTY", 0.05)
+    clock = [100.0]
+    monkeypatch.setattr(genesis.time, "monotonic", lambda: clock[0])
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+    windows = _windows(con)
+    real = con.execute
+
+    def slow(sql, *a):
+        if "rowid<=" in sql:
+            clock[0] += 0.1             # each window "takes" 100 ms
+        return real(sql, *a)
+    genesis._candidate_shards(type("C", (), {"execute": staticmethod(slow)})(), collection)
+    w = genesis._walks[str(collection.manifest_path)]
+    assert w.next_at == pytest.approx(clock[0] + 0.1 * 19), "19x the window's time"
+    windows.clear()
     genesis._candidate_shards(con, collection)
-    assert pages, "a residual recorded means the next call walks again"
+    assert windows == [], "not due yet"
+    clock[0] = w.next_at
+    genesis._candidate_shards(con, collection)
+    assert len(windows) == 1
+
+
+def test_fts_announces_what_becomes_a_candidate(collection, announced):
+    """After the seed, a document becomes a candidate when fts commits it:
+    the stage announces it, and the next call places it by its primary key
+    — no window, whatever the table holds."""
+    con = db.connect(collection)
+    uids = [r["uid"] for r in con.execute(
+        "SELECT uid FROM documents ORDER BY CAST(native_id AS INTEGER)")]
+    _seed_to_the_end(con, collection)
+    assert genesis._candidate_shards(con, collection) == []
+
+    _make_eligible(con, uids[:1])
+    con.commit()
+    genesis.announce(collection, uids[:1])
+    windows = _windows(con)
+    found = genesis._candidate_shards(con, collection)
+    assert windows == []
+    assert [d.uids for d in found] == [uids[:1]]
+
+
+def test_an_announcement_costs_one_lookup_per_500_documents(collection, announced):
+    con = db.connect(collection)
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents")]
+    _seed_to_the_end(con, collection)
+    genesis.announce(collection, uids)
+    lookups = _uid_lookups(con)
+    genesis._candidate_shards(con, collection)
+    assert len(lookups) == 1
+
+
+def test_an_announcement_before_its_commit_is_looked_for_again(collection, announced):
+    con = db.connect(collection)
+    uid = con.execute("SELECT uid FROM documents LIMIT 1").fetchone()[0]
+    genesis._walks[str(collection.manifest_path)] = genesis._Walk(done=True, finished_at=1e18)
+    genesis.announce(collection, [uid])
+    assert genesis._candidate_shards(con, collection) == [], "not a candidate yet"
+    _make_eligible(con, [uid])
+    con.commit()
+    assert [d.uids for d in genesis._candidate_shards(con, collection)] == [[uid]]
+
+
+def test_only_a_local_archive_keeps_announced_demand(collection, announced):
+    other = replace(collection, genesis_archive=None)
+    genesis.announce(other, ["x"])
+    assert str(other.manifest_path) not in genesis._walks
+
+
+def test_an_import_drops_its_shard_and_walks_nothing(collection, announced):
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+    _seed_to_the_end(con, collection)
+    first = genesis._candidate_shards(con, collection)
+    windows = _windows(con)
+    genesis._record_residual(collection, first[0].shard, [first[0].uids[0]])
+    left = genesis._candidate_shards(con, collection)
+    assert windows == [], "a residual recorded no longer re-walks the table"
+    assert [d.shard for d in left] == [d.shard for d in first[1:]]
+
+
+def test_a_demand_is_checked_before_its_shard_is_read(collection, announced, monkeypatch):
+    """What left the candidate set since its demand was found buys no read."""
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+    _seed_to_the_end(con, collection)
+    assert genesis._candidate_shards(con, collection)
+    con.execute("UPDATE documents SET embed_done=1")
+    con.commit()
+    reads = []
+    monkeypatch.setattr(genesis, "import_shard", lambda *a, **k: reads.append(a) or {})
+    assert genesis.drain_next_shard(con, collection) is None
+    assert reads == [] and genesis._candidate_shards(con, collection) == []
+
+
+def test_a_walk_in_progress_is_not_walked_twice(collection, announced):
+    """The pipeline thread and the main loop both drain a local archive."""
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+    genesis._walks[str(collection.manifest_path)] = genesis._Walk(busy=True)
+    windows = _windows(con)
+    assert genesis._candidate_shards(con, collection) == [] and windows == []
+
+
+def test_the_seed_starts_again_after_its_reseed_interval(collection, announced, monkeypatch):
+    """Announced demand can miss an edge; a finished seed is one paced probe
+    again after _RESEED_S, never a document stranded for good."""
+    con = db.connect(collection)
+    genesis._walks[str(collection.manifest_path)] = genesis._Walk(done=True, finished_at=0.0)
+    monkeypatch.setattr(genesis, "_RESEED_S", 0.0)
+    _make_eligible(con)
+    con.commit()
+    windows = _windows(con)
+    assert genesis._candidate_shards(con, collection) and len(windows) == 1
+
+
+def test_the_drain_imports_through_announced_demand(collection, announced, monkeypatch):
+    """End to end with the production demand: seed, announce, import."""
+    con = db.connect(collection)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents")]
+    _seed_to_the_end(con, collection)
+    _make_eligible(con)
+    con.commit()
+    genesis.announce(collection, uids)
+    for _ in range(10):
+        if genesis.drain_next_shard(con, collection) is None:
+            break
+    done = con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0]
+    assert done == len(uids)
+
+
+def test_announcements_nobody_drains_stay_bounded(collection, announced, monkeypatch):
+    """An archive that never drains (stopped, writes held) must not grow the
+    announced set for ever: past the cap the seed starts again instead."""
+    monkeypatch.setattr(genesis, "_ANNOUNCE_CAP", 3)
+    key = str(collection.manifest_path)
+    genesis._walks[key] = genesis._Walk(done=True, cursor=99, finished_at=1e18)
+    genesis.announce(collection, ["a", "b", "c"])
+    assert len(genesis._walks[key].announced) == 3 and genesis._walks[key].done
+    genesis.announce(collection, ["d"])
+    w = genesis._walks[key]
+    assert w.announced == {} and not w.done and w.cursor == 0
