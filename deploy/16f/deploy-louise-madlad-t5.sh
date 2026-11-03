@@ -259,6 +259,7 @@ grep -q '^def near_exact_relaxed' "$ROOT/src.new/deploy/vega/vega_wrapper.py"   
 grep -q '^def loads_an_embedder' "$ROOT/src.new/deploy/vega/vega_wrapper.py"    # #248: one wrapper package for every llama.cpp model
 grep -q '^    exactness: str = "exact"' "$ROOT/src.new/app/collections.py"       # #244: bit-exact by default
 grep -q 'document_instruction: str | None = None' "$ROOT/src.new/app/hold/codex.py"   # #252: space.document.instruction (Codex 11), the long texts in the gate's batch check
+grep -q '^def announce(collection, uids) -> None:' "$ROOT/src.new/app/bundles/genesis.py"   # #255: a local archive's demand announced by the fts commit, the walk in windows from a cursor
 echo "staged: $(find "$ROOT/src.new" -name '*.py' | wc -l) python files"
 
 say "2. build louise-rag:staged"
@@ -305,6 +306,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_vectors_by_chunk_id.py tests/test_profile_mode.py tests/test_worker_settle_runs.py tests/test_ask_relay_browser.py tests/test_endpoint_refusal_exit.py tests/test_deploy_supervise_pass.py tests/test_rage_bench.py tests/test_embed_materialize.py tests/test_rage_settings.py tests/hold/test_rage_settings.py tests/hold/test_rage_settings_cli.py tests/test_rage_name.py tests/test_card_record.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_embedder_cli.py tests/hold/test_cpu_reference.py tests/hold/test_near_exact.py tests/test_encoder_batch.py tests/test_slice_scope.py tests/hold/test_relocate.py tests/test_toml_roundtrip.py tests/test_measure_wikidata_encoder_ab.py tests/test_merge_by_relevance.py tests/test_record_rerank.py tests/test_measure_fusion_calibration.py tests/test_node_show.py tests/test_vega_repro_check.py tests/test_worker_boot_node_state.py tests/hold/test_embedder.py tests/hold/test_backend_engine.py tests/hold/test_engine_options.py tests/hold/test_pair_calibration.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py tests/hold/test_drift.py tests/test_record_source.py tests/test_lance_stable_row_ids.py tests/test_vector_rewrite.py \
     tests/test_cdc_native.py tests/hold/test_cdc_identity.py tests/test_plugins_wikidata_textify_compiled.py tests/test_nemotron_conversion_tools.py \
+    tests/bundles/test_genesis_local.py tests/bundles/test_genesis_starvation.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
 # conftest `codex` fixture is not found (2026-10-27; alone and in the full suite it passes)
