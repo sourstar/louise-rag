@@ -354,3 +354,31 @@ def test_the_model_reads_who_wrote_each_source(chat_model):
     assert "[1] Le Collier de la Reine — Dumas, Alexandre, 1802-1870 (fr) · gutenberg:2759" in asked
     assert "[2] Anon (en) · gutenberg:1" in asked, "no authors, no dash"
     assert out["sources"][0]["authors"] == "Dumas, Alexandre, 1802-1870"
+
+
+def test_a_tool_call_the_engine_cannot_parse_is_answered_without_tools(chat_model):
+    """2026-11-03, München: Command R7B on our llama.cpp — LocalAI answered
+    500 ("Unexpected error in RPC handling") whenever the model chose a tool,
+    the generic chat parser throwing on its output. The round is answered
+    without tools, from the sources Louise searched; the answer says so."""
+    import httpx
+
+    def failing(status):
+        def model(messages, tools):
+            if tools:
+                raise httpx.HTTPStatusError(str(status), request=httpx.Request("POST", "http://x"),
+                                            response=httpx.Response(status, text="Unexpected error in RPC handling"))
+            return "From the sources: Moby Dick [1].", [], {"role": "assistant", "content": ""}
+        return model
+    out = chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=failing(500))
+    assert out["answer"] == "From the sources: Moby Dick [1]." and out["exhausted"]
+    assert out["tools_failed"].startswith("500: Unexpected error")
+    assert out["cited"][0]["uid"] == "gutenberg:2701"
+    with pytest.raises(httpx.HTTPStatusError):
+        chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=failing(422)), "a client error is a fault to see"
+
+    def down(messages, tools):
+        raise httpx.HTTPStatusError("500", request=httpx.Request("POST", "http://x"),
+                                    response=httpx.Response(500, text="down"))
+    with pytest.raises(httpx.HTTPStatusError):
+        chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=down), "failing without tools too: raised"
