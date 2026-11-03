@@ -164,10 +164,21 @@ def test_citations_are_counted_and_checked_against_what_the_tools_returned(tmp_p
     ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
            ask=lambda q, collections=None: answers[q])
     rows = ev._rows(tmp_path, "m")
-    assert [(r["cited"], r["grounded"], r["no_tool"]) for r in rows] == [(2, 1, False), (0, 0, True)]
+    assert [(r["cited"], r["grounded"], r["no_tool"], r["returned"]) for r in rows] == \
+        [(2, 1, False, 2), (0, 0, True, 0)]
     s = ev.summary(rows)
     assert (s["no_tool"], s["cited"], s["grounded"], s["uncited"]) == (1, 2, 1, 1)
+    assert s["uncited_with_results"] == 0, "the uncited answer had nothing to cite"
     capsys.readouterr()
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[11:15] == [" 1 ", " 1.0 ", " 0.50 ", " 1 "]
+    assert row.split("|")[11:16] == [" 1 ", " 1.0 ", " 0.50 ", " 1 ", " 0 "]
+
+
+def test_an_answer_that_cites_nothing_though_results_came_back_is_counted():
+    turns = [{"tool": "louise_search", "result": {"lists": [{"hits": [{"uid": "gutenberg:1"}]}],
+                                                  "facts": [{"uid": "hgnc:1101"}]}}]
+    assert ev.returned_uids([t["result"] for t in turns]) == {"gutenberg:1", "hgnc:1101"}
+    rows = [{"cited": 0, "returned": 2, "lang": "en", "tools": ["louise_search"], "error": None,
+             "exhausted": False, "tool_errors": 0, "answer_lang": "en", "seconds": 1.0}]
+    assert ev.summary(rows)["uncited_with_results"] == 1
