@@ -1,6 +1,6 @@
 {
   "id": "localai@qwen3.5-9b",
-  "variant": "qwen3.5-9b",
+  "variant": "qwen3.5-9b-dflash",
   "name": "louise-chat-qwen3.5-9b-q8",
   "files": [
     {
@@ -11,6 +11,7 @@
   ],
   "overrides": {
     "backend": "vega-louise-llama-cpp",
+    "draft_model": "",
     "context_size": 16384,
     "env": {
       "GGML_SYCL_ENABLE_DNN": "0",
