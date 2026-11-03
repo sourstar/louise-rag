@@ -660,6 +660,19 @@ wiki-gutenberg)").
     `/models/apply` body);
   - `deploy/vega/stage/models/louise-chat-nemotron-bolt-e4b.yaml` is what
     LocalAI writes from it.
+- **Both precisions** (operator, the same day: "Localai allows downloading
+  alternatives with a different precision, check. Evaluate both 8bit and 4bit
+  builds").
+  - An apply names its build in `variant`. The entry's own name selects its
+    base build (LocalAI `core/gallery` `SelectVariant`).
+  - Without one, LocalAI installs the largest build the host can run: the
+    first install, unnamed, got UD-Q8_K_XL.
+  - So B is two models, `louise-chat-nemotron-bolt-e4b-q8` and `-q4`, each
+    with its own apply body and YAML.
+  - Each must meet the five conditions on its own. If both do, the better
+    one is chosen; where the two cannot be told apart (tool errors and
+    bound hits equal, the language share within the test's noise), the
+    smaller, q4, is chosen, as the encoder rule breaks ties by cost.
 - A model the gallery holds is installed from it from now on. Of the Nemotron
   candidates, it holds Lightning-30B-A3B (q4, q8, nvfp4) and Bolt-E4B (q4,
   q8), not Rerank-8B or Bolt-74B-A9B, which stay Hub downloads.

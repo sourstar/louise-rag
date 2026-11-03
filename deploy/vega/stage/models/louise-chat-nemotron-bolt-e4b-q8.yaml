@@ -2,14 +2,16 @@
 # it fits we switch it right away as chat"; "If it is available use localai to
 # get the model. Do not reinvent the wheel").
 # INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `nemotron-3.5-bolt-e4b-q4`:
-#   POST /models/apply with ../gallery/louise-chat-nemotron-bolt-e4b.json
+#   POST /models/apply with ../gallery/louise-chat-nemotron-bolt-e4b-q8.json
 # The gallery fetches unsloth's GGUF and its vision projector, pinned by sha256.
-# The q4 entry declares a q8 variant, and LocalAI picks the largest variant
-# the host can run, so the install on 2026-11-03 (job 05df6f0a) fetched
-# UD-Q8_K_XL (8.19 GB) and the projector (0.99 GB). The apply body now names
-# the variant, so a re-install fetches the same file.
+# THE 8-BIT BUILD: variant `nemotron-3.5-bolt-e4b-q8`, UD-Q8_K_XL (8.19 GB),
+# plus the projector (0.99 GB). Without a variant LocalAI installs the
+# largest one the host can run, and this is what it chose (job 05df6f0a).
+# The 4-bit build is louise-chat-nemotron-bolt-e4b-q4; the operator has both
+# evaluated ("Evaluate both 8bit and 4bit builds").
 # The entry also sets the function handling (automatic_tool_parsing_fallback,
-# grammar off) and the sampling (top_k 64, top_p 0.95, min_p 0.01). Our overrides add only the engine settings of the chat model
+# grammar off) and the sampling (top_k 64, top_p 0.95, min_p 0.01).
+# Our overrides add only the engine settings of the chat model
 # (louise-chat-qwen3-8b): our llama.cpp package, the SYCL determinism env,
 # parallel 1, a 16k context, seed 0, thinking off.
 # This file is what LocalAI wrote on the node (München, 09:36).
@@ -33,7 +35,7 @@
   "known_usecases": ["chat", "vision"],
   "mmap": true,
   "mmproj": "llama-cpp/mmproj/nemotron-3.5-bolt-e4b/mmproj-F16.gguf",
-  "name": "louise-chat-nemotron-bolt-e4b",
+  "name": "louise-chat-nemotron-bolt-e4b-q8",
   "options": [
     "use_jinja:true",
     "parallel:1",
