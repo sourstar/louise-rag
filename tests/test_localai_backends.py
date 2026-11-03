@@ -757,6 +757,41 @@ def test_the_gallery_lists_a_variant_per_gpu_each_with_its_requirements():
         assert (PYTHON_DIR / f"requirements-{variant}.txt").is_file(), (gpu, variant)
 
 
+# The louise-python trees by the names the node's YAMLs use. A tree is installed
+# BESIDE its predecessor under a dated name, and a rebuild moves the YAML's
+# backend line to it (louise-python-rebuild.md §2); the operator named the two
+# live VeGa wrappers (2026-11-02): vega-louise-openvino (the 20261030 tree,
+# OpenVINO tasks) and vega-pytorch (the 20261021a tree, torch tasks).
+PYTHON_TREES = ("vega-louise-openvino", "vega-pytorch")
+
+
+def _on_a_python_tree(backend: str) -> bool:
+    return (backend in PYTHON_TREES
+            or re.fullmatch(r"(vega-)?louise-python(-\d{8}[a-z]?)?", backend) is not None)
+
+
+# The per-model Python backends consolidation removed (backend-consolidation.md,
+# 2026-10-17) and their VeGa wrappers.
+RETIRED_PER_MODEL = ("louise-dar-legal-it", "louise-madlad", "louise-medcpt-article-ov",
+                     "louise-medcpt-rerank", "vega-louise-dar-legal-it",
+                     "vega-louise-medcpt-article-ov")
+# Everything else is llama.cpp: the one VeGa package (and its CPU build), or an
+# engine loaded directly — MADLAD, whose parallel slots the wrapper refuses
+# (approved-encoders.md).
+LLAMA_CPP_BACKENDS = r"vega-llama-cpp(-cpu)?|louise-sycl-f16-llama-cpp-[0-9a-f]{7,40}"
+
+
+def test_the_backend_rules_name_tonights_backends():
+    """The names the operator gave (2026-11-02) are python trees, the engine is
+    llama.cpp, and nothing live is a retired per-model backend."""
+    assert all(_on_a_python_tree(n) for n in PYTHON_TREES + ("louise-python-20261030",
+                                                            "vega-louise-python-20261021a"))
+    assert not _on_a_python_tree("louise-sycl-f16-llama-cpp-16acc89")
+    assert re.fullmatch(LLAMA_CPP_BACKENDS, "louise-sycl-f16-llama-cpp-16acc89")
+    assert not re.fullmatch(LLAMA_CPP_BACKENDS, "louise-madlad")
+    assert not set(RETIRED_PER_MODEL) & set(PYTHON_TREES)
+
+
 def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
     """deploy/vega/stage/models: what the node's LocalAI holds. A model on
     louise-python (or VeGa's wrapper of it) names one task, and every other
@@ -770,14 +805,17 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
                          if not l.lstrip().startswith("#"))
         body = json.loads(text)
-        # the tree is installed BESIDE its predecessor under a dated name, and a
-        # rebuild moves the YAML's backend line to it (louise-python-rebuild.md §2)
-        if not re.fullmatch(r"(vega-)?louise-python(-\d{8}[a-z]?)?", body["backend"]):
-            assert not body["backend"].startswith(("louise-", "vega-louise-")), \
-                f"{path.name}: on a retired per-model backend"
+        backend = body["backend"]
+        if not _on_a_python_tree(backend):
+            assert backend not in RETIRED_PER_MODEL, f"{path.name}: on a retired per-model backend"
+            assert re.fullmatch(LLAMA_CPP_BACKENDS, backend), \
+                f"{path.name}: {backend} is neither a louise-python tree nor a llama.cpp backend"
             continue
         task, rest = python_backend.split_task(body["options"])
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
+        if backend in PYTHON_TREES:
+            assert (task in python_backend.TORCH_TASKS) == (backend == "vega-pytorch"), \
+                f"{path.name}: task {task} on {backend}, which the operator named for the other kind"
         seen.add(task)
     assert seen == set(tasks), "each live task serves a staged model"
 
