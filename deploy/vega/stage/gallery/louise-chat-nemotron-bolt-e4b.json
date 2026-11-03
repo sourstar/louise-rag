@@ -1,5 +1,6 @@
 {
   "id": "localai@nemotron-3.5-bolt-e4b-q4",
+  "variant": "nemotron-3.5-bolt-e4b-q8",
   "name": "louise-chat-nemotron-bolt-e4b",
   "overrides": {
     "backend": "vega-louise-llama-cpp",
@@ -13,8 +14,16 @@
     "flash_attention": "on",
     "gpu_layers": 999,
     "mmap": true,
-    "options": ["use_jinja:true", "parallel:1", "cache_ram:0", "ubatch:512"],
-    "parameters": {"seed": 0, "batch": 2048},
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "seed": 0,
+      "batch": 2048
+    },
     "reasoning_effort": "none",
     "threads": 6
   }
