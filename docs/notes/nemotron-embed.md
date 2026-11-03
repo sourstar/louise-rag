@@ -895,3 +895,39 @@ So the rewrite step is out:
   so and never to supply it from memory.
 
 The gold in works.json misses the translations, so "found" undercounts.
+
+### The measure walked, and the reranker's slots (München, 2026-11-03)
+
+**citation_support on walk 2's answers** (#295, #296):
+- First pass: 2 correct flags, 4 false positives ("Luigi XVI" from the
+  question, a possessive), and 1 miss (the invented title, in an uncited
+  sentence).
+- After #296 it matches the reading:
+  - EN: the uncited title sentence flagged; both cited sentences
+    supported.
+  - IT: the [2] and [1] sentences flagged; [7], [9] and [10] supported.
+
+**Reranker (louise-rerank-bge):**
+- b1: 4–5 calls per answer, one per language variant of the question;
+  5.3–5.9 s per answer in all; 0 duplicate pairs of 2,145.
+- b2, the same 20 bodies:
+
+  | slots | pairs/s | median s (40 docs) | card busy | against p1 |
+  |---|---|---|---|---|
+  | p1 | 16.0 | 2.50 | 93.8 % | — |
+  | p4 | 13.5 | 2.96 | 94.0 % | 0/20 byte-equal, max \|Δ\| 3.9e-2, top-10 changed 1/20 |
+  | p8 | 13.3 | 3.01 | 94.6 % | 0/20 byte-equal, max \|Δ\| 3.9e-2, top-10 changed 0/20 |
+
+  One slot already saturates the card. More slots are slower and not
+  exact, so p1 stays. Replicas would meet the same saturation and were
+  not run. What is left to try is less work per answer: fewer language
+  variants, fewer candidates, or shorter texts. Each changes the results,
+  so each is measured on quality before speed (pipeline_eval).
+
+**The operator's two Qwen3.5 files** (4B and 2B, Q4_K_M, from the LocalAI
+catalogue) match the gallery's sha256: bartowski's quantizations of Qwen's
+weights.
+
+**Run started 17:14:** tag `iface`, the five languages, 10 questions
+each, gutenberg, `--search-cache`. Order: direct-iface (records the
+searches), qwen3-8b, qwen3.5-9b-q8, qwen3.5-4b-q4, qwen3.5-2b-q4.
