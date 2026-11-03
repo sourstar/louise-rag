@@ -133,6 +133,31 @@ def test_a_known_perturbation_yields_the_expected_tolerance(tmp_path, monkeypatc
     assert set(asked) == {REF_URL, OTHER_URL}
 
 
+def test_each_lane_holds_its_encoder_while_it_embeds(tmp_path, monkeypatch, capsys,
+                                                     isolated_config):
+    """The worker's idle sweep unloads an embedder no collection names unless a
+    lease says it is in use: unleased, it stopped a Nemotron calibration's CPU
+    twin every minute, mid-request (2026-11-03). Each lane is leased while it
+    embeds, and released after."""
+    from app import model_load, model_pins, node_state
+    monkeypatch.setattr(model_pins, "hold", lambda *a, **k: False)
+    monkeypatch.setattr(model_pins, "release", lambda *a, **k: None)
+    _fake_endpoints(monkeypatch)
+    fake, leases = embeddings._request_vectors, []
+
+    def watched(batch, timeout, recipe, runs=None):
+        leases.append(node_state.leased_encoders())
+        return fake(batch, timeout, recipe, runs)
+    monkeypatch.setattr(embeddings, "_request_vectors", watched)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, extra='model = "ref-m"\n')
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_OTHER,
+                  extra='model = "other-m"\n')
+    assert _run(ref, other) == 0
+    assert {(model_load.server_of(REF_URL), "ref-m")} in leases
+    assert {(model_load.server_of(OTHER_URL), "other-m")} in leases
+    assert node_state.leased_encoders() == set(), "released when the lane ends"
+
+
 def test_a_larger_perturbation_bears_a_lower_tolerance(tmp_path, monkeypatch, capsys):
     ref = _file(tmp_path, "ref.toml", url=REF_URL)
     other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_OTHER)

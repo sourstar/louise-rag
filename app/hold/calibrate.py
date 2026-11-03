@@ -159,7 +159,7 @@ def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
     so the tolerance is measured on the inputs the gate will send."""
     import httpx
 
-    from app import collections as collections_mod, embeddings
+    from app import collections as collections_mod, embeddings, encoder_use
 
     def embed(ep: Endpoint, texts: list) -> tuple[list[list[float]], set]:
         recipe = collections_mod.EmbedRecipe(
@@ -169,8 +169,12 @@ def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
         runs: set = set()
         try:
             # the calibration set in the space's form: texts, or a pair
-            # space's pairs, sent as pairs (09 §9.12, amended 2026-10-08)
-            return embeddings.embed_calibration(recipe, texts, runs=runs), runs
+            # space's pairs, sent as pairs (09 §9.12, amended 2026-10-08).
+            # Leased for the whole lane (encoder_use.held): unleased, the
+            # worker's idle sweep stopped a Nemotron calibration's CPU twin
+            # every minute, mid-request (2026-11-03), as it had cpu-reference's
+            with encoder_use.held(recipe, holder=encoder_use.holder("hold embedder calibrate")):
+                return embeddings.embed_calibration(recipe, texts, runs=runs), runs
         except httpx.TransportError as e:
             raise CalibrateUnreachable(
                 f"{ep.file}: the encoder at {ep.url} is unreachable ({e}); "
