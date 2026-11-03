@@ -1,0 +1,56 @@
+# Command R7B (Cohere, 2024-12): 8.0 B, trained for answers grounded in given
+# documents with citations, and for tools; 23 languages incl. en it de fr es.
+# LICENCE CC-BY-NC 4.0, NON-COMMERCIAL USE ONLY, with Cohere's acceptable-use
+#   policy: ACCEPTED BY THE OPERATOR for this node, 2026-11-03 ("choice A":
+#   run it on the recorded searches). Never a default Louise recommends to
+#   another peer.
+# NOT IN LOCALAI'S GALLERY: installed with ../gallery/louise-chat-command-r7b-q8.json, LocalAI's
+#   virtual base and bartowski's Q8_0 (imatrix quantization of
+#   CohereForAI/c4ai-command-r7b-12-2024, llama.cpp b4415) added as a file; the
+#   node pins its uri to the Hub's commit and writes its sha256 in at the
+#   install, as for the 9B Q8.
+# Ours on top: our llama.cpp package and the measured SYCL set, parallel 1, a
+# 16k context, seed 0. No thinking mode to switch off. Sampling: Ask sends its
+# own temperature per request; 0.3 here is Cohere's usual default (the
+# original card is gated and was not read).
+{
+  "name": "louise-chat-command-r7b-q8",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "seed": 0,
+    "batch": 2048,
+    "temperature": 0.3,
+    "repeat_penalty": 1,
+    "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf"
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}
