@@ -90,9 +90,35 @@ def compact(name: str, result: Any) -> Any:
     return result
 
 
+def reader_language(question: str, answer_lang: str | None = None) -> str | None:
+    """The language the answer is written in: the one the reader asked for
+    (the page's "show results in"), else the one the question is written in
+    by the node's own guess (05 §5.6's reader's language), else None — the
+    question does not say clearly enough, and the prompt asks for its
+    language without naming one."""
+    if answer_lang and answer_lang.strip():
+        return answer_lang.strip().lower()
+    from app import query_language
+    return query_language.guess(question, set(query_language.word_lists()))
+
+
+def language_rule(lang: str | None) -> str:
+    """The system prompt's last sentence. NAMED, never a bare code (llm.py
+    LANGUAGE_NAMES: a code alone is echoed back). Measured 2026-11-03 on
+    the chat benchmark before it: after English tool results Qwen3-8B
+    answered in the question's language 66 % of the time and Bolt-E4B 19 %
+    (German 0 of 10, French 0 of 10)."""
+    from app import llm
+    if lang is None:
+        return (" Write your whole answer in the language the question is written in, whatever "
+                "language the tool results are in.")
+    return (f" Write your whole answer in {llm.language_phrase(lang)}, whatever language the "
+            f"question or the tool results are in.")
+
+
 def ask(question: str, *, collections: list[str] | None = None, history: list[dict[str, Any]] | None = None,
         call: Callable[[str, dict[str, Any]], Any] | None = None, model=None,
-        max_rounds: int = MAX_ROUNDS) -> dict[str, Any]:
+        max_rounds: int = MAX_ROUNDS, answer_lang: str | None = None) -> dict[str, Any]:
     """One question through the loop: `{answer, turns: [{tool, arguments,
     result, error, seconds}], rounds, exhausted, model_s}`. `model(messages,
     tools) -> (content, calls, assistant_message)` is llm.chat_tools unless a
@@ -113,6 +139,8 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     if collections:
         system += (f" Search only these collections unless the question says otherwise: {', '.join(collections)}; "
                    f"pass them as `collections`.")
+    lang = reader_language(question, answer_lang)
+    system += language_rule(lang)
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     for m in history or []:
         if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str):
@@ -134,7 +162,7 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
         content, calls, assistant = timed_model(tools)
         if not calls:
             return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": False,
-                    "model_s": model_s}
+                    "model_s": model_s, "answer_lang": lang}
         messages.append(assistant)
         for c in calls:
             args = c.arguments if isinstance(c.arguments, dict) else {}
@@ -155,4 +183,4 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     # the bound reached: the model answers with what it has, tools withheld
     content, _, _ = timed_model(None)
     return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": True,
-            "model_s": model_s}
+            "model_s": model_s, "answer_lang": lang}

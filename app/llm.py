@@ -442,6 +442,11 @@ LANGUAGE_NAMES = {
     "es": "Spanish", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
     "ru": "Russian", "ja": "Japanese", "zh": "Chinese", "tr": "Turkish",
     "fa": "Persian",
+    # every language app/query_language.py can guess, so Ask's loop names
+    # the reader's language rather than its code (2026-11-03)
+    "da": "Danish", "eo": "Esperanto", "fi": "Finnish", "hu": "Hungarian",
+    "la": "Latin", "no": "Norwegian", "ro": "Romanian", "sv": "Swedish",
+    "tl": "Tagalog", "el": "Greek", "ar": "Arabic", "he": "Hebrew", "ko": "Korean",
 }
 
 

@@ -187,3 +187,34 @@ def test_an_answer_says_where_its_time_went(chat_model, monkeypatch):
     out = chat.ask("where is BRCA2?", call=lambda n, a: {"rows": []}, model=model, max_rounds=1)
     assert out["exhausted"] and out["model_s"] == [1.5, 0.5], "the bound's last round is timed too"
     assert [t["seconds"] for t in out["turns"]] == [0.75]
+
+
+def test_the_answer_is_asked_in_the_readers_language_named(chat_model):
+    """2026-11-03, the chat benchmark: after English tool results the model
+    answered in English (Bolt-E4B 14 of 73 in the question's language,
+    Qwen3-8B 50 of 73). The prompt names the reader's language: the one asked
+    for, else the question's by the node's own guess, else the question's."""
+    def system_of(question, **kw):
+        model = scripted(("ok", []))
+        out = chat.ask(question, call=lambda n, a: {}, model=model, **kw)
+        return model.seen[0][0][0]["content"], out["answer_lang"]
+    text, lang = system_of("Il romanzo storico sullo scandalo della collana della regina, chi l'ha scritto?")
+    assert lang == "it" and text.endswith("Write your whole answer in Italian (ISO code 'it'), whatever "
+                                          "language the question or the tool results are in.")
+    text, lang = system_of("Il romanzo storico sullo scandalo della collana", answer_lang="DE")
+    assert lang == "de" and "in German (ISO code 'de')" in text
+    text, lang = system_of("Ahab")
+    assert lang is None and text.endswith("in the language the question is written in, whatever "
+                                          "language the tool results are in.")
+
+
+def test_every_language_the_node_can_guess_has_a_name_for_the_prompt():
+    """A bare code is echoed back (llm.py LANGUAGE_NAMES); every language the
+    guess can return is named."""
+    import inspect
+    import re
+
+    from app import query_language
+    scripts = set(re.findall(r'"([a-z]{2,3})"', inspect.getsource(query_language)))
+    guessable = set(query_language.word_lists()) | (scripts - {"utf"})
+    assert not guessable - set(llm.LANGUAGE_NAMES)
