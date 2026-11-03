@@ -159,7 +159,7 @@ class Sources:
             return self._n[key], False
         n = len(self.entries) + 1
         self._n[key] = n
-        self.entries.append({k: hit.get(k) for k in ("uid", "title", "lang", "collection_id",
+        self.entries.append({k: hit.get(k) for k in ("uid", "title", "authors", "lang", "collection_id",
                                                     "snapshot_id", "chunk_id", "origin_url")}
                             | {"n": n})
         return n, True
@@ -222,7 +222,8 @@ def shown_search(query: str, result: dict[str, Any], sources: Sources, *,
                 blocks.append(f"[{n}] {title} — shown above")
                 continue
             new += 1
-            head = f"[{n}] {title} ({h.get('lang') or '?'}) · {h.get('uid')}"
+            by = f" — {h['authors']}" if h.get("authors") else ""
+            head = f"[{n}] {title}{by} ({h.get('lang') or '?'}) · {h.get('uid')}"
             if h.get("trust_level") == "unverified":
                 head += " · unverified"
             editions = [f"{e.get('title')} ({e.get('lang')})" for e in (h.get("editions") or [])[:3]]
@@ -282,8 +283,8 @@ def compact(name: str, result: Any) -> Any:
         for lst in result.get("lists", []):
             hits = []
             for h in lst.get("hits", [])[:HITS_PER_LIST]:
-                hit = {k: h.get(k) for k in ("uid", "snapshot_id", "rank", "title", "lang", "trust_level",
-                                             "verified_on_use", "legs") if k in h}
+                hit = {k: h.get(k) for k in ("uid", "snapshot_id", "rank", "title", "authors", "lang",
+                                             "trust_level", "verified_on_use", "legs") if k in h}
                 if "text" in h:
                     hit["text"] = _trim(h.get("text"))
                 if h.get("origin_url"):
@@ -343,7 +344,7 @@ def slim(content: str) -> str:
         data = None
     if isinstance(data, dict) and isinstance(data.get("lists"), list):
         lists = [{"space_id": lst.get("space_id"),
-                  "hits": [{k: h[k] for k in ("uid", "title", "rank", "lang") if k in h}
+                  "hits": [{k: h[k] for k in ("uid", "title", "authors", "rank", "lang") if k in h}
                            for h in lst.get("hits", [])]} for lst in data["lists"]]
         return json.dumps({"lists": lists, "slimmed": "texts dropped to fit the context"},
                           ensure_ascii=False)

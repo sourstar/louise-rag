@@ -131,7 +131,7 @@ def result_of(collection, ctx: dict[str, Any], hit: dict[str, Any], rank: int, *
         "trust_level": ctx["trust_level"], "certification": ctx["certification"],
         "verified_on_use": verification,
         "producer_key": own_key if producer in (None, "local") else producer,
-        "title": hit.get("title"), "lang": hit.get("lang"),
+        "title": hit.get("title"), "authors": hit.get("authors"), "lang": hit.get("lang"),
         "figures": ctx["figures"], "reranked": reranked,
     }
     if ctx["red"]:
