@@ -609,3 +609,41 @@ Per collection:
 
 The rule harrier was held to (gutenberg-encoder-bakeoff.md, "The verdict
 rule") is reported beside the rows. The decision is the operator's.
+
+## The chat model: Nemotron in place of Qwen3-8B? (operator, 2026-11-03) — EVALUATING
+
+"Consider replacing the chat model with nemo equivalent, look for comparisons
+already available"; then "Evaluate both A and B".
+
+The chat model's jobs in Louise:
+- Ask's answers, streamed;
+- Ask's tool loop (`app/ask/chat.py`: `louise_search`, `louise_lookup`,
+  `louise_traverse`);
+- document summaries, map then reduce (`app/summarize.py`).
+
+| | model | Artificial Analysis Intelligence Index | size on the card | languages (card) |
+|---|---|---|---|---|
+| now | Qwen3-8B | 8 reasoning, 5 non-reasoning (Louise runs it non-reasoning) | ~5–9 GB | 119 |
+| **A** | NVIDIA-Nemotron-3.5-Lightning-30B-A3B (OpenMDW-1.1) | 24 | ~18 GB at Q4 | **6**: en, es, fr, de, it, ja |
+| **B** | NVIDIA-Nemotron-3.5-Bolt-E4B-4GB (OpenMDW-1.1, Gemma-4-E4B base) | not published yet | 4 GB | 34 |
+
+- The index numbers come from search-result snippets; artificialanalysis.ai
+  is not reachable from the agent session to read them first-hand.
+- No card compares with Qwen3-8B. Bolt-E4B's card (NVIDIA's harness, thinking
+  on) against Qwen3.5-4B: grounding GaRAGe 42.6 against 24.7, RAGTruth 77.6
+  against 75.6; tool calling BFCL-v3 68.5 against 71.0 and Tau2 55.1 against
+  75.1.
+
+**The evaluation:** `tools/measure/chat_eval.py`.
+- Ask's own loop for each model, on the 451 labelled queries in 18
+  languages (one-language-per-work.md).
+- Scored without an LLM judge: tool calls, failed calls, loops that hit the
+  bound, the answer in the query's language (the node's own deterministic
+  guess), and time.
+- Split into Lightning's six languages and the others.
+- A blind side-by-side sample for the operator to read, with the key kept
+  in a separate file.
+- Qwen3-8B is the reference row.
+- First, the engine checks: A's nemotron_h on SYCL, B's gemma4, the memory
+  beside wikidata's embedding, tokens/s. Run at night.
+
