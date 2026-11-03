@@ -117,6 +117,7 @@ report the interval, not just the point; measure at the depth the system uses
 - [ ] Numbers labelled measured / modelled / published
 - [ ] A difference CLASSIFIED: wrong (a bug — finite but unrelated, a NaN, a value outside its definition) or arithmetic order (valid last bits): only the first is reported upstream; the second is controlled, never filed (approved-encoders.md "Bugs against arithmetic order")
 - [ ] Written where it belongs
+- [ ] A PILOT read before the whole run: the first 3 items of every category (§12)
 
 ## 7. Added 2026-10-18 (the AMD peer)
 
@@ -242,3 +243,33 @@ it and we must be confident."
 
   P1–P5 on our engine are for embedding and T5; none of them was made to
   run a chat model.
+
+## 12. Added 2026-11-03 — a pilot before every whole run
+
+The operator, 2026-11-03: "Check the first 3 question/answer per test
+category one by one before launching a whole test that may produce
+garbage."
+
+That day showed why. A whole run produced:
+- a model whose answers were raw tool calls, in 17 of 20 questions;
+- a checker that was ~2–5 % precise;
+- rewrites that slowed every search 3×.
+
+Each was visible in the first few answers.
+
+- **Every whole run starts with a pilot:** the first 3 items of every
+  category (for chat_eval, every language), run on exactly the settings
+  of the whole run.
+- **The pilot is read one item at a time:** the question, the answer, the
+  sources it cites, the flags and the time. It is a reading, not a
+  score.
+- **The whole run starts only after the reading,** recorded with who read
+  it and what they found. chat_eval enforces this:
+  - `run --pilot 3` writes `runs/<name>/pilot-<tag>.md`;
+  - `pilot-ok --name --tag --by --note` records the reading;
+  - `run` without a recorded reading refuses.
+
+  The pilot's answers are kept, and the whole run resumes after them
+  (RULE 1).
+- **A defect in the pilot is fixed before the whole run**, never "noted
+  for the results".
