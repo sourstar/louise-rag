@@ -15,9 +15,11 @@ tools (`louise_search`, `louise_lookup`, `louise_traverse`). Run it inside the
 node's image, at night (operator), one model at a time.
 
 THE QUESTIONS are the 451 labelled queries of one-language-per-work.md, in 18
-languages. Six are Lightning's (en es fr de it ja); the others (el fi nl la
-eo hu no sv pl pt ru zh tl) show what happens outside them.
-`--per-lang` takes the first N of each language: a deterministic subset.
+languages. THE OPERATOR'S FIVE decide (2026-11-03: "As long as it answers
+correctly for english, italian, german, french and spanish I am good with it.
+Other users can use another chat model to fit their needs"): en it de fr es;
+the others show what happens outside them. `--per-lang` takes the first N of
+each language, `--langs` keeps only those named: a deterministic subset.
 
 WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
 - tool use: calls per answer, calls that failed (unknown tool, refused
@@ -55,16 +57,19 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_QUERIES = Path(__file__).with_name("one_language_queries.tsv")
-LIGHTNING_LANGS = frozenset({"en", "es", "fr", "de", "it", "ja"})
+OPERATOR_LANGS = frozenset({"en", "it", "de", "fr", "es"})
 
 
-def read_queries(path: Path, per_lang: int | None = None) -> list[dict[str, str]]:
+def read_queries(path: Path, per_lang: int | None = None,
+                 langs: frozenset[str] | None = None) -> list[dict[str, str]]:
     rows, seen = [], defaultdict(int)
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.split("\t")
         if len(parts) < 3 or not parts[2].strip():
             continue
         qid, lang, text = parts[0], parts[1], parts[2].strip()
+        if langs is not None and lang not in langs:
+            continue
         if per_lang is not None and seen[lang] >= per_lang:
             continue
         seen[lang] += 1
@@ -220,8 +225,8 @@ def score(out: Path) -> int:
     print("|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
-                  "Lightning's six": [r for r in rows if r["lang"] in LIGHTNING_LANGS],
-                  "the others": [r for r in rows if r["lang"] not in LIGHTNING_LANGS]}
+                  "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
+                  "the others": [r for r in rows if r["lang"] not in OPERATOR_LANGS]}
         for label, sub in parts.items():
             s = summary(sub)
             if not s["n"]:
@@ -277,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", required=True)
     p.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
     p.add_argument("--per-lang", type=int, default=None)
+    p.add_argument("--langs", default="", help="only these languages, e.g. en,it,de,fr,es")
     p.add_argument("--collections", default="")
     p.add_argument("--tag", default="", help="the configuration these answers run on "
                    "(e.g. opt0, opt-default+graph); score splits by it")
@@ -291,7 +297,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "run":
         cols = [c for c in a.collections.split(",") if c] or None
-        return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang),
+        langs = frozenset(l for l in a.langs.split(",") if l) or None
+        return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang, langs),
                    collections=cols, tag=a.tag, redo=a.redo)
     if a.cmd == "score":
         return score(a.out)

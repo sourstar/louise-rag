@@ -717,3 +717,33 @@ wiki-gutenberg)").
   - flash attention at head dim 256;
   - no thinking in the content, and no reasoning tokens spent (time per answer);
   - three greedy prompts for garbage.
+
+### The bar, and the Qwen versions (operator, 2026-11-03)
+
+"Evaluate also the other Qwen versions. As long as it answers correctly for
+english, italian, german, french and spanish I am good with it. Other users
+can use another chat model to fit their needs."
+
+**The bar is the operator's five:** en, it, de, fr, es (`chat_eval` `--langs`,
+scored as "the operator's five").
+- Correct means: the answer is in the question's language, the searches run
+  without tool errors, nothing fails or hits the round bound, and the blind
+  sample reads well.
+- The other 13 languages are reported, but do not decide.
+- The chat model is this node's choice. Another node names its own.
+
+**Candidates.** Every one runs on our stack: #270, #272, #273, #275, #278.
+- On the bench since the morning: Qwen3-8B (live), Bolt-E4B q4 and q8,
+  Qwen3.8-9B (Empero), Qwen3.5-9B q4, q4 + DFlash and q8.
+- Qwen's other versions, installed for the summary job anyway:
+  - Qwen3.6-35B-A3B (MoE, 3 B active);
+  - Qwen3.8-27B (dense).
+- Left out:
+  - Qwen3.6-27B: its successor 3.8-27B beats it on every row of Qwen's own card;
+  - Qwen3.5-27B and Qwen3.5-35B-A3B: superseded by 3.6 and 3.8;
+  - Qwen3.8-Flash-Next: 125 B, does not fit the card;
+  - Qwen3.8-4B and 2B: Empero distills, like the 9B.
+
+**The run:** `--langs en,it,de,fr,es --per-lang 10`, 50 questions a model. Among
+those that meet the bar, the faster one wins on warm seconds per answer. VRAM
+beside the embedder and the reranker is recorded too.
