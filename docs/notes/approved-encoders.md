@@ -179,6 +179,36 @@ The louise-python packages are renamed by what they run, `vega-louise-openvino`
 (was `-20261030`) and `vega-pytorch` (was `-20261021a`); their inner trees
 keep their names, so no run changes; `vega-llama-cpp-cpu` stays the CPU build.
 
+**Every live space passes on `16acc89` (München, 2026-11-03 00:32–03:16).**
+- Repro (`vega_repro_check`, 3 loads × 2): bge-m3, qwen3-embedding-4b and
+  medcpt-query each 528/528 texts bit-identical over 3,168 vectors.
+- Gates, all exact over 3 fresh loads, 0 of 512 below 0.995:
+  - on the new engine (f5258daa…): wikipedia, gutenberg (both sides),
+    wikidata, pubmed's query side;
+  - pubmed's document side and normattiva: on the renamed python packages,
+    with their runs unchanged (39f34b49…, 4f534ba3…), so the renames needed no
+    re-gate.
+- MADLAD on the engine directly: T4 379/379 and T3 626/626 identical to the
+  old engine (P3's slot), in-wave equal to alone 616/626, the P5 tar's counts.
+- **The long-text batch fault was the OLD engine's** (c0fd786 + P5). gut-diag
+  had found it: batch 16 answered gutenberg's five longest texts (7,885–8,929
+  tokens, cut at 8,191) at cosine 0.93–0.98 to the member, while each one
+  alone was right. On `16acc89` (louise-batchfault, 03:07–03:16), the set's 16
+  longest texts in one request, forward and reversed, with and without
+  `prompt_cache_all`, are byte-equal to one at a time: 0/16 for
+  qwen3-embedding-4b and 0/16 for nemotron ("passage: ").
+  - So it is neither slot reuse nor the prompt cache. Upstream fixed it
+    between c0fd786 and ddf48f8.
+  - Stored vectors were never at risk: production chunks are about 1,000
+    tokens (gutenberg p99 1,170), and below the longest five the batch was
+    byte-equal to one at a time (507/512).
+  - The gate's batch check keeps the 16 longest texts (`LONG_PROBE`), so a
+    return of the fault is caught per run.
+- The old installs (-p5, -up, -gen, -t5 and their engines, and the two old
+  python package names) are moved out of LocalAI's backends/ into
+  backends-retired-20261102. They are not deleted; the bytes go on the
+  operator's own yes, with the size.
+
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
