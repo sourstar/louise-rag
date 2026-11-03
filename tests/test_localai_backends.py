@@ -806,6 +806,21 @@ def test_every_staged_model_runs_on_one_of_our_backends_named_by_the_rule():
             f"{path.name}: {backend} is not named vega-louise-… (wrapped) or louise-… (not)"
 
 
+def test_command_r7b_stops_at_its_end_of_turn_marker_in_the_model_and_its_install():
+    """Measured 2026-11-03: on our engine an R7B answer asked without tools
+    ends with <|END_OF_TURN_TOKEN|> as text; the stop word removes it. The
+    staged model and the gallery body that installs it both carry it."""
+    stage = ROOT / "deploy" / "vega" / "stage"
+    for q in ("q8", "q4"):
+        model = stage / "models" / f"louise-chat-command-r7b-{q}.yaml"
+        body = json.loads("\n".join(l for l in model.read_text(encoding="utf-8").splitlines()
+                                    if not l.lstrip().startswith("#")))
+        install = json.loads((stage / "gallery" / f"louise-chat-command-r7b-{q}.json")
+                             .read_text(encoding="utf-8"))["overrides"]
+        for where, cfg in ((model.name, body), (f"gallery/{q}", install)):
+            assert "<|END_OF_TURN_TOKEN|>" in cfg.get("stopwords", []), f"{where}: no end-of-turn stop word"
+
+
 def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
     """deploy/vega/stage/models: what the node's LocalAI holds. A model on
     louise-python (or VeGa's wrapper of it) names one task, and every other

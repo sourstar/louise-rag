@@ -13,6 +13,11 @@
 # 16k context, seed 0. No thinking mode to switch off. Sampling: Ask sends its
 # own temperature per request; 0.3 here is Cohere's usual default (the
 # original card is gated and was not read).
+# STOPWORDS <|END_OF_TURN_TOKEN|> (measured 2026-11-03): on our engine (llama.cpp
+#   ddf48f8, no dedicated Command-R parser) an answer asked WITHOUT tools ends
+#   with the end-of-turn marker as text; the stop word removes it (same request,
+#   finish_reason stop either way). With tools, R7B's tool calls are not placed
+#   by the auto-parser (HTTP 500): Ask answers that round without tools (#303).
 {
   "name": "louise-chat-command-r7b-q8",
   "backend": "vega-louise-llama-cpp",
@@ -49,6 +54,9 @@
     "repeat_penalty": 1,
     "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf"
   },
+  "stopwords": [
+    "<|END_OF_TURN_TOKEN|>"
+  ],
   "template": {
     "use_tokenizer_template": true
   },

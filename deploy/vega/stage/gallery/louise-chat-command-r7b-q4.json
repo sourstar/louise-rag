@@ -43,6 +43,9 @@
       "repeat_penalty": 1,
       "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q4_K_M.gguf"
     },
+    "stopwords": [
+      "<|END_OF_TURN_TOKEN|>"
+    ],
     "template": {
       "use_tokenizer_template": true
     },
