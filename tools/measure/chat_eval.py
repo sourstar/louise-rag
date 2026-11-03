@@ -65,6 +65,12 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
   any run of digits — a spaCy NER would be the full method, and a name the
   answer translates (Marie-Antoinette, Maria Antonietta) counts against it,
   so the blind sample reads the flagged ones.
+- SAYS WHAT ITS SOURCES SAY (the walk of 2026-11-03: Qwen3-8B put the
+  question, pasted as a title, in a source's mouth): every sentence that
+  cites, its names, numbers and quoted spans looked up in the sources it
+  cites, the question left out — ALCE's citation precision (Gao et al.,
+  EMNLP 2023), at the level of entities. The blind sample lists each such
+  sentence under its answer.
 Quality beyond that is read, not scored: `sample` writes the same questions
 with each model's answer under a blind letter, and the key in a separate
 file.
@@ -126,7 +132,9 @@ def stated_facts(answer: str) -> tuple[list[str], list[str]]:
     """(names, numbers) an answer states, citations taken out. Numbers hold
     in every language; names are noisy in German, which capitalises every
     noun, so the two are counted apart."""
-    text = CITATION.sub(" ", answer or "")
+    from app.ask.chat import CITE_N
+    # both citation forms out: Ask's [n] would otherwise count as numbers stated
+    text = CITE_N.sub(" ", CITATION.sub(" ", answer or ""))
     names = sorted({m.group(1) for m in _NAME.finditer(text)})
     numbers = sorted({m.group(0).rstrip(".,") for m in _NUMBER.finditer(text)} - {""})
     return names, numbers
@@ -143,6 +151,66 @@ def unsupported(answer: str, question: str, turns: list[dict[str, Any]]) -> dict
     return {"names": len(names), "numbers": len(numbers),
             "added_names": [f for f in names if f.casefold() not in hay][:20],
             "added_numbers": [f for f in numbers if f.casefold() not in hay][:20]}
+
+
+#: a quoted span: what an answer gives as a title or as a source's words
+_QUOTED = re.compile(r"[«\"“„]([^«»\"“”„\n]{3,160})[»\"”“]")
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def citation_support(got: dict[str, Any], turns: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Does each sentence say only what the sources it cites say? ALCE's
+    citation precision (Gao et al., EMNLP 2023), at the level of entities as
+    `unsupported` (Nan et al.): a sentence that cites is supported when every
+    name, number and quoted span it states is in a source it cites. The
+    question does not count here, unlike `unsupported`: the walk of
+    2026-11-03 (München) had the question pasted as a title and put in
+    source [1]'s mouth, which a check against "the results or the question"
+    passes. None for an answer that does not say what its [n] are."""
+    from app.ask.chat import CITE_ID, CITE_N, _trim
+    sources = got.get("sources")
+    if sources is None:
+        return None
+    seen: dict[str, str] = {}
+    for t in turns:
+        if t.get("tool") != "louise_search" or not isinstance(t.get("result"), dict):
+            continue
+        for lst in t["result"].get("lists", []):
+            for h in lst.get("hits", []):
+                if isinstance(h.get("uid"), str):
+                    parts = [h.get("title"), h.get("authors"), _trim(h.get("text"))]
+                    parts += [e.get("title") for e in h.get("editions") or []]
+                    seen[h["uid"]] = seen.get(h["uid"], "") + " " + " ".join(str(x) for x in parts if x)
+    by_n = {e.get("n"): e.get("uid") for e in sources}
+    out: dict[str, Any] = {"sentences": 0, "supported": 0, "quotes": 0, "quotes_found": 0, "unsupported": []}
+    for sentence in _SENTENCES.split(got.get("answer") or ""):
+        ns = [int(x) for m in CITE_N.finditer(sentence) for x in re.findall(r"\d+", m.group(1))]
+        ids = CITE_ID.findall(sentence)
+        if not ns and not ids:
+            continue
+        hay = " ".join(seen.get(by_n.get(n) or "", "") for n in ns)
+        hay = (hay + " " + " ".join(seen.get(i, "") for i in ids)).casefold()
+        said = re.sub(r"\s+([.,;:!?])", r"\1", " ".join(CITE_ID.sub(" ", CITE_N.sub(" ", sentence)).split()))
+        names, numbers = stated_facts(said)
+        quotes = [q.strip() for q in _QUOTED.findall(said)]
+        missing = [e for e in quotes + names + numbers if e.casefold() not in hay]
+        out["sentences"] += 1
+        out["supported"] += not missing
+        out["quotes"] += len(quotes)
+        out["quotes_found"] += sum(1 for q in quotes if q.casefold() in hay)
+        if missing:
+            out["unsupported"].append({"sentence": said[:300], "missing": missing[:8]})
+    out["unsupported"] = out["unsupported"][:10]
+    return out
+
+
+def support_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows = [r for r in rows if isinstance(r.get("support"), dict) and not r.get("error")]
+    if not rows:
+        return None
+    total = {k: sum(r["support"][k] for r in rows) for k in ("sentences", "supported", "quotes", "quotes_found")}
+    return {"n": len(rows), **total,
+            "answers_misattributing": sum(1 for r in rows if r["support"]["unsupported"])}
 
 
 def search_hits(turns: list[dict[str, Any]]) -> list[list[str]]:
@@ -419,6 +487,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             returned = len(returned_uids([t.get("result") for t in turns]))
             searched = search_hits(turns)
             facts = unsupported(got.get("answer") or "", q["query"], turns)
+            support = citation_support(got, turns)
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
@@ -434,7 +503,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "rewrites": got.get("rewrites") or [],
                    "rewrite_s": got.get("rewrite_s"),
                    "cited_uids": cited_uids,
-                   "facts": facts,
+                   "facts": facts, "support": support,
                    # what the model sent Louise: each call's tool and arguments, as asked
                    "calls": [{"tool": t.get("tool"), "arguments": t.get("arguments"),
                               "by": t.get("by") or "model", "dropped": t.get("dropped") or [],
@@ -552,6 +621,20 @@ def score(out: Path, works: Path | None = None) -> int:
                   f"**{f['numbers_adding']}** | {f['names']} | {f['names_found']:.2f} | "
                   f"{f['names_adding']} |")
     print()
+    print("SAYS WHAT ITS SOURCES SAY: each sentence that cites, its names, numbers and quoted "
+          "spans looked up in the sources it cites, the question left out (ALCE's citation "
+          "precision, entity-level)\n")
+    print("| model | answers | sentences citing | supported | quoted spans | found in the cited source "
+          "| answers with a sentence its source does not support |")
+    print("|---|---|---|---|---|---|---|")
+    for name, rows in groups:
+        c = support_summary(rows)
+        if c is not None:
+            print(f"| {name} | {c['n']} | {c['sentences']} | "
+                  f"**{c['supported'] / c['sentences'] if c['sentences'] else 1.0:.2f}** | {c['quotes']} | "
+                  f"{c['quotes_found'] / c['quotes'] if c['quotes'] else 1.0:.2f} | "
+                  f"**{c['answers_misattributing']}** |")
+    print()
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
@@ -610,6 +693,9 @@ def sample(out: Path, runs: list[str], n: int = 30, seed: int = 0) -> int:
             if flagged:
                 # what the reader checks: stated, and found neither in the results nor the question
                 lines.append(f"*not in the results:* {', '.join(flagged)}\n")
+            for u in (row.get("support") or {}).get("unsupported", []):
+                # a sentence and what it states that the source it cites does not
+                lines.append(f"*not in its cited source:* {', '.join(u['missing'])} ← \"{u['sentence']}\"\n")
         key_lines.append(f"{i}: " + ", ".join(f"{l}={r}" for l, r in zip("ABCDEFG", order)))
     (out / "sample.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "sample-key.txt").write_text("\n".join(key_lines) + "\n", encoding="utf-8")
