@@ -787,3 +787,35 @@ knowledge?"
   reader to judge.
 - **The full method** would add spaCy NER, a new dependency; asked for if
   the names column decides.
+
+### Only Alibaba's Qwen, and the official 2–4B candidates (operator, 2026-11-03)
+
+"Delete all the qwen not from Alibaba": Empero's distills (Qwen3.8-9B, 4B, 2B,
+35B-A3B), JonathanColetti's uncensored 27B, UkisAI's Swift 27B and z-lab's
+DFlash drafter leave the stage. Qwen's own weights in a third party's GGUF
+(unsloth, bartowski) stay: same weights, a conversion. LocalAGI, the one user
+of the Empero 2B, now runs `louise-chat-qwen3-8b` (deploy/truenas-localagi.yaml).
+
+"Search around for official chat models at about 4b and 2b". Each one is
+published by its maker and is in LocalAI's gallery, except Phi-4-mini.
+Languages and licence are from the Hub card (2026-11-03):
+
+| model (gallery entry) | params | the five | tools | licence |
+|---|---|---|---|---|
+| Qwen3.5-4B (`qwen_qwen3.5-4b`, bartowski GGUF) | 4.7 B | yes (201 langs) | yes | Apache-2.0 |
+| Gemma 4 E4B (`gemma-4-e4b-it`, ggml-org; `-qat-q4_0`, Google's own) | 4 B effective, 8.0 B stored | yes (140+) | yes | Apache-2.0 |
+| Granite 4.2 3B (`granite-4.2-3b-q4/q8`, IBM's own GGUF) | 3.7 B | yes (12) | yes (`tool-calling` tag) | Apache-2.0 |
+| Ministral 3 3B (`mistralai_ministral-3-3b-instruct-2512-multimodal`, unsloth) | 3.8 B | yes (11) | yes | Apache-2.0 |
+| Phi-4-mini (not in the gallery) | 3.8 B | yes (23) | yes | MIT |
+| SmolLM3-3B (`huggingfacetb_smollm3-3b`) | 3.1 B | de not in the card's tags | yes | Apache-2.0 |
+| Llama 3.2 3B (`llama-3.2-3b-instruct:q8_0`) | 3.2 B | yes (8) | yes | Llama 3.2 licence (use policy, 700 M MAU) |
+| LFM2.5-2.6B (`lfm2.5-2.6b-q8`, Liquid's own) | 2.7 B | yes (16) | yes | LFM Open License (revenue cap) |
+| Qwen3.5-2B (`qwen_qwen3.5-2b`) | 2.3 B | yes | yes | Apache-2.0 |
+| Gemma 4 E2B (`gemma-4-e2b-it`, Q8) | 2 B effective, 5.1 B stored | yes | yes | Apache-2.0 |
+
+On the bench, Q8 first as for the 8–9 B tier: Qwen3.5-4B, Gemma 4 E4B, Granite
+4.2 3B, Ministral 3 3B; then Qwen3.5-2B and Gemma 4 E2B. Left out: Phi-4-mini
+(no gallery entry; added if the four fail), SmolLM3 (German unstated), Llama
+3.2 (2024, a restricted licence), LFM2.5 (a revenue-capped licence). The one
+small model measured so far, Empero's 2B, never called a tool (five2): tool
+use is the first cut at this size.
