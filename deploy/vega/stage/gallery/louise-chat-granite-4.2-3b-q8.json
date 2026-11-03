@@ -1,0 +1,49 @@
+{
+  "id": "localai@granite-4.2-3b-q8",
+  "name": "louise-chat-granite-4.2-3b-q8",
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "draft_model": "",
+    "function": {
+      "automatic_tool_parsing_fallback": true,
+      "grammar": {
+        "disable": true
+      }
+    },
+    "gpu_layers": 999,
+    "known_usecases": [
+      "chat"
+    ],
+    "mmap": true,
+    "mmproj": "",
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "seed": 0,
+      "batch": 2048,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "repeat_penalty": 1,
+      "model": "llama-cpp/models/granite-4.2-3b/granite-4.2-3b-Q8_0.gguf"
+    },
+    "template": {
+      "use_tokenizer_template": true
+    },
+    "threads": 6,
+    "reasoning_effort": "none",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  }
+}
