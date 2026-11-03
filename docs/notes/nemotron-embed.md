@@ -836,14 +836,11 @@ their calls):
 - The Empero 2B never called the tool (five2).
 
 **What changed** (app/ask/chat.py; 05 §5.4 amended):
-1. Rewrite-Retrieve-Read (Ma et al., EMNLP 2023). One short call
-   without tools asks the model for up to 3 searches: a described work's
-   title and author, in its own language and in English, else names and
-   key terms. The model's knowledge goes into the search, never into the
-   answer.
+1. ~~Rewrite-Retrieve-Read~~ (Ma et al., EMNLP 2023): asking the model
+   for the searches the question implies. Walked and REMOVED the same day
+   (below, "The walk").
 2. Louise searches first. The question runs as the Ask tab runs it,
-   with translations, at the same time as the rewrite call. The rewrites
-   run as written, side by side, and each adds at most 5 new sources.
+   with translations, before the model's first round.
 3. Numbered sources `[n]`, as on the Ask tab (the ALCE form). A record
    keeps its number every time it comes back. The answer carries
    `sources`, `cited` and `cited_unknown` (a number no search showed).
@@ -868,3 +865,33 @@ bartowski's conversions of Qwen's own weights.
 1. Tag `iface`, `--redo`, on the same 50 questions: qwen3-8b and
    qwen3.5-9b-q8, with the `direct` row as the reference.
 2. Then the six 2–4B models.
+
+### The walk (operator: "Ask a question, check the result, do not run before walking")
+
+München, 16:39, 95043ec, qwen3-8b, gutenberg. The work is WQ977055,
+Le Collier de la Reine. The gold is gutenberg:18199, 18200 and 20122.
+
+| | EN, the question verbatim | IT, the question verbatim |
+|---|---|---|
+| the model's rewrites | "The Diamond Necklace", "Le Collier de diamants": WRONG titles | "La Tour de Nesle": another Dumas work |
+| searches (4, side by side) | 22.3 / 20.0 / 13.3 / 23.1 s | 21.0 / 18.0 / 15.7 / 10.3 s |
+| the work among 23–25 sources | no | the Finnish edition (54229), not in the gold |
+| answer | "The Diamond Necklace", 1785, Cardinal de Rohan: from MEMORY, citing unrelated sources | names [20], the Finnish edition; invents nothing |
+
+**The skill walked by hand**, with an agent that knows the title:
+- The question verbatim missed it; the Finnish edition came at rank 8.
+- "Le Collier de la Reine Dumas" found 18199, 18200 and 20122 at ranks
+  1–3.
+
+**Read:**
+- A rewrite is only as good as the model's knowledge.
+- Qwen3-8B guessed wrong twice, and the wrong title became the answer.
+- The searches side by side cost ~23 s of wall time before the model.
+
+So the rewrite step is out:
+- a model that knows a title still searches for it with the tool, one
+  search at a time;
+- the system prompt now says, when no source is what was asked, to say
+  so and never to supply it from memory.
+
+The gold in works.json misses the translations, so "found" undercounts.

@@ -22,16 +22,18 @@ typed, never on the model; a 2B model never called the tool at all. So
 Louise does what it can do for any model, and asks the model only for what
 Louise cannot know:
 
-1. REWRITE-RETRIEVE-READ (Ma et al., EMNLP 2023, "Query Rewriting for
-   Retrieval-Augmented Large Language Models"; LangChain's
-   MultiQueryRetriever is the same step). One short call, no tools: the
-   searches the question implies — the title and author of a work it
-   describes, a name, key terms. The model's knowledge goes into the
-   SEARCH, never into the answer (`unsupported`, chat_eval, checks that).
-2. LOUISE SEARCHES FIRST, as the Ask tab does: the question as typed with
-   its translations (web._ask_result), while the model writes the
-   rewrites; then each rewrite as written (a title is searched in its own
-   language), side by side.
+1. LOUISE SEARCHES FIRST, as the Ask tab does: the question as typed with
+   its translations (web._ask_result), before the model's first round, so
+   a model that never calls a tool still answers from sources.
+2. NO MODEL REWRITE BEFORE IT (tried and walked 2026-11-03, removed the
+   same day). Rewrite-Retrieve-Read (Ma et al., EMNLP 2023) asked the model
+   for the searches the question implies. Walked on the node with Qwen3-8B
+   (München): its titles were wrong for both questions ("Le Collier de
+   diamants", "La Tour de Nesle" for Le Collier de la Reine), the wrong
+   title then became the answer, from memory, and the four searches side
+   by side took 10-23 s each against one another. A rewrite is only as good
+   as the model's knowledge; a model that knows the title still searches
+   for it with the tool (the system prompt says so), one search at a time.
 3. NUMBERED SOURCES, as the Ask tab's answer (retrieval.
    build_answer_messages; the form of the ALCE benchmark, Gao et al.,
    EMNLP 2023): every record shown is [n], the same n whenever it comes
@@ -47,8 +49,6 @@ unchanged: a client model there sees every parameter.
 """
 from __future__ import annotations
 
-import concurrent.futures
-import contextvars
 import json
 import re
 import time
@@ -64,27 +64,17 @@ TEXT_CHARS = 600            # of a result's text the model sees
 HITS_PER_LIST = 10
 SYSTEM = (
     "You are Louise, a research assistant over the collections this peer holds. Louise has already "
-    "searched the reader's question, and the works and names it implies: the numbered sources come with "
-    "the question. Answer from the sources, and cite each claim with its source's number in square "
+    "searched the reader's question: the numbered sources come with the question. Answer from the sources, and cite each claim with its source's number in square "
     "brackets, e.g. [2] or [2][5]; a fact from a reference source is cited by its id, e.g. [hgnc:1101]. "
     "When the sources do not answer, search again with `louise_search` — the work's title and author, "
     "other words, another language — and cite what it finds by its number. `louise_lookup` gives a fact "
     "by its canonical id (<namespace>:<id>); `louise_traverse` follows the declared relations from a "
     "record's uid. Use only what the sources say: never add a name, a date or a number they do not give, "
-    "never cite a number you were not shown, and never invent a record. Say plainly when nothing "
-    "answers, when a collection was withheld, and when the evidence is unverified."
+    "never cite a number you were not shown, and never invent a record. When no source is the work, the "
+    "person or the fact asked for, say that the collections searched do not show it and name the "
+    "closest sources; never supply it from memory. Say plainly when a collection was withheld and when "
+    "the evidence is unverified."
 )
-#: the rewrite step's own instruction (the module's point 1); `{k}` searches at most
-REWRITE_SYSTEM = (
-    "You write searches for a library that holds books, articles and records in many languages. Given a "
-    "reader's question, write at most {k} short searches that would find what it asks for, one per line "
-    "and nothing else: when it describes a work, the work's title and its author's name as published, in "
-    "the work's own language, and its English title; otherwise the names and key terms. Write only the "
-    "searches: no numbering, no quotes, no answer, no explanation."
-)
-#: searches the rewrite step may add, and the new sources each may bring
-REWRITES = 3
-REWRITE_HITS = 5
 
 
 class ChatError(CodexError):
@@ -203,25 +193,19 @@ class Sources:
 
 
 def shown_search(query: str, result: dict[str, Any], sources: Sources, *,
-                 new_at_most: int | None = None, translated: bool = True) -> str:
+                 translated: bool = True) -> str:
     """A search's answer as the model reads it: each hit as its source [n]
     (a record shown before, by its number alone), the reference facts by
-    their ids, and what was withheld. `new_at_most` keeps a search from
-    adding more than that many new sources."""
+    their ids, and what was withheld."""
     said = f"Search: «{query}»" + (" and its translations" if translated else "")
     blocks = [said]
-    new = 0
     for lst in result.get("lists", []):
         for h in lst.get("hits", [])[:HITS_PER_LIST]:
-            key = str(h.get("uid") or h.get("chunk_id") or h.get("title") or "")
-            if new_at_most is not None and key not in sources._n and new >= new_at_most:
-                continue
             n, fresh = sources.number(h)
             title = h.get("title") or h.get("uid") or "?"
             if not fresh:
                 blocks.append(f"[{n}] {title} — shown above")
                 continue
-            new += 1
             by = f" — {h['authors']}" if h.get("authors") else ""
             head = f"[{n}] {title}{by} ({h.get('lang') or '?'}) · {h.get('uid')}"
             if h.get("trust_level") == "unverified":
@@ -249,23 +233,6 @@ def shown_search(query: str, result: dict[str, Any], sources: Sources, *,
     if result.get("unresolved"):
         blocks.append("No reference row for: " + ", ".join(map(str, result["unresolved"])))
     return "\n\n".join(blocks)
-
-
-def rewrites_of(content: str, question: str, k: int = REWRITES) -> list[str]:
-    """The searches a rewrite answer names, one per line, at most `k`: a
-    list's bullets and numbers, quotes and headings taken off; the question
-    itself and repeats left out."""
-    out: list[str] = []
-    for line in (content or "").splitlines():
-        s = re.sub(r"^\s*(?:[-*•]+|\d+[.):])\s*", "", line).strip().strip("\"'“”«»`").strip()
-        if not s or s.endswith(":") or len(s) > 160:
-            continue
-        if s.casefold() == question.strip().casefold() or s.casefold() in {o.casefold() for o in out}:
-            continue
-        out.append(s)
-        if len(out) == k:
-            break
-    return out
 
 
 def _trim(text: Any) -> Any:
@@ -411,27 +378,19 @@ def _searched(call: Callable[[str, dict[str, Any]], Any], args: dict[str, Any], 
             "seconds": round(time.monotonic() - t0, 3)}
 
 
-def _submit(pool: concurrent.futures.ThreadPoolExecutor, fn, *args) -> concurrent.futures.Future:
-    """`fn(*args)` on a pool thread in a copy of THIS thread's context, taken
-    here before the hand-over, so the reader's cancel token (app/cancel.py)
-    and the rerank's reasons (retrieval.py) go with the search."""
-    return pool.submit(contextvars.copy_context().run, fn, *args)
-
-
 def ask(question: str, *, collections: list[str] | None = None, history: list[dict[str, Any]] | None = None,
         call: Callable[[str, dict[str, Any]], Any] | None = None, model=None,
         max_rounds: int = MAX_ROUNDS, answer_lang: str | None = None) -> dict[str, Any]:
     """One question through the loop: `{answer, sources, cited, cited_unknown,
-    rewrites, turns: [{tool, arguments, by, result, error, seconds}], rounds,
-    exhausted, model_s, rewrite_s}`. `model(messages, tools) -> (content,
+    turns: [{tool, arguments, by, result, error, seconds}], rounds,
+    exhausted, model_s}`. `model(messages, tools) -> (content,
     calls, assistant_message)` is llm.chat_tools unless a test gives another;
     `call(name, args)` is the MCP dispatcher.
 
-    First Louise's searches (the module's points 1-2): the question with its
-    translations, beside the rewrite call, then the rewrites. Then the
-    model's rounds, the sources with the question, the tools offered.
-    `model_s` is each model round's wall time, `rewrite_s` the rewrite's,
-    and `seconds` each search's, so where an answer's time went is read off
+    First Louise's search (the module's point 1): the question with its
+    translations. Then the model's rounds, the sources with the question,
+    the tools offered. `model_s` is each model round's wall time and
+    `seconds` each search's, so where an answer's time went is read off
     the answer itself (tools/measure/chat_eval.py; operator, 2026-11-03:
     "Use the chat comparison benchmark to work on the optimizations")."""
     from app import config, llm
@@ -452,25 +411,9 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
             if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
     scope = {"collections": list(collections)} if collections else {}
 
-    # Louise's searches: the question as the Ask tab searches it, beside the
-    # rewrite call; then the rewrites, side by side
-    turns: list[dict[str, Any]] = []
-    rewrites: list[str] = []
-    rewrite_s: float | None = None
-    with concurrent.futures.ThreadPoolExecutor(max_workers=REWRITES + 1,
-                                               thread_name_prefix="ask-search") as pool:
-        typed = _submit(pool, _searched, call, {"query": question, "translate": True, **scope}, "louise")
-        t0 = time.monotonic()
-        try:
-            content, _, _ = model([{"role": "system", "content": REWRITE_SYSTEM.format(k=REWRITES)},
-                                   *past[-4:], {"role": "user", "content": question}], None)
-            rewrites = rewrites_of(content, question)
-        except (httpx.HTTPError, ValueError):
-            rewrites = []     # no rewrite: the question as typed is searched all the same
-        rewrite_s = round(time.monotonic() - t0, 3)
-        more = [_submit(pool, _searched, call, {"query": r, "translate": False, **scope}, "louise:rewrite")
-                for r in rewrites]
-        turns = [typed.result()] + [f.result() for f in more]
+    # Louise's search: the question as the Ask tab searches it
+    turns: list[dict[str, Any]] = [
+        _searched(call, {"query": question, "translate": True, **scope}, "louise")]
 
     sources = Sources()
     blocks = []
@@ -479,9 +422,7 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
         if t["error"]:
             blocks.append(f"Search: «{q}» refused: {t['error']}")
         else:
-            blocks.append(shown_search(q, t["result"] or {}, sources,
-                                       new_at_most=None if t["by"] == "louise" else REWRITE_HITS,
-                                       translated=translated))
+            blocks.append(shown_search(q, t["result"] or {}, sources, translated=translated))
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *past,
                                       {"role": "user", "content": "Sources:\n\n" + "\n\n---\n\n".join(blocks)
                                        + f"\n\nQuestion: {question}"}]
@@ -512,8 +453,8 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     def done(content: str, rounds: int, exhausted: bool) -> dict[str, Any]:
         cited, unknown = sources.cited(content)
         return {"answer": content, "sources": sources.entries, "cited": cited, "cited_unknown": unknown,
-                "rewrites": rewrites, "turns": turns, "rounds": rounds, "exhausted": exhausted,
-                "model_s": model_s, "rewrite_s": rewrite_s, "answer_lang": lang, "slimmed": slimmed}
+                "turns": turns, "rounds": rounds, "exhausted": exhausted,
+                "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
 
     def answer_with_what_it_has(rounds: int) -> dict[str, Any]:
         """A request the server refused as too large: every tool answer

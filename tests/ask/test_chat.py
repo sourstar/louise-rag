@@ -28,16 +28,11 @@ def chat_model(monkeypatch):
     monkeypatch.setattr(config, "CHAT_URL", "http://chat")
 
 
-def scripted(*rounds, rewrite=""):
-    """A model that answers each round from the script and records what it
-    saw; the rewrite call (no tools, its own instruction) answers `rewrite`
-    and is recorded apart."""
-    seen, rewrites = [], []
+def scripted(*rounds):
+    """A model that answers each round from the script and records what it saw."""
+    seen = []
 
     def model(messages, tools):
-        if messages[0]["content"].startswith("You write searches"):
-            rewrites.append(list(messages))
-            return rewrite, [], {"role": "assistant", "content": rewrite}
         seen.append((list(messages), tools))
         content, calls = rounds[min(len(seen), len(rounds)) - 1]
         assistant = {"role": "assistant", "content": content}
@@ -45,58 +40,45 @@ def scripted(*rounds, rewrite=""):
             assistant["tool_calls"] = [{"function": {"name": c.name, "arguments": c.arguments}} for c in calls]
         return content, calls, assistant
     model.seen = seen
-    model.rewrites = rewrites
     return model
 
 
-def test_louise_searches_the_question_and_its_rewrites_first_and_the_answer_cites_by_number(chat_model):
+def test_louise_searches_the_question_first_and_the_answer_cites_by_number(chat_model):
     """The operator, 2026-11-03: "fix the way any model interfaces with
-    louise". München's five3: Qwen3-8B sent the question verbatim, once,
-    and never searched again. Louise searches it as the Ask tab does, and the
-    titles the model names, before the model answers."""
-    model = scripted(("Dumas wrote it [1][3]; see also [9].", []),
-                     rewrite="Searches:\n1. Le Collier de la Reine Alexandre Dumas\n- \"The Queen's Necklace\"\n"
-                             "Le collier de la reine alexandre dumas\nwho wrote the necklace novel?")
+    louise". München's five3: Qwen3-8B sent the question verbatim, once.
+    Louise searches it as the Ask tab does before the model answers, and
+    asks the model for nothing before that (the rewrite step was walked and
+    removed: chat.py's point 2)."""
+    model = scripted(("Ahab [1]; see also [9].", []))
     called = []
 
     def call(name, args):
         called.append((name, args))
-        if args["query"] == "The Queen's Necklace":
-            return {"lists": [{"hits": [{"uid": "gutenberg:2701", "title": "Moby Dick", "lang": "en",
-                                         "text": "again"},
-                                        {"uid": "gutenberg:2759", "title": "The Queen's Necklace", "lang": "en",
-                                         "text": "Cagliostro"}]}]}
         return SEARCH_RESULT
-    out = chat.ask("who wrote the necklace novel?", collections=["gutenberg"], call=call, model=model,
+    out = chat.ask("who hunts the whale?", collections=["gutenberg"], call=call, model=model,
                    history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"},
                             {"role": "tool", "content": "never replayed"}])
-    assert out["rewrites"] == ["Le Collier de la Reine Alexandre Dumas", "The Queen's Necklace"], \
-        "numbering, quotes, headings, repeats and the question itself taken off"
-    assert sorted(called, key=lambda c: c[1]["query"]) == sorted([
-        ("louise_search", {"query": "who wrote the necklace novel?", "translate": True, "collections": ["gutenberg"]}),
-        ("louise_search", {"query": "Le Collier de la Reine Alexandre Dumas", "translate": False,
-                           "collections": ["gutenberg"]}),
-        ("louise_search", {"query": "The Queen's Necklace", "translate": False, "collections": ["gutenberg"]})],
-        key=lambda c: c[1]["query"]), "the question translated as on the Ask tab; a title searched as written"
-    assert [t["by"] for t in out["turns"]] == ["louise", "louise:rewrite", "louise:rewrite"]
-    assert out["rounds"] == 1 and not out["exhausted"] and out["answer"].startswith("Dumas wrote it")
-    assert [s["uid"] for s in out["sources"]] == ["gutenberg:2701", "pubmed:1", "gutenberg:2759"]
-    assert out["cited"] == [{"n": 1, "uid": "gutenberg:2701", "title": "Moby Dick"},
-                            {"n": 3, "uid": "gutenberg:2759", "title": "The Queen's Necklace"}]
+    assert called == [("louise_search", {"query": "who hunts the whale?", "translate": True,
+                                         "collections": ["gutenberg"]})], "as on the Ask tab, once"
+    assert len(model.seen) == 1, "no call to the model before the answer"
+    assert [t["by"] for t in out["turns"]] == ["louise"]
+    assert out["rounds"] == 1 and not out["exhausted"] and out["answer"].startswith("Ahab")
+    assert [s["uid"] for s in out["sources"]] == ["gutenberg:2701", "pubmed:1"]
+    assert out["cited"] == [{"n": 1, "uid": "gutenberg:2701", "title": "Moby Dick"}]
     assert out["cited_unknown"] == ["[9]"], "a number never shown is said, not resolved"
     first, tools = model.seen[0]
-    assert first[0]["role"] == "system" and "[2][5]" in first[0]["content"] and "gutenberg" in first[0]["content"]
+    system = first[0]["content"]
+    assert first[0]["role"] == "system" and "[2][5]" in system and "gutenberg" in system
+    assert "never supply it from memory" in system, "the walk: a title the sources lack became the answer"
     assert [m["role"] for m in first[1:]] == ["user", "assistant", "user"], "history kept, a tool message not replayed"
     asked = first[-1]["content"]
-    assert asked.startswith("Sources:") and asked.endswith("Question: who wrote the necklace novel?")
-    assert "Search: «who wrote the necklace novel?» and its translations\n\n[1] Moby Dick (en) · gutenberg:2701" in asked
-    assert "[1] Moby Dick — shown above" in asked and "[3] The Queen's Necklace (en) · gutenberg:2759\nCagliostro" in asked
+    assert asked.startswith("Sources:") and asked.endswith("Question: who hunts the whale?")
+    assert "Search: «who hunts the whale?» and its translations\n\n[1] Moby Dick (en) · gutenberg:2701" in asked
     assert "· unverified\n(the text is not shown here; the origin: https://pubmed.ncbi.nlm.nih.gov/1/)" in asked, \
         "red: the origin's page, as 05 §5.3 says"
     assert ("x" * chat.TEXT_CHARS + " …") in asked and "x" * (chat.TEXT_CHARS + 1) not in asked, "the text trimmed"
     assert "Withheld here: x (quarantine)" in asked and "sha256:" not in asked, "no ids the model cannot use"
     assert [t["function"]["name"] for t in tools] == ["louise_search", "louise_lookup", "louise_traverse"]
-    assert model.rewrites[0][-1] == {"role": "user", "content": "who wrote the necklace novel?"}
 
 
 def test_the_model_says_only_what_it_can_know(chat_model):
@@ -115,31 +97,13 @@ def test_the_model_says_only_what_it_can_know(chat_model):
     assert out["turns"][-1]["by"] == "model" and out["turns"][-1]["dropped"] == ["limit", "space", "translate"]
 
 
-def test_a_search_adds_at_most_its_share_and_a_record_keeps_its_number(chat_model):
-    """Each rewrite brings at most REWRITE_HITS new sources; a record found
-    again is its number, not its text again."""
-    model = scripted(("", [llm.ToolCall(None, "louise_search", {"query": "more"})]), ("ok [12]", []),
-                     rewrite="a\nb")
-    out = chat.ask("q", call=lambda n, a: _big_search(0 if a["query"] in ("q", "more") else ord(a["query"])),
-                   model=model)
-    by = [t["by"] for t in out["turns"]]
-    assert by == ["louise", "louise:rewrite", "louise:rewrite", "model"]
-    assert len(out["sources"]) == 10 + 2 * chat.REWRITE_HITS
-    shown = model.seen[1][0][-1]["content"]
-    assert shown.count("— shown above") == 10, "the model's search found the question's ten again"
-    assert out["cited"] == [{"n": 12, "uid": "gutenberg:971", "title": "Book 1"}]
-
-
-def test_a_rewrite_that_fails_leaves_the_question_searched(chat_model):
-    import httpx
-
-    def model(messages, tools):
-        if messages[0]["content"].startswith("You write searches"):
-            raise httpx.ConnectError("down")
-        return "From [1].", [], {"role": "assistant", "content": "From [1]."}
-    out = chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=model)
-    assert out["rewrites"] == [] and [t["by"] for t in out["turns"]] == ["louise"]
-    assert out["cited"][0]["uid"] == "gutenberg:2701"
+def test_a_record_found_again_keeps_its_number(chat_model):
+    """A record a later search finds again is its number, not its text again."""
+    model = scripted(("", [llm.ToolCall(None, "louise_search", {"query": "more"})]), ("ok [3]", []))
+    out = chat.ask("q", call=lambda n, a: _big_search(0), model=model)
+    assert [t["by"] for t in out["turns"]] == ["louise", "model"] and len(out["sources"]) == 10
+    assert model.seen[1][0][-1]["content"].count("— shown above") == 10
+    assert out["cited"] == [{"n": 3, "uid": "gutenberg:02", "title": "Book 2"}]
 
 
 def test_citations_read_every_form_the_models_write():
@@ -269,13 +233,12 @@ def test_openai_tool_calls_round_trip(fake_chat, monkeypatch):
 
 
 def test_an_answer_says_where_its_time_went(chat_model):
-    """Each model round's wall time, the rewrite's and each search's, on the
+    """Each model round's wall time and each search's, on the
     answer (tools/measure/chat_eval.py reads them; operator, 2026-11-03)."""
     lookup = llm.ToolCall("c1", "louise_lookup", {"id": "hgnc:1101"})
     model = scripted(("", [lookup]), ("", [lookup]), ("13q13.1.", []))
     out = chat.ask("where is BRCA2?", call=lambda n, a: {"rows": []}, model=model, max_rounds=1)
     assert out["exhausted"] and len(out["model_s"]) == 2, "the bound's last round is timed too"
-    assert isinstance(out["rewrite_s"], float)
     assert all(isinstance(t["seconds"], float) for t in out["turns"]) and len(out["turns"]) == 2
 
 
@@ -348,8 +311,6 @@ def test_a_request_the_server_refuses_as_too_large_is_answered_with_what_it_has(
     calls = []
 
     def model(messages, tools):
-        if messages[0]["content"].startswith("You write searches"):
-            return "", [], {}
         calls.append(tools)
         if len(calls) == 2:
             raise httpx.HTTPStatusError("400", request=httpx.Request("POST", "http://x"),
@@ -374,24 +335,10 @@ def test_any_other_refusal_is_raised_not_answered_around(chat_model, text):
     import httpx
 
     def model(messages, tools):
-        if messages[0]["content"].startswith("You write searches"):
-            return "", [], {}
         raise httpx.HTTPStatusError("400", request=httpx.Request("POST", "http://x"),
                                     response=httpx.Response(400, text=text))
     with pytest.raises(httpx.HTTPStatusError):
         chat.ask("q", call=lambda n, a: _big_search(0), model=model)
-
-
-def test_louise_s_searches_run_in_the_asking_thread_s_context(chat_model):
-    """The searches run on pool threads; the reader's cancel token
-    (app/cancel.py) and every other context variable go with them."""
-    import contextvars
-    var = contextvars.ContextVar("test_var", default=None)
-    var.set("the reader's")
-    seen = []
-    model = scripted(("ok", []), rewrite="a title")
-    chat.ask("q", call=lambda n, a: seen.append(var.get()) or {"lists": []}, model=model)
-    assert seen == ["the reader's", "the reader's"]
 
 
 def test_the_model_reads_who_wrote_each_source(chat_model):

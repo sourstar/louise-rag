@@ -546,10 +546,8 @@ directions, restricted to one relation type when `relation` is given,
 (07 §7.3) and the HTTP routes (07 §7.4) return the same objects.
 
 *Amended 2026-11-03* (operator: "fix the way any model interfaces with
-louise"). `ask chat` searches before its model answers. It runs the
-question as typed, with its translations, and the searches the model
-names for it in one call without tools: the title and author of a work
-the question describes, a name, key terms (Rewrite-Retrieve-Read). The
+louise"). `ask chat` searches before its model answers: it runs the
+question as typed, with its translations, as the Ask page does. The
 model gets the results as numbered sources and cites them `[n]`; the
 answer says what each `n` is. Its model is offered the three tools with
 only the parameters it can know: `query` and `collections`; `id`;
