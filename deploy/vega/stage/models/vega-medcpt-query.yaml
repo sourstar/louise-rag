@@ -1,5 +1,5 @@
 {
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 513,
   "embeddings": true,
   "env": {

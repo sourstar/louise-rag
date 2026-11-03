@@ -16,7 +16,7 @@ vw = load_wrapper()
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = sorted((ROOT / "deploy" / "localai-nvidia" / "models").glob("*.yaml"))
 #: the real backend behind each YAML's `backend` (README.md, steps 2, 4, 5)
-REAL = {"vega-llama-cpp": "cuda13-llama-cpp", "cuda13-llama-cpp": "cuda13-llama-cpp",
+REAL = {"vega-louise-llama-cpp": "cuda13-llama-cpp", "cuda13-llama-cpp": "cuda13-llama-cpp",
         "vega-louise-python": "louise-python"}
 
 

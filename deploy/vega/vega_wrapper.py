@@ -97,7 +97,7 @@ def loads_an_embedder(pb: Any, raw: bytes) -> bool:
     model or a reranker on the same package is passed through untouched — the
     probe killed a chat model's child (approved-encoders.md), which is why a
     second `cuts: context_size` package (`vega-llama-cpp-gen`) once existed
-    (operator, 2026-11-02: one vega-llama-cpp). Options that do not parse are
+    (operator, 2026-11-02: one vega-llama-cpp, named vega-louise-llama-cpp since 11-03). Options that do not parse are
     an embedder's, as before this check."""
     try:
         opts = pb.ModelOptions.FromString(raw)

@@ -3,7 +3,7 @@
 # (LocalAI: "json: unsupported value: NaN", HTTP 500), not reproducibly: kept as
 # /root/louise-rerank-bge.yaml.fast-NaN-20261021, not in use.
 {
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 2560,
   "embeddings": true,
   "env": {

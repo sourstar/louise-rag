@@ -17,9 +17,9 @@ COLLECTIONS = [
 ]
 
 SYSTEM = {"loaded_models": [
-    {"id": "vega-qwen3", "backend": "vega-llama-cpp", "size_vram": 9 * GIB},
+    {"id": "vega-qwen3", "backend": "vega-louise-llama-cpp", "size_vram": 9 * GIB},
     {"id": "vega-article", "backend": "vega-louise-medcpt-article-ov", "size_vram": GIB // 2},
-    {"id": "vega-query", "backend": "vega-llama-cpp", "size_vram": GIB // 2},
+    {"id": "vega-query", "backend": "vega-louise-llama-cpp", "size_vram": GIB // 2},
     {"id": "louise-rerank-bge", "backend": "intel-sycl-f16-llama-cpp", "size_vram": GIB},
     {"id": "flux-dev", "backend": "stablediffusion-ggml", "size_vram": 6 * GIB},
 ]}

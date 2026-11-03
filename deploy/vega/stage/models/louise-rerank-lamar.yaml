@@ -5,7 +5,7 @@
 # Weights converted here with llama.cpp's convert_hf_to_gguf.py (f16), never a
 # community GGUF unchecked (§13). Not in any collection file until campaign run 6.
 {
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 2560,
   "embeddings": true,
   "env": {

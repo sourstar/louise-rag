@@ -494,3 +494,20 @@ def test_an_unreadable_saved_cursor_starts_the_seed_over(collection, announced):
     windows = _windows(con)
     genesis._candidate_shards(con, collection)
     assert "rowid>0 " in windows[0], windows
+
+
+def test_the_time_left_is_read_off_the_wall_not_the_reading(collection, announced, monkeypatch,
+                                                            capsys):
+    """The rounds pace the seed (one window a round), so a window that reads
+    in ~0 s still takes the round's time: 08:05's line said "~0.0 h" for a
+    seed that took an hour."""
+    monkeypatch.setattr(genesis, "_SEED_WINDOW", 1)
+    monkeypatch.setattr(genesis, "_SEED_REPORT", 2)
+    clock = [1000.0]
+    monkeypatch.setattr(genesis.time, "monotonic", lambda: clock[0])
+    con = db.connect(collection)
+    for _ in range(2):
+        genesis._candidate_shards(con, collection)
+        clock[0] += 3.0                    # a round between windows, no reading
+    line = [l for l in capsys.readouterr().out.splitlines() if "window 2 of" in l][0]
+    assert "1.5 s a window (0.00 s reading)" in line, line

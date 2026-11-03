@@ -12,7 +12,7 @@
 #   docker build -t louise-rag:local .                          # VeGa's image
 #   the weights, byte-identical to the node's, under LOUISE_WEIGHTS
 #     (llama-embed/, granite/, bge-m3/, chat/ — the node's /mnt/ssd5/apps/models)
-#   the vega-llama-cpp package into the backends volume (README.md here)
+#   the vega-louise-llama-cpp package into the backends volume (README.md here)
 #   LOUISE_WEIGHTS=C:/Users/<you>/louise-peer2/weights \
 #     docker compose -f deploy/localai-desktop/compose.yaml up -d
 #
@@ -74,10 +74,10 @@ services:
         source: localai-backends
         target: /run/vega
         volume:
-          subpath: vega-llama-cpp/run
+          subpath: vega-louise-llama-cpp/run
       - vega-state:/state
 
 volumes:
   localai-backends:
-    name: localai_backends     # where rocm-llama-cpp and vega-llama-cpp are installed
+    name: localai_backends     # where rocm-llama-cpp and vega-louise-llama-cpp are installed
   vega-state:

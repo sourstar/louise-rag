@@ -281,7 +281,7 @@ def test_an_unrelated_method_is_forwarded_as_bytes(make_node):
     ({"Embeddings": True, "Reranking": True}, False),
 ], ids=["embedder", "generation", "reranker"])
 def test_one_package_serves_embedders_generation_models_and_rerankers(make_node, extra, embedder):
-    """One vega-llama-cpp for every llama.cpp model (operator, 2026-11-02):
+    """One vega-louise-llama-cpp for every llama.cpp model (operator, 2026-11-02):
     on the `tokenizer` package only an embedder's load is probed (an
     Embedding and a TokenizeString call); a generation model's or a
     reranker's gets no call at all — the probe killed a chat model's child,

@@ -770,10 +770,14 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
                 save = (cursor, True)
             elif w.windows % _SEED_REPORT == 0:
                 total, at = -(-top // _SEED_WINDOW), cursor // _SEED_WINDOW
-                mean = w.read_s / w.windows
+                # the time left from the WALL time a window has taken: the seed
+                # moves at most one window a round, so the rounds pace it, not
+                # only its 5 % (München, 08:05: 0.00 s reading, 3.2 s a window)
+                wall = (time.monotonic() - w.started) / w.windows
                 said = (f"archive demand seed: window {at:,} of {total:,} (rowid {cursor:,}), "
-                        f"{mean:.2f} s reading a window, ~{(total - at) * mean / _SEED_DUTY / 3600:.1f} h "
-                        f"to the end at {_SEED_DUTY:.0%}, {len(w.demand)} shard(s) demanded")
+                        f"{wall:.1f} s a window ({w.read_s / w.windows:.2f} s reading), "
+                        f"~{(total - at) * wall / 60:,.0f} min to the end, "
+                        f"{len(w.demand)} shard(s) demanded")
                 save = (cursor, False)
             w.next_at = time.monotonic() + took * (1.0 / _SEED_DUTY - 1.0)
         result = list(w.demand.values())
