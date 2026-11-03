@@ -46,6 +46,18 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
     often did its searches find the work and the answer leave it out;
   - citations: cited per answer, grounded, citing nothing though results came
     back (above).
+- ADDS OR DISTORTS (operator, the same day: "is it adding some additional
+  information or distorting an information from the collection, overlapping
+  basically its own knowledge?"): entity-level factual consistency (Nan et
+  al., EACL 2021, "Entity-level Factual Consistency of Abstractive Text
+  Summarization": the precision of the summary's entities against its
+  source). Every name and number the answer states is looked up in what its
+  tools showed the model (chat.compact, the text it read) and in the
+  question; one found in neither came from the model's own knowledge or is
+  a distortion. Names are capitalised words not opening a sentence, numbers
+  any run of digits — a spaCy NER would be the full method, and a name the
+  answer translates (Marie-Antoinette, Maria Antonietta) counts against it,
+  so the blind sample reads the flagged ones.
 Quality beyond that is read, not scored: `sample` writes the same questions
 with each model's answer under a blind letter, and the key in a separate
 file.
@@ -96,6 +108,35 @@ def returned_uids(value: Any) -> set[str]:
     return out
 
 
+#: a name: a capitalised word (any script with case) not opening a sentence;
+#: a number: a run of digits
+_NAME = re.compile(r"(?<![.!?:\n]\s)(?<!^)\b([A-ZÀ-ÖØ-ÞĀ-ſ][\w'’-]{2,})", re.UNICODE)
+_NUMBER = re.compile(r"\b\d[\d.,]*\d\b|\b\d\b")
+
+
+def stated_facts(answer: str) -> tuple[list[str], list[str]]:
+    """(names, numbers) an answer states, citations taken out. Numbers hold
+    in every language; names are noisy in German, which capitalises every
+    noun, so the two are counted apart."""
+    text = CITATION.sub(" ", answer or "")
+    names = sorted({m.group(1) for m in _NAME.finditer(text)})
+    numbers = sorted({m.group(0).rstrip(".,") for m in _NUMBER.finditer(text)} - {""})
+    return names, numbers
+
+
+def unsupported(answer: str, question: str, turns: list[dict[str, Any]]) -> dict[str, Any]:
+    """The names and numbers stated, and those found neither in what the
+    tools showed the model nor in the question: what it added or distorted."""
+    from app.ask.chat import compact
+    seen = " ".join(json.dumps(compact(t.get("tool", ""), t.get("result")), ensure_ascii=False,
+                               default=str) for t in turns if t.get("result") is not None)
+    hay = (seen + " " + (question or "")).casefold()
+    names, numbers = stated_facts(answer)
+    return {"names": len(names), "numbers": len(numbers),
+            "added_names": [f for f in names if f.casefold() not in hay][:20],
+            "added_numbers": [f for f in numbers if f.casefold() not in hay][:20]}
+
+
 def search_hits(turns: list[dict[str, Any]]) -> list[list[str]]:
     """Each louise_search call's hits in rank order, as uids: what the model's
     own queries brought back from Louise."""
@@ -138,6 +179,23 @@ def conveyed(rows: list[dict[str, Any]], works: dict[str, set[str]]) -> dict[str
         left_out += hit and not right
     return {"n": n, "found": found, "mrr": rr / n if n else 0.0, "cited_right": cited,
             "left_out": left_out}
+
+
+def faithfulness(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Over the rows that recorded it: the facts stated, the share found in
+    the results or the question, and the answers stating at least one fact
+    found in neither. None for rows asked before it existed."""
+    rows = [r for r in rows if isinstance(r.get("facts"), dict) and not r.get("error")]
+    if not rows:
+        return None
+    out: dict[str, Any] = {"n": len(rows)}
+    for kind in ("numbers", "names"):
+        stated = sum(r["facts"][kind] for r in rows)
+        added = sum(len(r["facts"]["added_" + kind]) for r in rows)
+        out[kind] = stated
+        out[kind + "_found"] = (stated - added) / stated if stated else 1.0
+        out[kind + "_adding"] = sum(1 for r in rows if r["facts"]["added_" + kind])
+    return out
 
 
 def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, Any]]:
@@ -251,6 +309,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             cited, grounded = citations(got.get("answer") or "", turns)
             returned = len(returned_uids([t.get("result") for t in turns]))
             searched = search_hits(turns)
+            facts = unsupported(got.get("answer") or "", q["query"], turns)
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
@@ -263,7 +322,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "cited": cited, "grounded": grounded, "no_tool": not turns,
                    "returned": returned, "slimmed": got.get("slimmed", 0),
                    "hits": searched,
-                   "cited_uids": sorted(set(CITATION.findall(got.get("answer") or "")))}
+                   "cited_uids": sorted(set(CITATION.findall(got.get("answer") or ""))),
+                   "facts": facts}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -359,6 +419,18 @@ def score(out: Path, works: Path | None = None) -> int:
                 print(f"| {name} | {label} | {c['n']} | **{c['found'] / c['n']:.2f}** | {c['mrr']:.3f} | "
                       f"**{c['cited_right'] / c['n']:.2f}** | {c['left_out']} |")
         print()
+    print("ADDS OR DISTORTS: the names and numbers an answer states, looked up in what its "
+          "tools showed the model and in the question (entity-level factual consistency)\n")
+    print("| model | answers | numbers stated | of them found | answers adding a number "
+          "| names stated | of them found | answers adding a name |")
+    print("|---|---|---|---|---|---|---|---|")
+    for name, rows in groups:
+        f = faithfulness(rows)
+        if f is not None:
+            print(f"| {name} | {f['n']} | {f['numbers']} | **{f['numbers_found']:.2f}** | "
+                  f"**{f['numbers_adding']}** | {f['names']} | {f['names_found']:.2f} | "
+                  f"{f['names_adding']} |")
+    print()
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
@@ -410,7 +482,13 @@ def sample(out: Path, runs: list[str], n: int = 30, seed: int = 0) -> int:
         rng.shuffle(order)
         lines.append(f"## {i}. [{q['lang']}] {q['query']}\n")
         for letter, r in zip("ABCDEFG", order):
-            lines.append(f"**{letter}**\n\n{by_run[r][k]['answer'].strip() or '(no answer)'}\n")
+            row = by_run[r][k]
+            lines.append(f"**{letter}**\n\n{row['answer'].strip() or '(no answer)'}\n")
+            facts = row.get("facts") if isinstance(row.get("facts"), dict) else {}
+            flagged = facts.get("added_numbers", []) + facts.get("added_names", [])
+            if flagged:
+                # what the reader checks: stated, and found neither in the results nor the question
+                lines.append(f"*not in the results:* {', '.join(flagged)}\n")
         key_lines.append(f"{i}: " + ", ".join(f"{l}={r}" for l, r in zip("ABCDEFG", order)))
     (out / "sample.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "sample-key.txt").write_text("\n".join(key_lines) + "\n", encoding="utf-8")
