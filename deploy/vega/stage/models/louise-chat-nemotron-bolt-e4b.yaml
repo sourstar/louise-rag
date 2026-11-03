@@ -1,0 +1,43 @@
+# The chat model candidate B (operator, 2026-11-03: "Evaluate B now, in case
+# it fits we switch it right away as chat"): nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB,
+# Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf (Gemma-4-E4B post-trained by NVIDIA,
+# OpenMDW-1.1, 34 languages). The engine settings are the chat model's
+# (louise-chat-qwen3-8b): the SYCL determinism mode, parallel 1, 16k context,
+# the tokenizer's template. Thinking off, as Qwen3's: Louise's calls want the
+# answer, and strip_think removes only <think> blocks; the engine check
+# confirms that no thinking reaches the content (nemotron-embed.md, "The chat
+# model"). Sampling: the card's top_p 0.95 and Gemma's top_k 64; the caller
+# sets the temperature.
+{
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_OPT": "0",
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "gpu_layers": 999,
+  "mmap": true,
+  "name": "louise-chat-nemotron-bolt-e4b",
+  "options": [
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512",
+    "use_jinja:true"
+  ],
+  "parameters": {
+    "batch": 2048,
+    "model": "weights/chat/nemotron-3.5-bolt-e4b-q4_k_m.gguf",
+    "repeat_penalty": 1,
+    "seed": 0,
+    "top_k": 64,
+    "top_p": 0.95
+  },
+  "reasoning_effort": "none",
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}
