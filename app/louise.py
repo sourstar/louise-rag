@@ -2303,8 +2303,11 @@ def cmd_ask_chat(a) -> int:
         _print(out)
         return 0
     print(out["answer"])
+    for c in out.get("cited") or []:
+        # what each [n] of the answer is (05 §5.4, amended 2026-11-03)
+        print(f"[{c['n']}] {c['uid']} — {c.get('title') or ''}" if "n" in c else f"[{c['id']}]")
     for t in out["turns"]:
-        line = f"[{t['tool']} {json.dumps(t['arguments'], ensure_ascii=False)}]"
+        line = f"[{t.get('by', 'model')} {t['tool']} {json.dumps(t['arguments'], ensure_ascii=False)}]"
         if t.get("error"):
             line += f" refused: {t['error']}"
         print(line, file=sys.stderr)

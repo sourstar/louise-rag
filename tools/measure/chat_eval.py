@@ -88,7 +88,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_QUERIES = Path(__file__).with_name("one_language_queries.tsv")
-#: a citation as Ask's prompt asks for it: a record uid or canonical id in brackets
+#: a citation by uid or canonical id in brackets ([pubmed:37000021]); Ask's own
+#: answers cite [n] since 2026-11-03 and say what each cites (`cited`)
 CITATION = re.compile(r"\[([A-Za-z][\w.-]*:[^\]\s,;]+)\]")
 
 
@@ -138,8 +139,8 @@ def unsupported(answer: str, question: str, turns: list[dict[str, Any]]) -> dict
 
 
 def search_hits(turns: list[dict[str, Any]]) -> list[list[str]]:
-    """Each louise_search call's hits in rank order, as uids: what the model's
-    own queries brought back from Louise."""
+    """Each louise_search call's hits in rank order, as uids: what the
+    searches brought back from Louise (`searched_by` says whose each was)."""
     out = []
     for t in turns:
         if t.get("tool") != "louise_search" or not isinstance(t.get("result"), dict):
@@ -149,6 +150,15 @@ def search_hits(turns: list[dict[str, Any]]) -> list[list[str]]:
             uids += [h["uid"] for h in lst.get("hits", []) if isinstance(h.get("uid"), str)]
         out.append(uids)
     return out
+
+
+def searched_by(turns: list[dict[str, Any]]) -> list[str]:
+    """Whose each louise_search was, in `search_hits`' order: "louise" (the
+    question as typed), "louise:rewrite" (a search the model named before
+    answering), "model" (one it called); "model" for rows from before
+    Louise searched first (2026-11-03)."""
+    return [t.get("by") or "model" for t in turns
+            if t.get("tool") == "louise_search" and isinstance(t.get("result"), dict)]
 
 
 def load_works(path: Path) -> dict[str, set[str]]:
@@ -166,10 +176,12 @@ def conveyed(rows: list[dict[str, Any]], works: dict[str, set[str]]) -> dict[str
     found but left out of the answer."""
     rows = [r for r in rows if "hits" in r and gold_of(r, works)]
     n = len(rows)
-    found = cited = left_out = 0
+    found = cited = left_out = typed = 0
     rr = 0.0
     for r in rows:
         gold = gold_of(r, works)
+        by = r.get("hits_by") or ["model"] * len(r["hits"])
+        typed += any(u in gold for hits, b in zip(r["hits"], by) if b == "louise" for u in hits)
         ranks = [i + 1 for hits in r["hits"] for i, u in enumerate(hits) if u in gold]
         hit = bool(ranks)
         found += hit
@@ -178,7 +190,7 @@ def conveyed(rows: list[dict[str, Any]], works: dict[str, set[str]]) -> dict[str
         cited += right
         left_out += hit and not right
     return {"n": n, "found": found, "mrr": rr / n if n else 0.0, "cited_right": cited,
-            "left_out": left_out}
+            "left_out": left_out, "found_typed": typed}
 
 
 def faithfulness(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -211,9 +223,22 @@ def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, 
             args["collections"] = list(collections)
         result = mcp._call_tool("louise_search", args)
         return {"answer": "", "rounds": 0, "exhausted": False,
-                "turns": [{"tool": "louise_search", "arguments": args, "result": result,
+                "turns": [{"tool": "louise_search", "arguments": args, "by": "louise", "result": result,
                            "error": None, "seconds": 0.0}]}
     return ask
+
+
+def cited_of(got: dict[str, Any]) -> tuple[int, int, list[str]]:
+    """(cited, grounded, the uids cited): from the answer's own `cited` and
+    `cited_unknown` where it says them (Ask's [n], 2026-11-03) — a number or
+    id it names that no search showed is cited and not grounded — else from
+    the bracketed ids in its text (`citations`)."""
+    if "cited" in got:
+        named = [c.get("uid") or c.get("id") for c in got["cited"]]
+        unknown = got.get("cited_unknown") or []
+        return len(named) + len(unknown), len(named), sorted({u for u in named if u})
+    cited, grounded = citations(got.get("answer") or "", got.get("turns", []))
+    return cited, grounded, sorted(set(CITATION.findall(got.get("answer") or "")))
 
 
 def citations(answer: str, turns: list[dict[str, Any]]) -> tuple[int, int]:
@@ -308,7 +333,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             seconds = round(time.monotonic() - t0, 2)
             after = pid() if pid else None
             turns = got.get("turns", [])
-            cited, grounded = citations(got.get("answer") or "", turns)
+            cited, grounded, cited_uids = cited_of(got)
             returned = len(returned_uids([t.get("result") for t in turns]))
             searched = search_hits(turns)
             facts = unsupported(got.get("answer") or "", q["query"], turns)
@@ -321,13 +346,16 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "model_s": round(sum(got.get("model_s") or ()), 3),
                    "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
                    "search_s": search_seconds(turns),
-                   "cited": cited, "grounded": grounded, "no_tool": not turns,
+                   "cited": cited, "grounded": grounded, "no_tool": not any((t.get("by") or "model") == "model" for t in turns),
                    "returned": returned, "slimmed": got.get("slimmed", 0),
-                   "hits": searched,
-                   "cited_uids": sorted(set(CITATION.findall(got.get("answer") or ""))),
+                   "hits": searched, "hits_by": searched_by(turns),
+                   "rewrites": got.get("rewrites") or [],
+                   "rewrite_s": got.get("rewrite_s"),
+                   "cited_uids": cited_uids,
                    "facts": facts,
                    # what the model sent Louise: each call's tool and arguments, as asked
                    "calls": [{"tool": t.get("tool"), "arguments": t.get("arguments"),
+                              "by": t.get("by") or "model", "dropped": t.get("dropped") or [],
                               "error": t.get("error")} for t in turns]}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
@@ -411,17 +439,18 @@ def score(out: Path, works: Path | None = None) -> int:
     if works is not None:
         wk = load_works(works)
         print("THE OPERATOR'S THREE: conveys the query, summarises the results, cites them\n")
-        print("| model | languages | answers with a known work | its searches found the work "
-              "| MRR of the work over its searches | answer cites the work "
+        print("| model | languages | answers with a known work | the question as typed found the work "
+              "| every search found the work | MRR of the work over the searches | answer cites the work "
               "| found but left out of the answer |")
-        print("|---|---|---|---|---|---|---|")
+        print("|---|---|---|---|---|---|---|---|")
         for name, rows in groups:
             for label, sub in (("all", rows),
                                ("the operator's five", [r for r in rows if r["lang"] in OPERATOR_LANGS])):
                 c = conveyed(sub, wk)
                 if not c["n"]:
                     continue
-                print(f"| {name} | {label} | {c['n']} | **{c['found'] / c['n']:.2f}** | {c['mrr']:.3f} | "
+                print(f"| {name} | {label} | {c['n']} | {c['found_typed'] / c['n']:.2f} | "
+                      f"**{c['found'] / c['n']:.2f}** | {c['mrr']:.3f} | "
                       f"**{c['cited_right'] / c['n']:.2f}** | {c['left_out']} |")
         print()
     print("ADDS OR DISTORTS: the names and numbers an answer states, looked up in what its "
