@@ -300,3 +300,34 @@ Qwen3.8's card, where Qwen3.5-27B's own card gives 76.5.
   otherwise B.
 - Gemma comes in only if the Qwen3.5 architecture fails on our card. Today's
   9B engine checks answer that.
+
+### Summaries: A, B, C for language accuracy and speed; English first? (operator, 2026-11-03)
+
+"Models for summarization compare the performance in terms of language accuracy
+and speed for A, B and C. Consider also this solution: 1. always use a book
+english translation when available. 2. Select a model for summaries from english
+and another model for summaries from non-english."
+
+**The bench:** `tools/measure/summary_eval.py`. Summaries are in English
+whatever the source language.
+
+| set | languages | what it measures |
+|---|---|---|
+| WikiLingua (CC BY 3.0), 20 sections a language | fr de nl it es pt ru zh ja | each section summarised **from the original** and **from its English twin**, both scored by chrF against the same English reference. The gap is what reading the original costs. This tests (1) |
+| BookSum (BSD-3, research use), 30 chapters | en | literary English: the "from English" model of (2) |
+| the node's classical passages | la, el | Latin and Greek against their human English translation. No reference exists, so only the two summaries' agreement is scored |
+
+Speed is measured warm at concurrency 1: seconds per summary and generated
+tokens/s.
+
+**What decides:**
+- **(1)** holds where every model's gap is large and the share of works with an
+  English edition is high. The works-annotations collection names the editions;
+  for Latin and Greek, about 41 % of works have one (classical-translation.md).
+  The other languages are to be counted.
+- **(2)** pays when the best "from English" model is clearly faster than the
+  best "from original" one at an equal BookSum score.
+
+**What is known before the run** (classical-translation.md, on this card): a 3 B-active
+mixture of experts ran ~4× faster than a dense 27B, at 87 against 23 tokens/s,
+for a chrF 2 points lower on Latin.
