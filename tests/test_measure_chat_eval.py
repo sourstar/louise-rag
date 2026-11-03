@@ -349,3 +349,43 @@ def test_a_run_says_which_searches_it_replayed(tmp_path):
                ask=ev.ask_direct(None, call=cache), search_cache=cache)
     assert [r["replayed"] for r in ev._rows(tmp_path, "direct")] == [0, 0]
     assert [r["replayed"] for r in ev._rows(tmp_path, "again")] == [1, 1]
+
+
+def test_a_sentence_says_only_what_the_source_it_cites_says():
+    """The walk of 2026-11-03 (München, qwen3-8b): a title from memory set
+    beside the Finnish edition it cites, and the question pasted as a title
+    and put in source [1]'s mouth. The second passes a check against "the
+    results or the question"; against the cited source it does not."""
+    turns = [{"tool": "louise_search", "result": {"lists": [{"hits": [
+        {"uid": "gutenberg:74803", "title": "Hirmuhallitus", "text": "Pariisin vallankumous"},
+        {"uid": "gutenberg:18271", "title": "Georges", "authors": "Dumas, Alexandre",
+         "text": "Du même auteur: Le Collier de la Reine, 11 vol. in-8, 1849"},
+        {"uid": "gutenberg:54229", "title": "Kuningattaren kaulanauha", "text": "Ludvig XVI:n hovista"}]}]}}]
+    sources = [{"n": 1, "uid": "gutenberg:74803"}, {"n": 7, "uid": "gutenberg:18271"},
+               {"n": 8, "uid": "gutenberg:54229"}]
+    question = "Il romanzo di Dumas sullo scandalo della collana alla corte di Luigi XVI"
+    answer = ('Il testo [7] indica che Dumas ha scritto "Le Collier de la Reine" nel 1849 [7]. '
+              'Il testo [1] menziona un romanzo intitolato "Il romanzo di Dumas sullo scandalo della collana" [1].\n'
+              'It is "The Diamond Necklace Affair" [8]. Nothing cited here.')
+    s = ev.citation_support({"answer": answer, "sources": sources}, turns)
+    assert (s["sentences"], s["supported"], s["quotes"], s["quotes_found"]) == (3, 1, 3, 1)
+    missing = [u["missing"][0] for u in s["unsupported"]]
+    assert missing == ["Il romanzo di Dumas sullo scandalo della collana", "The Diamond Necklace Affair"]
+    assert ev.unsupported(answer, question, turns)["added_numbers"] == [], \
+        "[7], [1], [8] are citations, not numbers stated"
+    assert ev.citation_support({"answer": answer}, turns) is None, "no sources said: not scored"
+
+
+def test_score_shows_what_the_sources_support(tmp_path, capsys):
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    turns = [{"tool": "louise_search", "by": "louise", "arguments": {"query": "q"}, "error": None,
+              "result": {"lists": [{"hits": [{"uid": "gutenberg:1", "title": "Moby Dick", "text": "Ahab"}]}]}}]
+    got = {"answer": 'Ahab hunts it [1]. It is "Moby Whale" [1].', "turns": turns,
+           "sources": [{"n": 1, "uid": "gutenberg:1"}], "cited": [{"n": 1, "uid": "gutenberg:1"}],
+           "cited_unknown": []}
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en", ask=lambda q, collections=None: got)
+    capsys.readouterr()
+    ev.score(tmp_path)
+    assert "| m | 1 | 2 | **0.50** | 1 | 0.00 | **1** |" in capsys.readouterr().out
+    ev.sample(tmp_path, ["m"], n=1)
+    assert '*not in its cited source:* Moby Whale, Whale ← "It is "Moby Whale"."' in (tmp_path / "sample.md").read_text()
