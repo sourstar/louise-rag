@@ -819,3 +819,52 @@ On the bench, Q8 first as for the 8–9 B tier: Qwen3.5-4B, Gemma 4 E4B, Granite
 3.2 (2024, a restricted licence), LFM2.5 (a revenue-capped licence). The one
 small model measured so far, Empero's 2B, never called a tool (five2): tool
 use is the first cut at this size.
+
+### The interface first (operator, 2026-11-03)
+
+"Before fix the way any model interfaces with louise. Since then stop this
+painfully useless test." The benchmark was stopped at five3 (qwen3-8b
+40/50).
+
+**What the models sent** (München, five3, the 39 qwen3-8b answers with
+their calls):
+- One `louise_search` per question, the question copied VERBATIM, no
+  second search when the work was missing.
+- Found or not depended only on how the question searches as typed: the
+  test measured the question, not the model.
+- Stray arguments: `"limit": 10`, `"space": "gutenberg"`.
+- The Empero 2B never called the tool (five2).
+
+**What changed** (app/ask/chat.py; 05 §5.4 amended):
+1. Rewrite-Retrieve-Read (Ma et al., EMNLP 2023). One short call
+   without tools asks the model for up to 3 searches: a described work's
+   title and author, in its own language and in English, else names and
+   key terms. The model's knowledge goes into the search, never into the
+   answer.
+2. Louise searches first. The question runs as the Ask tab runs it,
+   with translations, at the same time as the rewrite call. The rewrites
+   run as written, side by side, and each adds at most 5 new sources.
+3. Numbered sources `[n]`, as on the Ask tab (the ALCE form). A record
+   keeps its number every time it comes back. The answer carries
+   `sources`, `cited` and `cited_unknown` (a number no search showed).
+4. The model sees only `query` and `collections` (`id`; `id`, `relation`
+   and `depth`). Translation is always on. An argument the model invents
+   is dropped and named in the turn (`dropped`).
+
+The tools stay, so a model may search again. The MCP declarations are
+unchanged; their description now says to search again by title and
+author.
+
+**chat_eval:** a new column, "the question as typed found the work",
+beside "every search found it". The rows record whose search each was
+(`hits_by`), the rewrites and `rewrite_s`. `cited` comes from the
+answer's own resolution.
+
+**Qwen3.5-4B and 2B** (operator, the same day) are already on the list
+(#289). Qwen publishes no GGUF of them, so the staged files are
+bartowski's conversions of Qwen's own weights.
+
+**The bench resumes on this:**
+1. Tag `iface`, `--redo`, on the same 50 questions: qwen3-8b and
+   qwen3.5-9b-q8, with the `direct` row as the reference.
+2. Then the six 2–4B models.

@@ -27,7 +27,9 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Semantic and exact-term search over the collections this peer holds: one "
                     "fused list per space (05 §5.1), each result naming its collection, snapshot, "
                     "record, chunk, trust level and producer (05 §5.3); facts from reference "
-                    "sources beside the lists, never in them.",
+                    "sources beside the lists, never in them. Search the reader's own words first; when "
+                    "what is asked for is not in the results, search again with the work's title and "
+                    "author, a name, or other key terms.",
      "inputSchema": {"type": "object", "required": ["query"], "properties": {
          "query": {"type": "string"},
          "collections": {"type": "array", "items": {"type": "string"},
@@ -47,7 +49,9 @@ TOOLS: list[dict[str, Any]] = [
          "rerank_depth": {"type": "integer", "minimum": 1, "maximum": 300, "default": 50},
          "as_of": {"type": "string", "description": "YYYY-MM-DD: the snapshot current at that date"},
          "freshness": {"type": "boolean", "default": False},
-         "translate": {"type": "boolean", "default": False},
+         "translate": {"type": "boolean", "default": False,
+                       "description": "true: the query's translations into the languages held are "
+                                      "searched too, as the Ask page searches"},
          "all_languages": {"type": "boolean", "default": False}}}},
     {"name": "louise_lookup",
      "description": "A fact by key from a reference source: one canonical id "

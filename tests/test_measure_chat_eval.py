@@ -233,7 +233,30 @@ def test_the_operators_three_conveys_summarises_cites(tmp_path, capsys):
     capsys.readouterr()
     ev.score(tmp_path, works)
     table = capsys.readouterr().out
-    assert "| m | all | 3 | **0.67** | 0.500 | **0.33** | 1 |" in table
+    assert "| m | all | 3 | 0.00 | **0.67** | 0.500 | **0.33** | 1 |" in table, \
+        "rows from before Louise searched first: every search was the model's"
+
+
+def test_ask_s_own_citations_and_whose_search_found_the_work(tmp_path):
+    """Since 2026-11-03 Ask searches the question itself and the searches the
+    model names, and the answer cites [n] and says what each n is."""
+    works = tmp_path / "works.json"
+    works.write_text(json.dumps([{"work": "W1", "books": ["gutenberg:11"], "original": "fr"}]))
+    q = ev.read_queries(_queries(tmp_path))[:1]
+    turns = [{"tool": "louise_search", "by": "louise", "error": None, "arguments": {"query": "q"},
+              "result": {"lists": [{"hits": [{"uid": "gutenberg:5"}]}]}},
+             {"tool": "louise_search", "by": "louise:rewrite", "error": None, "arguments": {"query": "Le Collier"},
+              "result": {"lists": [{"hits": [{"uid": "gutenberg:11"}]}]}}]
+    got = {"answer": "It is [2]; and [7].", "turns": turns, "rewrites": ["Le Collier"], "rewrite_s": 0.4,
+           "cited": [{"n": 2, "uid": "gutenberg:11", "title": "Le Collier"}], "cited_unknown": ["[7]"]}
+    ev.run(tmp_path, "m", model="m", queries=q, guess=lambda t: "en", ask=lambda qq, collections=None: got)
+    (row,) = ev._rows(tmp_path, "m")
+    assert (row["cited"], row["grounded"], row["cited_uids"]) == (2, 1, ["gutenberg:11"]), \
+        "a number no search showed is cited and not grounded"
+    assert row["hits_by"] == ["louise", "louise:rewrite"] and row["rewrites"] == ["Le Collier"]
+    assert row["no_tool"], "the model itself called nothing"
+    c = ev.conveyed([row], ev.load_works(works))
+    assert (c["found_typed"], c["found"], c["cited_right"]) == (0, 1, 1), "the rewrite found it, not the question"
 
 
 def test_the_direct_row_searches_the_question_as_typed(monkeypatch):
@@ -289,4 +312,4 @@ def test_what_the_model_sent_louise_is_kept(tmp_path):
            ask=lambda q, collections=None: {"answer": "x", "turns": turns})
     assert ev._rows(tmp_path, "m")[0]["calls"] == [
         {"tool": "louise_search", "arguments": {"query": "Dumas collier", "collections": ["gutenberg"]},
-         "error": None}]
+         "by": "model", "dropped": [], "error": None}]
