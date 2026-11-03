@@ -457,10 +457,20 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         if remaining <= 0:
             return _fused_order(hits, f"the rerank took longer than its {budget_s:.1f} s budget")
         part = [texts[t] for t in idx]
+        # A TEXT IS SCORED ONCE PER CALL (2026-11-03: the rerank was 6.2 s of
+        # a 7.0 s search on Ask's benchmark). Two records can send the same
+        # text against the same query — the editions of a work under one
+        # title, a chunk two legs matched — and a pair's score is a pure
+        # function of the pair: the reranker runs one sequence at a time
+        # (`parallel:1`, the wrapper's contract) and was measured bit-exact
+        # with any batch-mates and in any order (approved-encoders.md,
+        # louise-rerank-bge 2026-10-31). So the duplicate is not sent and
+        # takes the score its twin got: the same order, by construction.
+        distinct = list(dict.fromkeys(part))
         if recipe.api == "jina":
-            body = {"query": q, "documents": part, "top_n": len(part)}
+            body = {"query": q, "documents": distinct, "top_n": len(distinct)}
         else:
-            body = {"query": q, "texts": part, "truncate": True}
+            body = {"query": q, "texts": distinct, "truncate": True}
         if recipe.model:
             # the file's `rerank_model` (07 §7.8, amended 2026-10-08): a runner
             # that picks the model from the body (LocalAI) is told which; only
@@ -478,12 +488,13 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
                                           else o["score"]) for o in rows}
         except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
             return _fused_order(hits, _cold_or(e, recipe, pid, sent, budget_s))
-        if sorted(got) != list(range(len(part))):
+        if sorted(got) != list(range(len(distinct))):
             return _fused_order(hits, f"the reranker answered for "
-                                      f"{sum(1 for i in got if 0 <= i < len(part))} of "
-                                      f"{len(texts)} candidates")
+                                      f"{sum(1 for i in got if 0 <= i < len(distinct))} of "
+                                      f"{len(distinct)} candidates")
+        at = {text: k for k, text in enumerate(distinct)}
         for local, t in enumerate(idx):
-            scores[t] = got[local]
+            scores[t] = got[at[part[local]]]
     best: dict[int, tuple[float, dict]] = {}
     for t, (i, c) in enumerate(owner):
         if i not in best or scores[t] > best[i][0]:
