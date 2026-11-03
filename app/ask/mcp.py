@@ -33,7 +33,9 @@ TOOLS: list[dict[str, Any]] = [
          "collections": {"type": "array", "items": {"type": "string"},
                          "description": "collection ids, id prefixes or local names; default: every "
                                         "collection held and usable"},
-         "space": {"type": "string", "description": "a space_id: only the collections in it"},
+         "space": {"type": "string", "description": "a space_id (sha256:…): only the collections "
+                                                    "embedded in that space. Not a collection's name: "
+                                                    "name collections in `collections`"},
          "annotations": {"type": "array", "items": {"type": "string"},
                          "description": "the annotations collections consulted, by local name: their work "
                                         "claims group a work's editions into one hit and their claims come "

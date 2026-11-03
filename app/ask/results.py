@@ -251,10 +251,22 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         own_key = None
     run = run or query_service.run_search
     named = query_service.resolve_collections(collections) if collections else query_service.resolve_collections(None)
+    space_as_collection: list[str] = []
     if space:
-        named = [c for c in named if getattr(c, "codex", None) is not None and c.codex.space_id == space]
+        in_space = [c for c in named if getattr(c, "codex", None) is not None and c.codex.space_id == space]
+        if not in_space:
+            # A COLLECTION GIVEN AS THE SPACE (2026-11-03, Ask's benchmark: the
+            # chat model put `space: "gutenberg"` and every search of the
+            # answer was refused). What the reader meant is determinable
+            # (RULE 2): a held collection by that name or id prefix narrows
+            # the search as `collections` would, and the result says so.
+            in_space = [c for c in named if c.name == space
+                        or str(getattr(getattr(c, "codex", None), "collection_id", "")).startswith(space)]
+            space_as_collection = [c.name for c in in_space]
+        named = in_space
         if not named:
-            raise AskError(f"no collection held here is in space {space}")
+            raise AskError(f"no collection held here is in space {space}, and none is named so; "
+                           f"a space is a space_id (sha256:…), collections are named in `collections`")
     # 05 §5.1 `as_of`: per collection, the held snapshot current at the date,
     # or the collection withheld whole and said so (app/ask/asof.py)
     dated: dict[str, Any] = {}
@@ -407,6 +419,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "freshness": fresh_summary,
         "timings": result.get("timings", {}),
     }
+    if space_as_collection:
+        out["space_read_as_collections"] = space_as_collection
     if result.get("rerank_withheld"):
         # 05 §5.6: why a list kept its fused order, when that is known (a
         # reranker whose load outlasted its bound, app/model_load.py)
