@@ -186,3 +186,50 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
   attaches it yet; a community's `state_of` is `unknown`, it pins no record)
   and steps 4–5 after the wikidata collection exists.
 
+## Nemotron for the task (operator, 2026-11-03) — the evaluation, PLANNED
+
+"Evaluate using a Nemotron model for the task." wiki-gutenberg has no space of
+its own, so the encoder question does not arise. The models below do its
+four jobs (wikidata-plugins.md, "Pipeline"):
+
+| job | planned | Nemotron candidates (all OpenMDW-1.1 [V]) |
+|---|---|---|
+| mentions over ~8 B tokens | GLiNER 2.5 | none. No Nemotron NER model exists, and an LLM at this volume is not a candidate. |
+| linking: the search | Jina v3 over wikidata's vectors | **already Nemotron**: wikidata is re-embedded with Nemotron-3-Embed-1B, and a mention is searched in that space. |
+| linking: the pick among the top 10 | an LLM | `nvidia/Nemotron-3.5-Rerank-8B` (cross-encoder on Ministral-3-8B, 34 languages): mention-in-context scored against each candidate's label and description, "none" below a threshold; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` |
+| relations (Q, property, Q) and community summaries | Gemma 4 26B A4B, Q8_0 (~27 GB) | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` (Mamba-2 + MoE + attention, 3 B active; en es fr de it ja; `ggml-org/…-GGUF`); `NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF` (9 B active, IQ2 trained for it, 24 GB; llama.cpp recipes for 32 GB cards) |
+
+**First, the engine** (on the node, before any score):
+- does llama.cpp `ddf48f8` load `nemotron_h` on SYCL, with its Mamba-2 ops
+  (`ssm_conv`, `ssm_scan`) on the card and not falling back to the CPU?
+- at temperature 0, does a fixed prompt give the same bytes over 3 fresh
+  loads (invariant 12)?
+- the reranker is a `mistral3` sequence-classification model; llama.cpp's
+  rerank path for it is unchecked, so the louise-python (torch) task is the
+  fallback.
+- Gemma 4 26B A4B goes through the same checks: it is the comparator.
+
+**The sets** (published, "do not reinvent the wheel"):
+- **relations: Re-DocRED** (Tan et al., EMNLP 2022; MIT [V]): 500 test
+  documents, gold entities given, triples over 96 Wikidata properties, our
+  claim's shape exactly. Scored by triple F1 against gold.
+- **the pick: Mewsli-X** (XTREME-R; Apache-2.0 [V]): Wikinews mentions
+  linked to Wikidata QIDs.
+  - The top 10 come from wikidata's Nemotron search, so this waits for
+    wikidata's embedding to finish. Run against a partial collection, the
+    candidates would be biased.
+  - Two numbers: recall@10 of the search, then accuracy@1 of each picker
+    given those 10.
+- **mentions: LitBank** (English novels from Project Gutenberg): GLiNER's
+  settings, not a Nemotron question.
+- None of these sets is in Latin or Ancient Greek, the first instance's
+  slice (step 5), and no candidate lists them. That instance's own check
+  is the agreement floor (decided 2026-10-20), plus a hand-read sample.
+
+**The harness**: `tools/measure/kg_relations_eval.py`, still to build.
+- Re-DocRED through any OpenAI-compatible chat endpoint, temperature 0.
+- One prompt for every model, its hash recorded with the run, and the
+  output as JSON triples.
+- Precision, recall and F1, and the paired test between models over
+  documents.
+

@@ -577,6 +577,12 @@ and wikipedia further embedding, when wikidata is over make a gutenberg-nemo
 with Nemotron and embed it. Once done the old gutenberg can be backed up in
 tank and retired. Then do the same with wikipedia, smart embedding only."
 
+**The full 2,048 dimensions are kept** (operator, 2026-11-03: "keep the full
+vectors of Nemotron, it will be interesting to verify how much the quality
+drops halfening them once we have a full overview"). The 1,024 cut is
+measured afterwards, on every Nemotron collection at once. Rows so far: W1
++0.009 for the full vectors (p = 0.165), wikipedia P3 −0.0007 (p = 0.86).
+
 - **The document prefix is the space's.** Every row above embedded documents
   with `"passage: "`, as the card says; the spec had a query instruction only.
   Codex version 11 adds `space.document.instruction`, inside `space_id`,
