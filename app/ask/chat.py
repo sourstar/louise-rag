@@ -99,7 +99,7 @@ def reader_language(question: str, answer_lang: str | None = None) -> str | None
     if answer_lang and answer_lang.strip():
         return answer_lang.strip().lower()
     from app import query_language
-    return query_language.guess(question, set(query_language.word_lists()))
+    return query_language.guess(question, query_language.guessable())
 
 
 def language_rule(lang: str | None) -> str:

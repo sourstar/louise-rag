@@ -117,6 +117,14 @@ def scores(text: str, held: Iterable[str]) -> dict[str, float]:
     return out
 
 
+def guessable() -> frozenset[str]:
+    """Every language `guess` can name when nothing narrows it: the word
+    lists' and the scripts'. A caller that passed the word lists alone could
+    never be told Greek, Russian or Chinese, however plainly the script
+    said so (Ask's benchmark, 2026-11-03: el, ru, zh "no guess")."""
+    return frozenset(word_lists()) | {lang for _script, lang in _SCRIPTS}
+
+
 def guess(text: str, held: Iterable[str]) -> str | None:
     """The language `text` is written in, among `held`; None when the text
     does not say clearly enough (a bare title, a name)."""
