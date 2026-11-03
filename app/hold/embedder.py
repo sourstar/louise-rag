@@ -542,6 +542,9 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
             # check — the sixteen fingerprint texts, all short — said "as one
             # text at a time". So the batches also carry the set's longest
             # texts, cut where the space cuts them, together in one request.
+            # The fault was the old engine's (c0fd786 + P5): on 16acc89 the
+            # 16 longest in one request are byte-equal to one at a time
+            # (approved-encoders.md); the check stays, per run.
             long = longest(texts, LONG_PROBE)
             single = single + (embed_one(long) if long else [])
             batched = contribute(sixteen + long)
