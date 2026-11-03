@@ -38,7 +38,11 @@ services:
     environment:
       LOCALAGI_STATE_DIR: /pool
       LOCALAGI_LLM_API_URL: http://192.168.178.10:30286     # the `localai` app
-      LOCALAGI_MODEL: qwen3.8-2b-q4                          # light; the card is the model pool's
+      LOCALAGI_MODEL: louise-chat-qwen3-8b                   # Alibaba's Qwen3-8B, the node's chat model
+      # (operator, 2026-11-03: "Delete all the qwen not from Alibaba" — the
+      # earlier qwen3.8-2b-q4 is Empero's distill, and it never called a tool
+      # in chat_eval five2). Revisit when the official 2-4B tier is measured
+      # (docs/notes/nemotron-embed.md, "Official 2-4B candidates").
       LOCALAGI_LOCALRAG_URL: http://192.168.178.10:30042     # Louise's web: /api/collections/…
       LOCALAGI_LLM_API_KEY: <token>                          # = the deposit token (see above)
       LOCALAGI_TIMEOUT: 5m
