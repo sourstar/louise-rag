@@ -187,7 +187,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
                    "search_s": search_seconds(turns),
                    "cited": cited, "grounded": grounded, "no_tool": not turns,
-                   "returned": returned}
+                   "returned": returned, "slimmed": got.get("slimmed", 0)}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -240,6 +240,9 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "cited": sum(r.get("cited", 0) for r in rows),
             "grounded": sum(r.get("grounded", 0) for r in rows),
             "uncited": sum(1 for r in rows if "cited" in r and not r["cited"]),
+            # answers whose tool results had to be slimmed to fit the context (#282)
+            "slimmed": (sum(1 for r in rows if r["slimmed"]) if all("slimmed" in r for r in rows)
+                        else None),
             # the ones that matter: results came back and none was cited
             # (None for rows asked before `returned` was recorded: unknown, not 0)
             "uncited_with_results": (sum(1 for r in rows if not r.get("cited") and r["returned"] > 0)
@@ -267,8 +270,8 @@ def score(out: Path) -> int:
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
-          "| of which results had come back |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+          "| of which results had come back | results slimmed to fit |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
                   "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
@@ -284,7 +287,8 @@ def score(out: Path) -> int:
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "
                   f"{s['no_tool']} | {s['cited'] / s['n']:.1f} | "
                   f"{(s['grounded'] / s['cited']) if s['cited'] else 0.0:.2f} | {s['uncited']} | "
-                  f"{'-' if s['uncited_with_results'] is None else s['uncited_with_results']} |")
+                  f"{'-' if s['uncited_with_results'] is None else s['uncited_with_results']} | "
+                  f"{'-' if s['slimmed'] is None else s['slimmed']} |")
     print("\nWhere a warm answer's time goes (medians, seconds; the search parts are the "
           "node's own timings, summed over an answer's searches):\n")
     print("| model | warm answers | answer | model rounds | tool calls | search | rerank "

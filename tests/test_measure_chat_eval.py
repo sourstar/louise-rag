@@ -182,3 +182,19 @@ def test_an_answer_that_cites_nothing_though_results_came_back_is_counted():
     rows = [{"cited": 0, "returned": 2, "lang": "en", "tools": ["louise_search"], "error": None,
              "exhausted": False, "tool_errors": 0, "answer_lang": "en", "seconds": 1.0}]
     assert ev.summary(rows)["uncited_with_results"] == 1
+
+
+def test_answers_whose_results_were_slimmed_are_counted(tmp_path, capsys):
+    """#282: the loop slims older results to fit the context; how often a
+    model searches past the budget is a tool-use signal of its own."""
+    qs = ev.read_queries(_queries(tmp_path))[:2]
+    got = {qs[0]["query"]: {"answer": "a", "turns": [], "slimmed": 3},
+           qs[1]["query"]: {"answer": "b", "turns": []}}
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
+           ask=lambda q, collections=None: got[q])
+    assert [r["slimmed"] for r in ev._rows(tmp_path, "m")] == [3, 0]
+    assert ev.summary(ev._rows(tmp_path, "m"))["slimmed"] == 1
+    capsys.readouterr()
+    ev.score(tmp_path)
+    row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
+    assert row.split("|")[16] == " 1 "
