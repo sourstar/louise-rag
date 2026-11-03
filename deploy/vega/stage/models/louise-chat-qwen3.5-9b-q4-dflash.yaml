@@ -1,0 +1,54 @@
+# Qwen3.5-9B Q4_K_M with its DFlash block-diffusion drafter (z-lab, MIT; AtomicChat's Q8_0 GGUF, 1.38 GB), as the
+# gallery's qwen3.5-9b-dflash variant wires it (draft_model, spec_type:draft-dflash, spec_n_max:15), the operator's
+# install of 2026-11-03, on OUR engine. Speculative decoding must give the target's own outputs: the benchmark
+# compares its greedy answers with louise-chat-qwen3.5-9b-q4's byte for byte; only its speed may differ.
+{
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "name": "louise-chat-qwen3.5-9b-q4-dflash",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512",
+    "spec_type:draft-dflash",
+    "spec_n_max:15"
+  ],
+  "parameters": {
+    "batch": 2048,
+    "model": "llama-cpp/models/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf",
+    "seed": 0,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 1.5,
+    "repeat_penalty": 1
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6,
+  "draft_model": "llama-cpp/models/Qwen3.5-9B-DFlash-GGUF/Qwen3.5-9B-DFlash.Q8_0.gguf"
+}
+

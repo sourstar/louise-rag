@@ -5,7 +5,8 @@
 # INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `qwen3.5-9b` (unsloth's GGUF,
 #   sha256-pinned): POST /models/apply with ../gallery/louise-chat-qwen3.5-9b-q4.json, the entry
 #   named as `variant` so its own build is taken, never a guess.
-# THE 4-BIT BUILD is the entry's own: Q4_K_M, sha256 03b74727…7e8.
+# THE 4-BIT BUILD is the entry's own: Q4_K_M, sha256 03b74727…7e8. On the node it came with the operator's
+# install of the gallery's qwen3.5-9b-dflash variant (2026-11-03), stored under llama-cpp/models/Qwen3.5-9B-GGUF/.
 # Ours on top: our llama.cpp package and the SYCL exact mode (the measured
 # set, tests/vega/test_engine_settings.py), parallel 1, a 16k context, seed 0;
 # THINKING OFF by `reasoning_effort: none` (LocalAI maps it to the template's
@@ -42,7 +43,7 @@
   ],
   "parameters": {
     "batch": 2048,
-    "model": "llama-cpp/models/Qwen3.5-9B-Q4_K_M.gguf",
+    "model": "llama-cpp/models/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf",
     "seed": 0,
     "temperature": 0.7,
     "top_p": 0.8,
