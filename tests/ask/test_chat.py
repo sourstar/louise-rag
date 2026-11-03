@@ -175,3 +175,15 @@ def test_openai_tool_calls_round_trip(fake_chat, monkeypatch):
         {"id": "c2", "function": {"name": "louise_lookup", "arguments": "not json"}}]}}]}
     _, calls, _ = llm.chat_tools([{"role": "user", "content": "q"}], chat.tool_specs())
     assert calls[0].arguments == {}, "unreadable arguments are an empty call, not a crash"
+
+
+def test_an_answer_says_where_its_time_went(chat_model, monkeypatch):
+    """Each model round's wall time and each tool call's, on the answer
+    (tools/measure/chat_eval.py reads them; operator, 2026-11-03)."""
+    clock = iter([0.0, 1.5, 1.5, 2.25, 2.25, 2.75])
+    monkeypatch.setattr(chat.time, "monotonic", lambda: next(clock))
+    lookup = llm.ToolCall("c1", "louise_lookup", {"id": "hgnc:1101"})
+    model = scripted(("", [lookup]), ("", [lookup]), ("13q13.1.", []))
+    out = chat.ask("where is BRCA2?", call=lambda n, a: {"rows": []}, model=model, max_rounds=1)
+    assert out["exhausted"] and out["model_s"] == [1.5, 0.5], "the bound's last round is timed too"
+    assert [t["seconds"] for t in out["turns"]] == [0.75]
