@@ -760,3 +760,15 @@ and 3.8 models I downloaded in localai."
 | able to use tools | calls per answer, tool errors, answers given with no tool call, round-bound hits |
 
 The models the operator downloaded run the "five" tag first.
+
+**The operator's three, the most important (the same day):** "how effectively
+the model conveys the query to Louise, how effectively it summarizes the
+results, and the amount of citations from the results." Measured by
+`chat_eval score --works works.json` (#284). Every question is labelled with
+its work, and `works.json` lists the work's gutenberg books.
+
+| the operator's measure | the number |
+|---|---|
+| conveys the query | the model's own searches returned the work (share), and the work's best rank over them (MRR). The reference is `run --direct`: the question searched as typed, no model. A model that beats it conveys the query better than the reader's own words |
+| summarises the results | the answer cites the work it was asked about (share); "found but left out": its searches found the work and the answer did not cite it |
+| citations | cited per answer; grounded (each cited uid was returned by a tool); citing nothing though results came back |
