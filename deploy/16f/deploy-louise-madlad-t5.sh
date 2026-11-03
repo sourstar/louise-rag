@@ -261,6 +261,7 @@ grep -q '^    exactness: str = "exact"' "$ROOT/src.new/app/collections.py"      
 grep -q 'document_instruction: str | None = None' "$ROOT/src.new/app/hold/codex.py"   # #252: space.document.instruction (Codex 11), the long texts in the gate's batch check
 grep -q '^def announce(collection, uids) -> None:' "$ROOT/src.new/app/bundles/genesis.py" && grep -q 'bundle_genesis.announce(collection' "$ROOT/src.new/app/worker.py"   # #255/#256: a local archive's demand announced by the fts commit, the walk in windows from a cursor
 grep -q '^_BY_UID_WHERE = ("+in_scope=1' "$ROOT/src.new/app/bundles/genesis.py"   # #257: the uid lookup kept on the primary key (unary plus; 11.8 s a chunk on idx_documents_scope, 2026-11-03)
+grep -q '^def _load_seed(collection, w: _Walk) -> None:' "$ROOT/src.new/app/bundles/genesis.py"   # #259: the archive demand seed's cursor saved beside the manifest, resumed after a restart
 echo "staged: $(find "$ROOT/src.new" -name '*.py' | wc -l) python files"
 
 say "2. build louise-rag:staged"
