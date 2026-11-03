@@ -29,6 +29,17 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
 Quality beyond that is read, not scored: `sample` writes the same questions
 with each model's answer under a blind letter, and the key in a separate
 file.
+
+THE BENCHMARK OF THE OPTIMIZATIONS (operator, 2026-11-03: "Use the chat
+comparison benchmark to work on the optimizations, suspend the test anytime
+to implement improvements"). Every answer records where its time went: the
+model's rounds (`model_s`), the tool calls (`tools_s`), and inside the
+searches the node's own timings — rerank, the language plan, the dense and
+word legs. A run is stopped at any time (each answer is written as it ends
+and a run resumes where it stopped), the improvement deployed, and the run
+resumed with another `--tag`: `score` gives each tag its own rows, so the
+same questions before and after are read side by side. The tag is not a
+setting: one run's answers may carry several.
 """
 from __future__ import annotations
 
@@ -78,11 +89,15 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         collections: list[str] | None = None,
         ask: Callable[..., dict[str, Any]] | None = None,
         guess: Callable[[str], str | None] = answer_language,
-        pid: Callable[[], int | None] | None = None) -> int:
+        pid: Callable[[], int | None] | None = None, tag: str = "",
+        redo: bool = False) -> int:
     """WARM ANSWERS ONLY are timed (operator, 2026-11-03): the model is pinned
     for the run and warmed up first, and an answer during which its backend
     was (re)loaded — no backend before, or another pid after — is marked
-    `warm: false`, counted, and left out of the time."""
+    `warm: false`, counted, and left out of the time. `tag` labels the
+    answers asked now (the configuration they ran on); with `redo` the
+    questions already answered under ANOTHER tag are asked again under this
+    one, so a configuration is measured on the same questions as the last."""
     run_dir = out / "runs" / name
     run_dir.mkdir(parents=True, exist_ok=True)
     settings = {"model": model, "collections": collections or []}
@@ -93,8 +108,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
     else:
         stated.write_text(json.dumps(settings, indent=1, sort_keys=True), encoding="utf-8")
     answers = run_dir / "answers.jsonl"
-    done = ({json.loads(l)["key"] for l in answers.read_text(encoding="utf-8").splitlines() if l}
-            if answers.exists() else set())
+    done = ({(r["key"], r.get("tag", "")) for r in _rows(out, name)} if answers.exists() else set())
+    done = {k for k, t in done if t == tag or not redo}
     release: Callable[[], None] = lambda: None
     if ask is None:
         import os
@@ -105,7 +120,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         ask = chat.ask
         holder = f"chat_eval pid {os.getpid()}"
         model_pins.hold(config.CHAT_URL, model, holder)
-        release = lambda: model_pins.release(holder)   # noqa: E731 — its prior pin state restored
+        release = lambda: model_pins.release(holder)   # its prior pin state restored
         _warm_up(config.CHAT_URL, model)
         pid = pid or (lambda: model_load.backend_pid(config.CHAT_URL, model, 0.0))
     try:
@@ -122,12 +137,16 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                     f"{type(e).__name__}: {e}"[:300]
             seconds = round(time.monotonic() - t0, 2)
             after = pid() if pid else None
-            row = {**q, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
+            turns = got.get("turns", [])
+            row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
-                   "tools": [t.get("tool") for t in got.get("turns", [])],
-                   "tool_errors": sum(1 for t in got.get("turns", []) if t.get("error")),
+                   "tools": [t.get("tool") for t in turns],
+                   "tool_errors": sum(1 for t in turns if t.get("error")),
                    "seconds": seconds, "error": error,
-                   "warm": pid is None or (before is not None and before == after)}
+                   "warm": pid is None or (before is not None and before == after),
+                   "model_s": round(sum(got.get("model_s") or ()), 3),
+                   "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
+                   "search_s": search_seconds(turns)}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -135,6 +154,24 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         release()
     print(f"{name}: {len(queries) - len(done)} asked now, {len(queries)} in all")
     return 0
+
+
+#: the search's own timings (app/retrieval.py `timings`, milliseconds) an
+#: answer's time is split by; "total" is the search's whole
+SEARCH_PARTS = ("languages", "catalog", "fts", "dense", "rerank", "total")
+
+
+def search_seconds(turns: list[dict[str, Any]]) -> dict[str, float]:
+    """The searches' own timings summed over an answer's louise_search
+    calls, in seconds: where inside the tool calls the time went."""
+    out = dict.fromkeys(SEARCH_PARTS, 0.0)
+    for t in turns:
+        timings = (t.get("result") or {}).get("timings") if t.get("tool") == "louise_search" else None
+        for part in SEARCH_PARTS:
+            v = (timings or {}).get(part)
+            if isinstance(v, (int, float)):
+                out[part] += v / 1000.0
+    return {k: round(v, 3) for k, v in out.items()}
 
 
 def _rows(out: Path, name: str) -> list[dict[str, Any]]:
@@ -160,17 +197,32 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "median_s": statistics.median(warm) if warm else None}
 
 
+def _labelled(out: Path) -> list[tuple[str, list[dict[str, Any]]]]:
+    """(label, rows) per run and tag: a run's answers under each tag are
+    their own rows, `name [tag]`; untagged ones are the run's name."""
+    groups: list[tuple[str, list[dict[str, Any]]]] = []
+    for name in sorted(p.name for p in (out / "runs").iterdir() if (p / "answers.jsonl").exists()):
+        by_tag: dict[str, list[dict[str, Any]]] = {}
+        for r in _rows(out, name):
+            by_tag.setdefault(r.get("tag", ""), []).append(r)
+        groups += [(f"{name} [{t}]" if t else name, rows) for t, rows in by_tag.items()]
+    return groups
+
+
+def _median(values: list[float]) -> str:
+    return "-" if not values else format(statistics.median(values), ".2f")
+
+
 def score(out: Path) -> int:
-    names = sorted(p.name for p in (out / "runs").iterdir() if (p / "answers.jsonl").exists())
+    groups = _labelled(out)
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm |")
     print("|---|---|---|---|---|---|---|---|---|---|")
-    for name in names:
-        rows = _rows(out, name)
-        groups = {"all": rows,
+    for name, rows in groups:
+        parts = {"all": rows,
                   "Lightning's six": [r for r in rows if r["lang"] in LIGHTNING_LANGS],
                   "the others": [r for r in rows if r["lang"] not in LIGHTNING_LANGS]}
-        for label, sub in groups.items():
+        for label, sub in parts.items():
             s = summary(sub)
             if not s["n"]:
                 continue
@@ -179,6 +231,18 @@ def score(out: Path) -> int:
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
                   f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} |")
+    print("\nWhere a warm answer's time goes (medians, seconds; the search parts are the "
+          "node's own timings, summed over an answer's searches):\n")
+    print("| model | warm answers | answer | model rounds | tool calls | search | rerank "
+          "| language plan | dense | words |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
+    for name, rows in groups:
+        warm = [r for r in rows if r.get("warm", True) and not r["error"] and "model_s" in r]
+        cells = [_median([r["seconds"] for r in warm]), _median([r["model_s"] for r in warm]),
+                 _median([r["tools_s"] for r in warm])]
+        cells += [_median([r["search_s"][p] for r in warm])
+                  for p in ("total", "rerank", "languages", "dense", "fts")]
+        print(f"| {name} | {len(warm)} | " + " | ".join(cells) + " |")
     return 0
 
 
@@ -214,6 +278,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
     p.add_argument("--per-lang", type=int, default=None)
     p.add_argument("--collections", default="")
+    p.add_argument("--tag", default="", help="the configuration these answers run on "
+                   "(e.g. opt0, opt-default+graph); score splits by it")
+    p.add_argument("--redo", action="store_true", help="ask again, under --tag, the "
+                   "questions answered under another tag")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p = sub.add_parser("sample")
@@ -224,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "run":
         cols = [c for c in a.collections.split(",") if c] or None
         return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang),
-                   collections=cols)
+                   collections=cols, tag=a.tag, redo=a.redo)
     if a.cmd == "score":
         return score(a.out)
     return sample(a.out, [r for r in a.runs.split(",") if r], a.n)

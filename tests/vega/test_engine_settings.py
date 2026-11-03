@@ -1,7 +1,19 @@
-"""Every llama.cpp model the node holds runs the MEASURED engine settings, or
-a measured exception named here (operator, 2026-11-03, choice C: "B is plug
-and play but not good for louise robustness" — the files stay explicit, and
-drift fails this test instead of shipping).
+"""Every llama.cpp model the node runs FOR ITSELF — chat, rerank, translate —
+runs the MEASURED engine settings, or a measured exception named here
+(operator, 2026-11-03, choice C: "B is plug and play but not good for louise
+robustness" — the files stay explicit, and drift fails this test instead of
+shipping).
+
+NOT AN EMBEDDER (operator, the same day: "Collections should have already a
+recommended setting for the embedder they use. A global rule file conflicts
+with any peer wanting for whatever reason recommend a different setting for
+its own made collection"). An encoder serves a collection's space, and its
+settings are the collection's: the engine it was tested on is frozen in the
+Codex (`space.encoder.engine`, 09 §9.3), how RAGE drives it is the
+collection's signed recommended settings (09 §9.19), and any other run
+contributes only once the gate validated it (invariant 1, 12). A file with
+`"embeddings": true` and no `"reranking"` is an encoder and is not checked
+here.
 
 Why a test and not a default the backend applies: one edit to a backend
 default would change every model at its next load, and chat models are not
@@ -49,10 +61,6 @@ MEASURED: dict[str, dict[str, object]] = {
 #: (model, setting) → (value, where it was measured). Only that model differs
 #: from the set, only on that setting. An exception nobody measured is drift.
 EXCEPTIONS: dict[tuple[str, str], tuple[str, str]] = {
-    ("vega-medcpt-query", "flash_attention"): (
-        "off", ("approved-encoders.md, 2026-10-30/31: on, a flip across fresh loads in 3 of 8 "
-                "runs; off, bit-exact in 12 of 12 and the 528-text sweep, and faster "
-                "(~26.5 s against ~33 s a run); stated as run 71d129c3")),
     ("louise-translate-madlad", "flash_attention"): (
         "off", ("approved-encoders.md \"Known limits\": T5 cannot use flash attention "
                 "(its relative attention bias); MADLAD-400 is a T5")),
@@ -76,13 +84,22 @@ def _read(path: Path) -> dict:
     return json.loads(text)
 
 
+def encoder(cfg: dict) -> bool:
+    """A model that serves a collection's space: its settings are the
+    collection's (the Codex's engine, its recommended settings), not the
+    node's. A reranker declares embeddings too, and reranking."""
+    return bool(cfg.get("embeddings")) and not cfg.get("reranking")
+
+
 def staged() -> dict[str, tuple[str, dict]]:
-    """name → (where, config) of every model file the node takes: the staged
-    model files and the gallery installs' overrides."""
+    """where → (name, config) of every model file the node takes for itself:
+    the staged model files that are not encoders, and the gallery installs'
+    overrides."""
     out: dict[str, tuple[str, dict]] = {}
     for path in sorted((STAGE / "models").glob("*.yaml")):
         cfg = _read(path)
-        out[f"models/{path.name}"] = (cfg["name"], cfg)
+        if not encoder(cfg):
+            out[f"models/{path.name}"] = (cfg["name"], cfg)
     for path in sorted((STAGE / "gallery").glob("*.json")):
         body = _read(path)
         out[f"gallery/{path.name}"] = (body["name"], body.get("overrides") or {})
@@ -157,8 +174,20 @@ def test_a_drifted_file_is_named():
     assert settings(chat) != expected("louise-chat-other", "sycl")
     measured = {**chat, "env": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}}
     assert settings(measured) == expected("louise-chat-other", "sycl")
-    assert settings(measured) != expected("vega-medcpt-query", "sycl"), "its exception unheld"
+    assert settings(measured) != expected("louise-translate-madlad", "sycl"), "its exception unheld"
     cpu = {"backend": "vega-louise-llama-cpp-cpu", "env": {"OMP_NUM_THREADS": "8"}}
-    assert settings(cpu) == expected("vega-medcpt-query-cpu", "cpu")
+    assert settings(cpu) == expected("louise-rerank-cpu", "cpu")
     assert vendor("louise-sycl-f16-llama-cpp-16acc89") == "sycl"
     assert vendor("vega-louise-openvino") is None
+
+
+def test_an_encoder_is_the_collections_not_the_nodes():
+    """A peer may recommend other settings for its own collection's encoder
+    (operator, 2026-11-03): no encoder file is held to the node's set, and
+    every reranker and chat model is."""
+    files = {p.name: _read(p) for p in (STAGE / "models").glob("*.yaml")}
+    held = {where.split("/", 1)[1] for where in staged() if where.startswith("models/")}
+    for name, cfg in files.items():
+        assert (name in held) is (not encoder(cfg)), name
+    assert {"louise-rerank-bge.yaml", "louise-chat-qwen3-8b.yaml"} <= held
+    assert "vega-nemotron-3-embed-1b.yaml" not in held

@@ -16,6 +16,7 @@ answer with what it has.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Callable
 
 from app.hold.codex import CodexError
@@ -93,9 +94,13 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
         call: Callable[[str, dict[str, Any]], Any] | None = None, model=None,
         max_rounds: int = MAX_ROUNDS) -> dict[str, Any]:
     """One question through the loop: `{answer, turns: [{tool, arguments,
-    result}], rounds, exhausted}`. `model(messages, tools) -> (content,
-    calls, assistant_message)` is llm.chat_tools unless a test gives
-    another; `call(name, args)` is the MCP dispatcher."""
+    result, error, seconds}], rounds, exhausted, model_s}`. `model(messages,
+    tools) -> (content, calls, assistant_message)` is llm.chat_tools unless a
+    test gives another; `call(name, args)` is the MCP dispatcher.
+    `model_s` is each model round's wall time and `seconds` each tool call's,
+    so where an answer's time went is read off the answer itself
+    (tools/measure/chat_eval.py; operator, 2026-11-03: "Use the chat
+    comparison benchmark to work on the optimizations")."""
     from app import config, llm
     from app.ask import mcp
     if not isinstance(question, str) or not question.strip():
@@ -115,17 +120,27 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     messages.append({"role": "user", "content": question})
     tools = tool_specs()
     turns: list[dict[str, Any]] = []
+    model_s: list[float] = []
+
+    def timed_model(tools_offered):
+        t0 = time.monotonic()
+        try:
+            return model(messages, tools_offered)
+        finally:
+            model_s.append(round(time.monotonic() - t0, 3))
     rounds = 0
     while rounds < max_rounds:
         rounds += 1
-        content, calls, assistant = model(messages, tools)
+        content, calls, assistant = timed_model(tools)
         if not calls:
-            return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": False}
+            return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": False,
+                    "model_s": model_s}
         messages.append(assistant)
         for c in calls:
             args = c.arguments if isinstance(c.arguments, dict) else {}
             if collections and c.name == "louise_search" and not args.get("collections"):
                 args = {**args, "collections": list(collections)}
+            t0 = time.monotonic()
             try:
                 result = call(c.name, args)
                 shown = compact(c.name, result)
@@ -134,8 +149,10 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
                 result, shown, error = None, {"error": str(e)}, str(e)
             except KeyError:
                 result, shown, error = None, {"error": f"no tool named {c.name!r}"}, f"no tool named {c.name!r}"
-            turns.append({"tool": c.name, "arguments": args, "result": result, "error": error})
+            turns.append({"tool": c.name, "arguments": args, "result": result, "error": error,
+                          "seconds": round(time.monotonic() - t0, 3)})
             messages.append(llm.tool_message(c, json.dumps(shown, ensure_ascii=False, default=str)))
     # the bound reached: the model answers with what it has, tools withheld
-    content, _, _ = model(messages, None)
-    return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": True}
+    content, _, _ = timed_model(None)
+    return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": True,
+            "model_s": model_s}
