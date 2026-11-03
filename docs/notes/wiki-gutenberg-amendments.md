@@ -269,3 +269,34 @@ compare the 2 nemo options during the night when no one is using louise").
 - Precision, recall and F1, and the paired test between models over
   documents.
 
+
+## Nemotron out for summaries and relations (operator, 2026-11-03) — PROPOSED
+
+"For wiki-gutenberg summaries nemo is out of the games, propose alternatives
+based on available benchmarks. I can get it through localai". Nemotron's
+post-training is English-only (its tech report §6), and Lightning names six
+languages; gutenberg is in dozens, and the first slice is Latin and Ancient Greek.
+
+No card publishes a summarization or relation-extraction score, so the
+shortlist rests on the nearest published rows. Every number below is copied
+from the model's own card, unless it says another card. All four are
+Apache-2.0 and in LocalAI's gallery:
+
+| option (gallery entry) | card numbers | pros | cons |
+|---|---|---|---|
+| **A. Qwen3.8-27B** (`qwen3.8-27b`: unsloth UD-Q4_K_M + an MTP draft) | IFBench 79.5, GPQA Diamond 89.2 (Qwen3.6-27B on the same card: 69.1, 87.8) | the newest Qwen and the best instruction following published for any candidate; MTP speeds decoding | dense: several times slower per token than a 3 B-active MoE; no multilingual or long-context row on its card; DeltaNet ops and MTP unchecked on our SYCL engine |
+| **B. Qwen3.6-35B-A3B** (`qwen3.6-35b-a3b`, UD-Q4_K_M ~21 GB) | MMLU-Pro 85.2, GPQA 86.0; its 3.5 predecessor: AA-LCR 58.5, IFBench 70.2, MMMLU 85.2, 201 languages | fastest (3 B active) | below A on every shared row; 21 GB beside the embedder |
+| C. Gemma 4 31B (`gemma-4-31b-it`) | MMMLU 88.4, MRCR 128k 66.4, MMLU-Pro 85.2 | best multilingual knowledge row | dense and the slowest; "35+ languages out of the box" (a Latin/Greek risk) |
+| D. Gemma 4 26B-A4B (the plan before Nemotron; `gemma-4-26b-a4b-it`, Q8_0 ~27 GB) | MMMLU 86.3, MRCR 44.1, MMLU-Pro 82.6 | MoE, 3.8 B active | weakest long-context row; the same language claim |
+
+Cross-card numbers are not comparable. Qwen3.6-27B scores IFBench 69.1 on
+Qwen3.8's card, where Qwen3.5-27B's own card gives 76.5.
+
+**Recommendation:** run A against B.
+- On the same communities: a blind-read sample of ~30 summaries, plus tokens/s.
+- On Re-DocRED for relations, with the existing harness. One model then does
+  job 3 whole.
+- Take A if it is clearly better and the volume fits the night windows,
+  otherwise B.
+- Gemma comes in only if the Qwen3.5 architecture fails on our card. Today's
+  9B engine checks answer that.
