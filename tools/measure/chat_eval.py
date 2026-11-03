@@ -536,6 +536,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "rewrite_s": got.get("rewrite_s"),
                    "cited_uids": cited_uids,
                    "facts": facts, "support": support,
+                   # the engine could not parse the model's tool call: answered without tools
+                   "tools_failed": got.get("tools_failed"),
                    # what the model sent Louise: each call's tool and arguments, as asked
                    "calls": [{"tool": t.get("tool"), "arguments": t.get("arguments"),
                               "by": t.get("by") or "model", "dropped": t.get("dropped") or [],
@@ -596,6 +598,8 @@ def pilot_report(out: Path, name: str, tag: str, keys: list[str]) -> Path:
             lines.append("- the model called: " + "; ".join(
                 f"{c.get('tool')} {json.dumps(c.get('arguments'), ensure_ascii=False)}"
                 + (f" REFUSED {c.get('error')}" if c.get("error") else "") for c in own))
+        if r.get("tools_failed"):
+            lines.append(f"- TOOLS FAILED, answered without them: {r['tools_failed']}")
         for u in (r.get("support") or {}).get("uncited", []):
             lines.append(f"- uncited, in no source: {', '.join(u['missing'])}")
         lines.append(f"- answer language guessed: {r.get('answer_lang')}; {r.get('seconds')} s "

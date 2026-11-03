@@ -446,6 +446,7 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     tools = tool_specs()
     model_s: list[float] = []
     slimmed = 0
+    tools_failed: str | None = None
 
     def timed_model(tools_offered):
         nonlocal slimmed
@@ -469,9 +470,12 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
 
     def done(content: str, rounds: int, exhausted: bool) -> dict[str, Any]:
         cited, unknown = sources.cited(content)
-        return {"answer": content, "sources": sources.entries, "cited": cited, "cited_unknown": unknown,
-                "turns": turns, "rounds": rounds, "exhausted": exhausted,
-                "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
+        out = {"answer": content, "sources": sources.entries, "cited": cited, "cited_unknown": unknown,
+               "turns": turns, "rounds": rounds, "exhausted": exhausted,
+               "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
+        if tools_failed:
+            out["tools_failed"] = tools_failed
+        return out
 
     def without_tools() -> str:
         """The model's answer with the tools withheld. One that is only a
@@ -498,9 +502,23 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
         try:
             content, calls, assistant = timed_model(tools)
         except httpx.HTTPStatusError as e:
-            if not too_large(e):
+            if too_large(e):
+                return answer_with_what_it_has(rounds)
+            if e.response.status_code < 500:
                 raise
-            return answer_with_what_it_has(rounds)
+            # A TOOL CALL THE ENGINE CANNOT PARSE (2026-11-03, München: Command
+            # R7B on llama.cpp ddf48f8 — no handler for its template, so the
+            # generic parser threw on "I will search for …[" and LocalAI
+            # answered 500 the moment the model chose a tool; upstream #20708,
+            # #20786). The round is answered without tools, from the sources
+            # Louise already searched; a server that fails that too is a
+            # fault, and its error is raised from there.
+            try:
+                body = e.response.text
+            except Exception:   # noqa: BLE001 — an unreadable body is said as unreadable
+                body = "(unreadable)"
+            tools_failed = f"{e.response.status_code}: {body[:200]}"
+            return done(without_tools(), rounds, True)
         if not calls:
             return done(without_tool_text(content), rounds, False)
         messages.append(assistant)
