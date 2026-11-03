@@ -342,3 +342,30 @@ def test_the_slots_order_is_what_rerank_list_returns_when_switched(monkeypatch):
     out, ok = retrieval._rerank_list("q", hits, JINA, 5.0, queries={"en": "q-en"})
     assert ok and [h["lang"] for h in out] == ["it", "it", "en", "en"], "the Italian records keep their places"
     assert [h["book_id"] for h in out] == [1, 0, 3, 2], "each language in the reranker's order"
+
+
+def test_a_text_sent_twice_against_one_query_is_scored_once_and_shared(monkeypatch):
+    """2026-11-03: the rerank was 6.2 s of a 7.0 s search. Two records that
+    send the same text (editions under one title) against the same query
+    get one score: at `parallel:1` a pair's score is a function of the pair
+    alone, so the order is the one the duplicate would have given."""
+    calls = _server(monkeypatch)
+    hits = _hits("c", 4)
+    hits[3]["text"] = hits[1]["text"]
+    out, ok = retrieval._rerank_list("q", hits, JINA, 0.4)
+    sent = calls[0]["json"]["documents"]
+    assert ok and len(sent) == 3 and sent == list(dict.fromkeys(sent)), "no text twice"
+    by_book = {h["book_id"]: h["rerank_score"] for h in out}
+    assert by_book[3] == by_book[1] == 1.0 and by_book[2] == 2.0 and by_book[0] == 0.0
+    assert out[0]["book_id"] == 2
+
+
+def test_the_same_text_against_two_queries_is_scored_against_each(monkeypatch):
+    """Not a duplicate: one record in Italian scored against the query's
+    Italian variant, its twin text in English against the query."""
+    calls = _server(monkeypatch)
+    hits = _hits("c", 2)
+    hits[1]["text"] = hits[0]["text"]
+    hits[0]["lang"], hits[1]["lang"] = "it", "en"
+    _out, ok = retrieval._rerank_list("q", hits, JINA, 0.4, queries={"it": "q it"})
+    assert ok and sorted(len(c["json"]["documents"]) for c in calls) == [1, 1]
