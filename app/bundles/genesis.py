@@ -792,15 +792,29 @@ def _merge(w: _Walk, found) -> None:
     w.demand.update(fresh)
 
 
+# THE PRIMARY KEY, PINNED. With more than a few uids in the IN list and no
+# sqlite_stat1, SQLite prefers idx_documents_scope's four equalities to the
+# uid key: on wikipedia that walked 14.6 M index entries per 500 uids, 11.8 s
+# each, and wikipedia's fts fell ~8x (München, 2026-11-03 04:40, py-spy 89.4 %
+# here). The unary plus takes the scope columns out of index selection (the
+# SQLite idiom, https://sqlite.org/optoverview.html, "Disqualifying WHERE
+# clause terms"), so only uid=? can drive the lookup.
+_BY_UID_WHERE = ("+in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=0 "
+                 "AND error IS NULL")
+_BY_UID_CHUNK = 500
+
+
+def by_uid_sql(columns: str, n: int) -> str:
+    return (f"SELECT {columns} FROM documents WHERE uid IN ({','.join('?' * n)}) "
+            f"AND {_BY_UID_WHERE}")
+
+
 def _by_uid(con, uids, columns: str) -> Iterator:
     """Candidate rows of these uids, 500 at a time on the primary key."""
     uids = list(uids)
-    for i in range(0, len(uids), 500):
-        part = uids[i:i + 500]
-        marks = ",".join("?" * len(part))
-        yield from con.execute(
-            f"SELECT {columns} FROM documents WHERE uid IN ({marks}) "
-            f"AND {_CANDIDATE_WHERE}", part)
+    for i in range(0, len(uids), _BY_UID_CHUNK):
+        part = uids[i:i + _BY_UID_CHUNK]
+        yield from con.execute(by_uid_sql(columns, len(part)), part)
 
 
 def _announced_rows(con, announced) -> list:
