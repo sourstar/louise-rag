@@ -222,3 +222,71 @@ def test_a_question_in_a_script_without_a_word_list_is_still_named(chat_model):
                            ("Кто написал роман Война и мир?", "ru"), ("谁写了红楼梦？", "zh")):
         out = chat.ask(question, call=lambda n, a: {}, model=scripted(("ok", [])))
         assert out["answer_lang"] == lang
+
+
+def _big_search(n: int) -> dict:
+    return {"lists": [{"space_id": "s", "hits": [
+        {"uid": f"gutenberg:{n}{i}", "rank": i + 1, "title": f"Book {i}", "lang": "en", "text": "word " * 400}
+        for i in range(10)]}], "facts": [], "timings": {}}
+
+
+def test_the_conversation_is_kept_within_the_context(chat_model):
+    """2026-11-03, Ask's benchmark: 7 of 50 answers failed with a 400 once
+    several searches' results outgrew the 16k context. The oldest results
+    are slimmed to their citable skeleton first; the latest stays whole."""
+    search = llm.ToolCall(None, "louise_search", {"query": "q"})
+    model = scripted(*([("", [search])] * 7), ("done [gutenberg:61].", []))
+    n = iter(range(100))
+    out = chat.ask("q", call=lambda name, a: _big_search(next(n)), model=model, max_rounds=8)
+    budget = chat.CONTEXT_TOKENS - chat.ANSWER_TOKENS - chat.MARGIN_TOKENS
+    assert all(chat.request_tokens(msgs, tools) <= budget for msgs, tools in model.seen)
+    assert out["slimmed"] > 0 and out["answer"] == "done [gutenberg:61]."
+    last_msgs, _ = model.seen[-1]
+    tool_msgs = [m for m in last_msgs if m["role"] == "tool"]
+    first, latest = json.loads(tool_msgs[0]["content"]), json.loads(tool_msgs[-1]["content"])
+    assert first["slimmed"] and first["lists"][0]["hits"][0] == {
+        "uid": "gutenberg:00", "title": "Book 0", "rank": 1, "lang": "en"}, "citable, without text"
+    assert "slimmed" not in latest and "text" in latest["lists"][0]["hits"][0]
+
+
+def test_a_request_the_server_refuses_as_too_large_is_answered_with_what_it_has(chat_model):
+    """A 400 after the tools have run: every result slimmed, tools withheld,
+    one more ask. The answer is never lost because the searches returned a lot."""
+    import httpx
+    search = llm.ToolCall(None, "louise_search", {"query": "q"})
+    calls = []
+
+    def model(messages, tools):
+        calls.append(tools)
+        if len(calls) == 2:
+            raise httpx.HTTPStatusError("400", request=httpx.Request("POST", "http://x"),
+                                        response=httpx.Response(400, text=OVER))
+        if len(calls) == 1:
+            return "", [search], {"role": "assistant", "content": ""}
+        return "From what I found [gutenberg:00].", [], {"role": "assistant", "content": ""}
+    out = chat.ask("q", call=lambda n, a: _big_search(0), model=model)
+    assert out["answer"].startswith("From what I found") and out["exhausted"] and out["slimmed"] == 1
+    assert calls[-1] is None, "tools withheld on the last ask"
+
+
+#: LocalAI's answer, measured on the node 2026-11-03 (Ask's benchmark, qwen3.5-9b-q4)
+OVER = ('{"error":{"code":400,"message":"code=400, message=rpc error: code = Internal desc = '
+        'request (17013 tokens) exceeds the available context size (16384 tokens), try increasing it"}}')
+
+
+@pytest.mark.parametrize("before_any_tool,text", [(True, OVER), (False, '{"error": "bad template"}')])
+def test_any_other_refusal_is_raised_not_answered_around(chat_model, before_any_tool, text):
+    """Only the context refusal after tools ran is answered around; a 400
+    before any tool, or for another reason, is a fault to see."""
+    import httpx
+    search = llm.ToolCall(None, "louise_search", {"query": "q"})
+    calls = []
+
+    def model(messages, tools):
+        calls.append(1)
+        if before_any_tool or len(calls) == 2:
+            raise httpx.HTTPStatusError("400", request=httpx.Request("POST", "http://x"),
+                                        response=httpx.Response(400, text=text))
+        return "", [search], {"role": "assistant", "content": ""}
+    with pytest.raises(httpx.HTTPStatusError):
+        chat.ask("q", call=lambda n, a: _big_search(0), model=model)
