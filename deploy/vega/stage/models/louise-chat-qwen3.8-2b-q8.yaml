@@ -1,0 +1,40 @@
+# louise-chat-qwen3.8-2b-q8: the operator's install of 2026-11-03 or before (gallery entry in docs/notes/nemotron-embed.md, the chat
+# model), run on OUR engine: the measured SYCL set, p1, 16k, thinking off, no projector, the entry's sampling; MTP
+# speculative decoding kept where the entry has it (it does not change the target's outputs). A chat candidate.
+backend: vega-louise-llama-cpp
+chat_template_kwargs:
+    enable_thinking: false
+context_size: 16384
+env:
+    GGML_SYCL_ENABLE_DNN: "0"
+    GGML_SYCL_FA_ONEDNN: "0"
+    NEO_CACHE_DIR: /data/louise-cache/neo-cache
+flash_attention: "on"
+function:
+    automatic_tool_parsing_fallback: true
+    grammar:
+        disable: true
+gpu_layers: 999
+known_usecases:
+    - chat
+mmap: true
+name: louise-chat-qwen3.8-2b-q8
+options:
+    - use_jinja:true
+    - parallel:1
+    - cache_ram:0
+    - ubatch:512
+parameters:
+    batch: 2048
+    min_p: 0
+    model: llama-cpp/models/qwen3.8-2b/Qwen3.8-2B-Q8_0.gguf
+    presence_penalty: 1.5
+    repeat_penalty: 1
+    seed: 0
+    temperature: 0.6
+    top_k: 20
+    top_p: 0.95
+reasoning_effort: none
+template:
+    use_tokenizer_template: true
+threads: 6
