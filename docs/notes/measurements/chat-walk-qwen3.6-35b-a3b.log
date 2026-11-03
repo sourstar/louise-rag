@@ -1,0 +1,136 @@
+=== 2026-11-03 19:32:55 install (free on ssd5: 137G)
+=== 2026-11-03 19:46:10 apply: True completed None
+backend: vega-louise-llama-cpp
+chat_template_kwargs:
+    enable_thinking: false
+context_size: 16384
+draft_model: ""
+env:
+    GGML_SYCL_ENABLE_DNN: "0"
+    GGML_SYCL_FA_ONEDNN: "0"
+    NEO_CACHE_DIR: /data/louise-cache/neo-cache
+flash_attention: "on"
+function:
+    automatic_tool_parsing_fallback: true
+    grammar:
+        disable: true
+gpu_layers: 999
+known_usecases:
+    - chat
+mmap: true
+mmproj: ""
+name: louise-chat-qwen3.6-35b-a3b
+options:
+    - use_jinja:true
+    - parallel:1
+    - cache_ram:0
+    - ubatch:512
+parameters:
+    batch: 2048
+    min_p: 0
+    model: llama-cpp/models/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+    presence_penalty: 1.5
+    repeat_penalty: 1
+    seed: 0
+    temperature: 0.7
+    top_k: 20
+    top_p: 0.8
+reasoning_effort: none
+template:
+threads: 6
+=== 2026-11-03 19:46:10 no backend installed or updated
+total 21560958
+drwxr-x---  2 apps root           3 Nov  3 19:45 .
+drwxr-x--- 17 apps root          22 Nov  3 19:33 ..
+-rw-------  1 apps root 22134528992 Nov  3 19:45 Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+=== 2026-11-03 19:46:10 fit beside the query encoders and the reranker
+{"steps": [{"warm": "vega-qwen3-embedding-4b", "status": 500}, {"warm": "vega-bge-m3", "status": 500}, {"warm": "louise-rerank-bge", "status": 200}], "chat_status": 200, "chat_first_answer_s": 38.9, "evicted": ["louise-rerank-medcpt", "vega-bge-m3", "vega-qwen3-embedding-4b"], "encoders_after": [{"model": "vega-qwen3-embedding-4b", "status": 500, "seconds": 7.43}, {"model": "vega-bge-m3", "status": 500, "seconds": 8.28}], "final_loaded": ["louise-rerank-bge", "louise-translate-madlad", "vega-bge-m3", "vega-qwen3-embedding-4b"]}
+card before {'size_gib': 31.89, 'used_gib': 15.14, 'free_gib': 16.75} after {'size_gib': 31.89, 'used_gib': 8.61, 'free_gib': 23.28}
+  2135933 {'backend': 'louise-sycl-f16-llama-cpp-16acc89', 'vram_gib': 0.89, 'gtt_mib': 160.0}
+  2142189 {'backend': 'louise-sycl-f16-llama-cpp-16acc89', 'vram_gib': 7.69, 'gtt_mib': 862.0}
+=== 2026-11-03 19:47:23 engine check and garbage prompts
+written /root/measure/chat-check-louise-chat-qwen3.6-35b-a3b.json
+  prompt 0: clean; same text as before: False; 'Roy Chapman Andrews recounts his modern shore-whaling experiences in Japan, highlighting the excitement of hunting sei whales and the scient'
+  prompt 1: clean; same text as before: False; "'I Promessi Sposi' è stato scritto da Alessandro Manzoni ed è ambientato nel XVII secolo."
+  prompt 2: clean; same text as before: False; 'Here are three famous novels by Alexandre Dumas along with their publication years:\n\n1. **The Three Musketeers** (*Les Trois Mousquetaires*)'
+=== 2026-11-03 19:48:22 walk (on sha256:83d263e261093ae335d4ae766373526a1ea0a5b63de10e2a9fe500d5cbffe5b3)
+=== 2026-11-03 19:50:22 walk en
+{
+ "answer": "The Dumas novel about the diamond necklace scandal at the court of Louis XVI and Marie Antoinette is **\"La Reine Margot\"**? No, that is about the St. Bartholomew's Day massacre. The novel specifically dealing with the Diamond Necklace Affair and set in the court of Louis XVI and Marie Antoinette is **\"La Reine Marie-Antoinette\"**? Or perhaps **\"Joseph Balsamo\"**?\n\nLet's look at the sources provided.\n\nSource [3] is titled **\"Kuningattaren kaulanauha: Historiallinen romaani Ludvig XVI:n hovista\"** (The Queen's Necklace: Historical Novel of the Court of Louis XVI) by Alexandre Dumas and Auguste Maquet. The title literally translates to \"The Queen's Necklace,\" which refers to the Diamond Necklace Affair.\n\nSource [4] is titled **\"Rouva de la Motte\"** (Madame de La Motte) by Dumas and Maquet. Madame de La Motte was a central figure in the Diamond Necklace scandal. The text mentions that \"Rouva de la Motte\" begins with the appearance of Balsamo (Cagliostro) in Paris.\n\nSource [10] is titled **\"Josef Balsamo: Historiallinen romaani Ludvig XV:n hovista\"** (Joseph Balsamo: Historical Novel of the Court of Louis XV). This is the first part of the series.\n\nThe Diamond Necklace Affair occurred during the reign of Louis XVI. The novel **\"La Reine Marie-Antoinette\"** by Dumas is often associated with this period, but the specific title in the Finnish sources provided that directly references the \"necklace\" (kaulanauha) is Source [3].\n\nIn French, the novel is likely **\"La Reine Marie-Antoinette\"** or potentially a part of the **\"Joseph Balsamo\"** series which spans the reigns of Louis XV and Louis XVI. However, the specific Finnish title in Source [3] **\"Kuningattaren kaulanauha\"** (The Queen's Necklace) is the most direct match for \"novel about the diamond necklace scandal.\"\n\nAnother possibility is **\"La Reine Margot\"** is not it. **\"Vingts ans après\"**? No.\n\nLet's check if there is a specific French title. The Finnish title \"Kuningattaren kaulanauha\" suggests the French title might be **\"La Reine Marie-Antoinette\"** or **\"Le Collier de la Reine\"**? Actually, Dumas wrote a novel called **\"La Reine Marie-Antoinette\"**. But there is also a novel called **\"Le Collier de la Reine\"**? No, that might be a different author or a subtitle.\n\nWait, Source [3] is explicitly titled **\"Kuningattaren kaulanauha: Historiallinen romaani Ludvig XVI:n hovista\"**. This translates to \"The Queen's Necklace: Historical Novel of the Court of Louis XVI\". This matches the query perfectly.\n\nSource [4] **\"Rouva de la Motte\"** is also by Dumas and Maquet and relates to the scandal (Madame de La Motte was the conspirator).\n\nThe question asks for the \"Dumas novel\". The most prominent Dumas novel covering this era and scandal is often considered part of the **\"Joseph Balsamo\"** series (which includes *Le Collier de la Reine*? No, *Joseph Balsamo* is the first volume. The series continues with *La Comtesse de Charny*, *Antony*, *Le Chevalier de Maison-Rouge*, *Les Maharattas*, *L'Antéchrist*, *Les Supplémentaires*, *La Comtesse de Saxe*).\n\nActually, the specific volume dealing with the necklace scandal in the Dumas canon is often identified as **\"Le Collier de la Reine\"**? Let me check if Dumas wrote a book with that exact title. Dumas wrote **\"Joseph Balsamo\"** (1846–1847), which covers the early part. The scandal happens later.\n\nHowever, based *only* on the provided sources:\nSource [3] is **\"Kuningattaren kaulanauha\"** (The Queen's Necklace) by Dumas and Maquet.\nSource [4] is **\"Rouva de la Motte\"** (Madame de La Motte) by Dumas and Maquet.\n\nThe Finnish title \"Kuningattaren kaulanauha\" is the direct translation of \"The Queen's Necklace\". This is likely the title used in Finland for a specific Dumas work or a collection. In French, Dumas' work **\"La Reine Marie-Antoinette\"** is a history, not a novel. The novel series is **\"Les Rois et les reines\"**?\n\nLet's look at Source [1]: **\"Hirmuhallitus\"** (The Regency? Or Tyranny?). This is likely **\"Le Vicomte de Bragelonne\"** or similar? No, \"Hirmuhallitus\" might be **\"La Reine Margot\"**? No.\n\nActually, the novel **\"Le Collier de la Reine\"** is not a standard Dumas title. The scandal is featured in **\"Joseph Balsamo\"** and **\"La Comtesse de Charny\"**.\n\nHowever, the source [3] explicitly names **\"Kuningattaren kaulanauha\"** (The Queen's Necklace) as a historical novel by Dumas and Maquet set in the court of Louis XVI. This is the best match from the provided text.\n\nThe English title of the work corresponding to Source [3] is likely **\"The Queen's Necklace\"** or it might be a part of the **\"Joseph Balsamo\"** series. But since the source lists it as a distinct title, I will cite it.\n\nAnother candidate is Source [4] **\"Rouva de la Motte\"**.\n\nThe query asks for the novel about the scandal. The scandal is the \"Diamond Necklace Affair\". Source [3] is titled \"The Queen's Necklace\".\n\nI will identify the novel as **\"Kuningattaren kaulanauha\"** (The Queen's Necklace) by Alexandre Dumas and Auguste Maquet, as found in Source [3]. I should also mention **\"Rouva de la Motte\"** (Source [4]) as it is related.\n\nIn English, Dumas' work is often known as **\"Joseph Balsamo\"** (which includes the character Cagliostro and the lead-up) and **\"La Comtesse de Charny\"**. However, the specific Finnish title \"Kuningattaren kaulanauha\" suggests a specific edition or translation title.\n\nLet's verify if \"Kuningattaren kaulanauha\" is a known English title. It translates to \"The Queen's Necklace\". There is a novel called **\"The Queen's Necklace\"** by **Eugène Sue**? No, the source says Dumas.\n\nActually, Dumas and Maquet wrote a novel called **\"La Reine Marie-Antoinette\"** (history) and the novel series **\"Joseph",
+ "tools_failed": null,
+ "cited": [
+  {
+   "n": 3,
+   "title": "Kuningattaren kaulanauha: Historiallinen romaani Ludvig XVI:n hovista",
+   "uid": "gutenberg:54229"
+  },
+  {
+   "n": 4,
+   "title": "Rouva de la Motte",
+   "uid": "gutenberg:54174"
+  },
+  {
+   "n": 10,
+   "title": "Josef Balsamo: Historiallinen romaani Ludvig XV:n hovista",
+   "uid": "gutenberg:54095"
+  },
+  {
+   "n": 1,
+   "title": "Hirmuhallitus",
+   "uid": "gutenberg:74803"
+  }
+ ],
+ "cited_unknown": [],
+ "model_s": [
+  46.163
+ ],
+ "rounds": 1,
+ "exhausted": false,
+ "answer_lang": "en",
+ "turn_errors": []
+}
+=== 2026-11-03 19:51:44 walk it
+{
+ "answer": "Il romanzo di Alexandre Dumas (con Auguste Maquet) che tratta dello scandalo della collana alla corte di Luigi XVI è intitolato **Le Collier de la Reine** [7][9][10].\n\nNelle traduzioni in finlandese disponibili nelle collezioni, l'opera è nota come:\n*   *Kuningattaren kaulanauha: Historiallinen romaani Ludvig XVI:n hovista* [2]\n*   *Hirmuhallitus* (che sembra essere un titolo alternativo o una parte della serie, dato che compare con lo stesso autore e traduttore in un contesto simile) [1]\n\nIl titolo originale francese, *Le Collier de la Reine*, è citato esplicitamente nelle liste bibliografiche delle opere di Dumas [7][9][10].",
+ "tools_failed": null,
+ "cited": [
+  {
+   "n": 7,
+   "title": "Georges",
+   "uid": "gutenberg:18271"
+  },
+  {
+   "n": 9,
+   "title": "Le chevalier d'Harmental",
+   "uid": "gutenberg:18028"
+  },
+  {
+   "n": 10,
+   "title": "Le comte de Monte-Cristo, Tome IV",
+   "uid": "gutenberg:17992"
+  },
+  {
+   "n": 2,
+   "title": "Kuningattaren kaulanauha: Historiallinen romaani Ludvig XVI:n hovista",
+   "uid": "gutenberg:54229"
+  },
+  {
+   "n": 1,
+   "title": "Hirmuhallitus",
+   "uid": "gutenberg:74803"
+  }
+ ],
+ "cited_unknown": [],
+ "model_s": [
+  47.288
+ ],
+ "rounds": 1,
+ "exhausted": false,
+ "answer_lang": "it",
+ "turn_errors": []
+}
+=== 2026-11-03 19:51:44 pilot 3 a language
+19:51:45 [node info:models] model pin: louise-chat-qwen3.6-35b-a3b pinned for chat_eval pid 1 (it was unpinned; restored after)
+qwen3.6-35b-a3b: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3.6-35b-a3b/pilot-iface.md
+=== 2026-11-03 19:53:56 STOP: the pilot waits for the architecture session's read and pilot-ok
