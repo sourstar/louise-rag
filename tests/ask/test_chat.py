@@ -382,3 +382,21 @@ def test_a_tool_call_the_engine_cannot_parse_is_answered_without_tools(chat_mode
                                     response=httpx.Response(500, text="down"))
     with pytest.raises(httpx.HTTPStatusError):
         chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=down), "failing without tools too: raised"
+
+
+def test_ask_sends_no_temperature_and_each_model_runs_its_own_file(fake_chat, monkeypatch):
+    """2026-11-03: Ask sent 0.2 to every chat model, and Qwen3.6-35B-A3B
+    looped at it; its card says 0.7. The model file decides now; Qwen3-8B's
+    file carries the 0.2 it was measured at."""
+    import json as _json
+    from pathlib import Path
+    monkeypatch.setattr(config, "CHAT_API", "openai")
+    fake_chat["answer"] = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+    llm.chat_tools([{"role": "user", "content": "q"}], None)
+    assert "temperature" not in fake_chat["body"]
+    llm.chat_tools([{"role": "user", "content": "q"}], None, temperature=0.4)
+    assert fake_chat["body"]["temperature"] == 0.4, "a caller that wants one still passes it"
+    root = Path(__file__).resolve().parents[2] / "deploy" / "vega" / "stage" / "models"
+    text = (root / "louise-chat-qwen3-8b.yaml").read_text()
+    cfg = _json.loads("\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#")))
+    assert cfg["parameters"]["temperature"] == 0.2, "the live model runs as it was measured"

@@ -29,17 +29,21 @@ def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
 
-def _request(messages: list[dict], *, stream: bool, temperature: float,
+def _request(messages: list[dict], *, stream: bool, temperature: float | None,
              max_tokens: int | None, num_ctx: int) -> tuple[str, dict]:
-    """(url, body) in the protocol CHAT_URL speaks."""
+    """(url, body) in the protocol CHAT_URL speaks. `temperature` None sends
+    none: the model's own file decides, with the rest of its sampling."""
     if config.CHAT_API == "openai":
         body: dict = {"model": config.CHAT_MODEL, "messages": messages, "stream": stream,
-                      "temperature": temperature,
                       "chat_template_kwargs": {"enable_thinking": False}}
+        if temperature is not None:
+            body["temperature"] = temperature
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
         return f"{config.CHAT_URL}/v1/chat/completions", body
-    options: dict = {"temperature": temperature, "num_ctx": num_ctx}
+    options: dict = {"num_ctx": num_ctx}
+    if temperature is not None:
+        options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = max_tokens
     return f"{config.CHAT_URL}/api/chat", {
@@ -188,13 +192,19 @@ def _arguments(raw) -> dict:
     return {}
 
 
-def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float = 0.2,
+def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float | None = None,
                max_tokens: int = 1500, num_ctx: int = 16384, *,
                level: Level = Level.CHAT) -> tuple[str, list[ToolCall], dict]:
     """One round with function tools declared (`ask chat`, 05 §5.4):
     `(content, calls, assistant_message)` — the assistant message as the
     protocol wants it appended before the tool messages. `tools` None
-    declares none, and the model must answer."""
+    declares none, and the model must answer.
+
+    NO TEMPERATURE OF ITS OWN (2026-11-03): each chat model runs its
+    maker's sampling, from its own model file. This sent 0.2 to every
+    model; Qwen3.6-35B-A3B's pilot looped ("Rouge-Profond ? Non, …" to the
+    token bound) at that near-greedy setting, which Qwen's card warns
+    against, and the cards say 0.7. A caller that wants one passes it."""
     warm(level)
     url, body = _request(messages, stream=False, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
