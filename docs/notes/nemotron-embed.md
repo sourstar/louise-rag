@@ -772,3 +772,18 @@ its work, and `works.json` lists the work's gutenberg books.
 | conveys the query | the model's own searches returned the work (share), and the work's best rank over them (MRR). The reference is `run --direct`: the question searched as typed, no model. A model that beats it conveys the query better than the reader's own words |
 | summarises the results | the answer cites the work it was asked about (share); "found but left out": its searches found the work and the answer did not cite it |
 | citations | cited per answer; grounded (each cited uid was returned by a tool); citing nothing though results came back |
+
+**The fourth (the same day):** "is it adding some additional information or
+distorting an information from the collection, overlapping basically its own
+knowledge?"
+- **Method:** entity-level factual consistency (Nan et al., EACL 2021), simplified
+  (#285). Every number and name the answer states is looked up in what its tools
+  showed the model (`chat.compact`) and in the question. One found in neither was
+  added, or distorted.
+- **Numbers** are counted apart, since they hold in every language.
+- **Names** are noisy in German, which capitalises every noun, and wherever the
+  answer translates a name.
+- **The blind sample** lists each answer's flagged items under it, for the
+  reader to judge.
+- **The full method** would add spaCy NER, a new dependency; asked for if
+  the names column decides.

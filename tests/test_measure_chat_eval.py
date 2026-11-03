@@ -243,3 +243,37 @@ def test_the_direct_row_searches_the_question_as_typed(monkeypatch):
     out = ev.ask_direct(["gutenberg"])("romanzo sulla collana")
     assert seen == [("louise_search", {"query": "romanzo sulla collana", "collections": ["gutenberg"]})]
     assert out["answer"] == "" and out["turns"][0]["tool"] == "louise_search"
+
+
+def test_names_and_numbers_the_results_do_not_hold_are_what_the_model_added(tmp_path, capsys):
+    """Operator, 2026-11-03: "is it adding some additional information or
+    distorting an information from the collection, overlapping basically its
+    own knowledge?" — entity-level factual consistency (Nan et al., 2021)."""
+    turns = [{"tool": "louise_search", "result": {"lists": [{"hits": [
+        {"uid": "gutenberg:2701", "title": "Moby Dick", "text": "Ahab hunts the whale, 1851, Herman Melville."}]}]}}]
+    answer = ("Moby Dick was written by Herman Melville in 1851 [gutenberg:2701]. "
+              "Ahab dies with Ishmael in 1852.")
+    got = ev.unsupported(answer, "who hunts the whale?", turns)
+    assert got["numbers"] == 2 and got["added_numbers"] == ["1852"], "1851 is in the text, 1852 is not"
+    assert "Ishmael" in got["added_names"] and "Melville" not in got["added_names"]
+    assert "Ahab" not in got["added_names"], "opening a sentence is not a name"
+    assert ev.stated_facts("[gutenberg:2701]") == ([], []), "a citation is not a stated fact"
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
+           ask=lambda q, collections=None: {"answer": answer, "turns": turns})
+    f = ev.faithfulness(ev._rows(tmp_path, "m"))
+    assert (f["numbers"], f["numbers_adding"], f["numbers_found"]) == (2, 1, 0.5)
+    capsys.readouterr()
+    ev.score(tmp_path)
+    assert "| m | 1 | 2 | **0.50** | **1** |" in capsys.readouterr().out
+
+
+def test_the_blind_sample_shows_what_each_answer_added(tmp_path):
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    turns = [{"tool": "louise_search", "result": {"lists": [{"hits": [{"uid": "g:1", "text": "1851"}]}]}}]
+    for name, answer in (("a", "Written in 1851 [g:1]."), ("b", "Written in 1852 [g:1].")):
+        ev.run(tmp_path, name, model=name, queries=qs, guess=lambda t: "en",
+               ask=lambda q, collections=None, a=answer: {"answer": a, "turns": turns})
+    ev.sample(tmp_path, ["a", "b"], n=1)
+    text = (tmp_path / "sample.md").read_text()
+    assert text.count("*not in the results:* 1852") == 1 and "1851" not in text.split("not in the results")[-1]
