@@ -67,6 +67,22 @@ DEFAULT_QUERIES = Path(__file__).with_name("one_language_queries.tsv")
 CITATION = re.compile(r"\[([A-Za-z][\w.-]*:[^\]\s,;]+)\]")
 
 
+def returned_uids(value: Any) -> set[str]:
+    """Every record uid a tool result carries (its hits' and facts' `uid`
+    keys, at any depth): what an answer could have cited."""
+    out: set[str] = set()
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "uid" and isinstance(v, str):
+                out.add(v)
+            else:
+                out |= returned_uids(v)
+    elif isinstance(value, list):
+        for v in value:
+            out |= returned_uids(v)
+    return out
+
+
 def citations(answer: str, turns: list[dict[str, Any]]) -> tuple[int, int]:
     """(cited, grounded): the distinct ids the answer cites, and how many of
     them occur in what its tools returned."""
@@ -160,6 +176,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             after = pid() if pid else None
             turns = got.get("turns", [])
             cited, grounded = citations(got.get("answer") or "", turns)
+            returned = len(returned_uids([t.get("result") for t in turns]))
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
@@ -169,7 +186,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "model_s": round(sum(got.get("model_s") or ()), 3),
                    "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
                    "search_s": search_seconds(turns),
-                   "cited": cited, "grounded": grounded, "no_tool": not turns}
+                   "cited": cited, "grounded": grounded, "no_tool": not turns,
+                   "returned": returned}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -221,7 +239,11 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "no_tool": sum(1 for r in rows if r.get("no_tool")),
             "cited": sum(r.get("cited", 0) for r in rows),
             "grounded": sum(r.get("grounded", 0) for r in rows),
-            "uncited": sum(1 for r in rows if "cited" in r and not r["cited"])}
+            "uncited": sum(1 for r in rows if "cited" in r and not r["cited"]),
+            # the ones that matter: results came back and none was cited
+            # (None for rows asked before `returned` was recorded: unknown, not 0)
+            "uncited_with_results": (sum(1 for r in rows if not r.get("cited") and r["returned"] > 0)
+                                     if all("returned" in r for r in rows) else None)}
 
 
 def _labelled(out: Path) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -244,8 +266,9 @@ def score(out: Path) -> int:
     groups = _labelled(out)
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
-          "| no tool call | cited per answer | grounded | answers citing nothing |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+          "| no tool call | cited per answer | grounded | answers citing nothing "
+          "| of which results had come back |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
                   "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
@@ -260,7 +283,8 @@ def score(out: Path) -> int:
                   f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "
                   f"{s['no_tool']} | {s['cited'] / s['n']:.1f} | "
-                  f"{(s['grounded'] / s['cited']) if s['cited'] else 0.0:.2f} | {s['uncited']} |")
+                  f"{(s['grounded'] / s['cited']) if s['cited'] else 0.0:.2f} | {s['uncited']} | "
+                  f"{'-' if s['uncited_with_results'] is None else s['uncited_with_results']} |")
     print("\nWhere a warm answer's time goes (medians, seconds; the search parts are the "
           "node's own timings, summed over an answer's searches):\n")
     print("| model | warm answers | answer | model rounds | tool calls | search | rerank "
