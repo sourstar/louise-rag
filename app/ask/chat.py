@@ -366,6 +366,23 @@ def language_rule(lang: str | None) -> str:
             f"question or the tool results are in.")
 
 
+#: A TOOL CALL WRITTEN AS TEXT (the blind read of 2026-11-03: one model's
+#: answer was a raw `<tool_call>{...}</tool_call>` in 17 of 20 questions —
+#: past the round bound the tools are withheld, and a model that still wants
+#: one writes it into its answer). Qwen's, Hermes' and Mistral's forms; an
+#: unclosed one runs to the end.
+_TOOL_TEXT = re.compile(r"<tool_call>.*?(?:</tool_call>|\Z)|<\|tool_call\|>.*?(?:<\|/tool_call\|>|\Z)"
+                        r"|\[TOOL_CALLS\].*\Z|<function=.*?(?:</function>|\Z)", re.DOTALL)
+#: what the model is told when it answered past the bound with a tool call only
+ANSWER_NOW = ("No more searches are possible. Answer the question now, from the sources above only, "
+              "citing them by number; if they do not answer it, say so.")
+
+
+def without_tool_text(content: str) -> str:
+    """An answer with any tool call written as text taken out."""
+    return _TOOL_TEXT.sub("", content or "").strip()
+
+
 def _searched(call: Callable[[str, dict[str, Any]], Any], args: dict[str, Any], by: str
               ) -> dict[str, Any]:
     """One of Louise's own searches, as a turn."""
@@ -456,14 +473,25 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
                 "turns": turns, "rounds": rounds, "exhausted": exhausted,
                 "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
 
+    def without_tools() -> str:
+        """The model's answer with the tools withheld. One that is only a
+        tool call written as text is asked once more, told to answer now;
+        whatever text remains is the answer, never the call."""
+        content, _, _ = timed_model(None)
+        answer = without_tool_text(content)
+        if answer or not content.strip():
+            return answer
+        messages.append({"role": "user", "content": ANSWER_NOW})
+        content, _, _ = timed_model(None)
+        return without_tool_text(content)
+
     def answer_with_what_it_has(rounds: int) -> dict[str, Any]:
         """A request the server refused as too large: every tool answer
         slimmed, tools withheld, one more ask; never the whole answer lost
         because the searches returned a lot."""
         nonlocal slimmed
         slimmed += fit(messages, None, everything=True)
-        content, _, _ = timed_model(None)
-        return done(content, rounds, True)
+        return done(without_tools(), rounds, True)
     rounds = 0
     while rounds < max_rounds:
         rounds += 1
@@ -474,7 +502,7 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
                 raise
             return answer_with_what_it_has(rounds)
         if not calls:
-            return done(content, rounds, False)
+            return done(without_tool_text(content), rounds, False)
         messages.append(assistant)
         for c in calls:
             asked = c.arguments if isinstance(c.arguments, dict) else {}
@@ -500,7 +528,7 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
             messages.append(llm.tool_message(c, shown))
     # the bound reached: the model answers with what it has, tools withheld
     try:
-        content, _, _ = timed_model(None)
+        content = without_tools()
     except httpx.HTTPStatusError as e:
         if not too_large(e):
             raise
