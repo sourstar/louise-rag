@@ -82,14 +82,20 @@ def test_other_settings_under_the_same_name_are_refused(tmp_path):
         ev.run(tmp_path, "m", model="b", queries=qs, ask=ask, guess=lambda t: "en")
 
 
-def test_score_splits_lightnings_six_from_the_others(tmp_path, capsys):
+def test_score_splits_the_operators_five_from_the_others(tmp_path, capsys):
+    """Operator, 2026-11-03: correct in en it de fr es is the bar."""
     qs = ev.read_queries(_queries(tmp_path))
     ask = lambda q, collections=None: {"answer": q, "rounds": 1, "exhausted": False, "turns": []}
     ev.run(tmp_path, "m", model="m", queries=qs, ask=ask, guess=lambda t: "it")
     ev.score(tmp_path)
     table = capsys.readouterr().out
-    assert "| m | all | 4 |" in table and "| m | Lightning's six | 3 |" in table
+    assert "| m | all | 4 |" in table and "| m | the operator's five | 3 |" in table
     assert "| m | the others | 1 |" in table
+
+
+def test_the_language_filter_keeps_only_those_named(tmp_path):
+    rows = ev.read_queries(_queries(tmp_path), langs=frozenset({"it"}))
+    assert [r["key"] for r in rows] == ["W1:it", "W2:it"]
 
 
 def test_the_sample_is_blind_and_its_key_kept_apart(tmp_path):
