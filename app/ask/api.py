@@ -61,6 +61,7 @@ class ChatBody(BaseModel):
     question: str
     collections: list[str] | None = None
     history: list[dict[str, Any]] | None = None
+    answer_lang: str | None = None   # ISO code: answer in it; else the question's language
 
 
 @router.post("/chat")
@@ -73,7 +74,7 @@ async def chat(body: ChatBody) -> JSONResponse:
     from app.ask import chat as chat_mod
     try:
         out = await run_in_threadpool(chat_mod.ask, body.question, collections=body.collections,
-                                      history=body.history)
+                                      history=body.history, answer_lang=body.answer_lang)
     except CodexError as e:
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
