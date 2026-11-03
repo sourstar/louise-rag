@@ -230,20 +230,39 @@ four jobs (wikidata-plugins.md, "Pipeline"):
 - **relations: Re-DocRED** (Tan et al., EMNLP 2022; MIT [V]): 500 test
   documents, gold entities given, triples over 96 Wikidata properties, our
   claim's shape exactly. Scored by triple F1 against gold.
-- **the pick: Mewsli-X** (XTREME-R; Apache-2.0 [V]): Wikinews mentions
-  linked to Wikidata QIDs.
-  - The top 10 come from wikidata's Nemotron search, so this waits for
-    wikidata's embedding to finish. Run against a partial collection, the
-    candidates would be biased.
-  - Two numbers: recall@10 of the search, then accuracy@1 of each picker
-    given those 10.
+- **the pick: Mewsli-X** (XTREME-R; Apache-2.0 [V]): WikiNews mentions
+  linked to Wikidata QIDs, with ~1 M candidate descriptions of its own.
+  - The top 10 come from BM25 over those descriptions, the same lists for
+    both pickers. So the step is measured now, not after wikidata's
+    embedding.
+  - Two numbers: the word search's recall@10 (the first stage's, not the
+    picker's), then each picker's accuracy@1 over the mentions whose gold is
+    in the 10.
+  - The search over wikidata's Nemotron vectors is measured in its place
+    once that collection is embedded.
 - **mentions: LitBank** (English novels from Project Gutenberg): GLiNER's
   settings, not a Nemotron question.
 - None of these sets is in Latin or Ancient Greek, the first instance's
   slice (step 5), and no candidate lists them. That instance's own check
   is the agreement floor (decided 2026-10-20), plus a hand-read sample.
 
-**The harness**: `tools/measure/kg_relations_eval.py`, still to build.
+**Only the two Nemotron options, at night** (operator, 2026-11-03: "Job 1
+already set, job 2 and 3, if there are no benchmarks already available
+compare the 2 nemo options during the night when no one is using louise").
+- No published score exists for these models on entity linking or relation
+  extraction: their cards report general benchmarks only.
+- So both comparisons run on the node in the night window, beside wikidata's
+  embedding.
+- Gemma 4 26B is not run: the comparison is between the two Nemotron
+  options.
+- **Job 2, the pick:** Nemotron-3.5-Rerank-8B against Lightning-30B-A3B, on
+  Mewsli-X (en, de, es), with `tools/measure/kg_link_pick_eval.py`.
+- **Job 3, relations:** Lightning-30B-A3B against Bolt-74B-A9B-24GB, on
+  Re-DocRED.
+- Community summaries have no published set. They go to the job-3 winner.
+
+**The harnesses.** `tools/measure/kg_link_pick_eval.py` (job 2) and
+`tools/measure/kg_relations_eval.py` (job 3), built 2026-11-03.
 - Re-DocRED through any OpenAI-compatible chat endpoint, temperature 0.
 - One prompt for every model, its hash recorded with the run, and the
   output as JSON triples.
