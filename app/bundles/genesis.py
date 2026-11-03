@@ -586,6 +586,9 @@ class _Walk:
     next_at: float = 0.0          # monotonic: when the seed may take its next window
     finished_at: float = 0.0      # monotonic: when the seed last finished
     busy: bool = False            # a thread is walking or placing
+    started: float = 0.0          # monotonic: when this seed's first window was read
+    windows: int = 0              # this seed's windows so far
+    read_s: float = 0.0           # this seed's time spent reading them
     demand: dict = field(default_factory=dict)      # shard -> ShardDemand (replaced, never mutated)
     announced: dict = field(default_factory=dict)   # uid -> placement attempts so far
 
@@ -671,7 +674,7 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
     found: list[tuple[str, str, str, int]] = []
     released: list[str] = []
     retry: dict[str, int] = {}
-    cursor, done, took = w.cursor, w.done, 0.0
+    cursor, done, took, top = w.cursor, w.done, 0.0, 0
     try:
         ctx = _WalkContext.of(con, collection)
         if announced:
@@ -700,12 +703,25 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
         _merge(w, found)
         for u, n in retry.items():
             w.announced.setdefault(u, n)
+        said = None
         if seed:
+            if w.cursor == 0:
+                w.started, w.windows, w.read_s = time.monotonic(), 0, 0.0
+                said = (f"archive demand seed started: windows of {_SEED_WINDOW:,} rowids "
+                        f"up to rowid {top:,}, paced to {_SEED_DUTY:.0%} of the thread")
+            w.windows += 1
+            w.read_s += took
             w.cursor, w.done = cursor, done
             if done:
                 w.finished_at = time.monotonic()
+                said = (f"archive demand seed reached the end: {w.windows:,} window(s) to "
+                        f"rowid {top:,} in {w.finished_at - w.started:,.0f} s "
+                        f"({w.read_s:,.1f} s reading), {len(w.demand)} shard(s) demanded")
             w.next_at = time.monotonic() + took * (1.0 / _SEED_DUTY - 1.0)
         result = list(w.demand.values())
+    if said is not None and not _WALK_EVERY_CALL:
+        # two lines a seed (an hour apart at the least), for its AFTER row
+        db.log_event(con, "info", "genesis", said)
     if released:
         # the local encoder's (amendment 11); out of any demand that held them
         _add_residual(collection, _RELEASED, released)

@@ -96,7 +96,8 @@ def queries(names) -> bool:
              (1_000_000, 1_999_999)),
             ("archive pending-in-range", genesis.pending_in_range_sql(con),
              (1_000_000, 1_999_999)),
-            ("local-archive candidates page", genesis._CANDIDATES_PAGE_SQL, (-1, 2048)),
+            ("local-archive seed window", genesis._CANDIDATES_PAGE_SQL,
+             (0, genesis._SEED_WINDOW)),
         ]
         # the encoder's backfill with the archive's range held back — the
         # worker's own predicate, ONE window from the cursor's cold start

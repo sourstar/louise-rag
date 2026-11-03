@@ -2127,3 +2127,33 @@ Rates from G1's timestamped progress lines; tokens counted with harrier's tokeni
   300 texts of ~4,080 characters).
 - Every CPU reference is scheduled where the card's work does not matter (night, or with nothing embedding),
   or the card's numbers taken beside it are not the card's.
+
+### 2026-11-03 — a local archive's demand announced, not re-walked — BEFORE (deploy pending)
+
+**Scenario.** b7538039, node running; wikipedia fts running, its embedding off (`embed = "off"`, wikipedia.toml);
+gutenberg embedding off; pubmed and normattiva embedding; wikidata off. wikipedia's archive
+upstash-wikipedia-2024-06: 1,447 shards, all `applied`; 14,625,633 candidate documents (in scope, fts done,
+not embedded).
+
+**BEFORE** (München, 04:05–04:07, py-spy `--subprocesses --idle --threads`, 120 s; the profiler lagged 47 s,
+so the shares are indicative; CPU from /proc):
+- pipeline-wikipedia thread: waiting 51 %, running 49 %. Its largest own-time line: **23.5 %
+  `_walk_candidate_shards`** (genesis.py:592, the page fetch), 27.3 % inclusive.
+- the walk, run by hand on the worker's own code: 0.17–0.29 s, 0 shards, 0 uids, 395 straddlers released.
+  Every 10 s (`_DEMAND_TTL_S`) it re-read the SAME first 65,536 of the 14.6 M candidates from rowid 0, so its
+  cost tracked the cap, not the work. Inside the worker it cost ~2.3 s a walk against 0.2 s alone. Two possible
+  causes, not separated: the per-row GIL hand-back beside a busy main thread, or both threads that drain a
+  local archive walking.
+- parse-pool children: 7.8 cores (55–92 % each), 34.5 % of their pool-thread samples waiting for a task.
+- fts per document (OLS on the log, AFTER window of the b7538039 deploy): 28.3 ms/doc [26.1, 30.5], per chunk
+  0.18 ms [−0.44, 0.81].
+
+**The change.** The seed walk reads one rowid window (65,536) from a cursor per step, paced to 5 % of the
+thread, and stops at the table's end. It prefilters `path LIKE '%.parquet%'`, so dump pages never reach
+Python. The fts stage announces the documents it indexed, and they are placed by primary key. An import drops
+its shard's demand, and a demand is re-checked by primary key before its ~10 s read. A finished seed starts
+again after an hour, so an edge the announcements miss costs one paced probe.
+
+**AFTER — to fill:** the same py-spy (`_walk_candidate_shards` gone; `_candidate_shards` under 1 % once the
+seed ends), the seed's duration to the end of 14.6 M, fts ms/doc by the same fit, and genesis imports still
+landing for newly indexed documents (the es/042 kind).

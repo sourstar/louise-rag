@@ -34,12 +34,13 @@ def fresh_revisit_state(monkeypatch):
     on COLLECTION NAME, and several test modules reuse the same names —
     without this, one module's exhausted shards silence another's drain.
 
-    The candidate walk's memo goes with it: these tests are about WHAT the
-    drain decides, and they change eligibility and ask again in the same
-    second, which is exactly what the memo is allowed to be stale about.
-    Its own cost is measured in tests/bundles/test_genesis_local.py.
+    The candidate demand goes with it: these tests are about WHAT the
+    drain decides, and they change eligibility by SQL — not through the fts
+    stage that announces it — and ask again in the same second, so the drain
+    walks the whole table on every call here. Its own cost is measured in
+    tests/bundles/test_genesis_local.py.
     """
-    monkeypatch.setattr(genesis, "_DEMAND_TTL_S", 0.0)
+    monkeypatch.setattr(genesis, "_WALK_EVERY_CALL", True)
     genesis.reset_revisit_state()
     yield
     genesis.reset_revisit_state()

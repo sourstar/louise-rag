@@ -447,3 +447,14 @@ def test_announcements_nobody_drains_stay_bounded(collection, announced, monkeyp
     genesis.announce(collection, ["d"])
     w = genesis._walks[key]
     assert w.announced == {} and not w.done and w.cursor == 0
+
+
+def test_a_seed_says_when_it_starts_and_when_it_reaches_the_end(collection, announced,
+                                                                 monkeypatch, capsys):
+    """Two lines a seed, for the AFTER row to time it."""
+    monkeypatch.setattr(genesis, "_SEED_WINDOW", 2)
+    con = db.connect(collection)
+    _seed_to_the_end(con, collection)
+    out = capsys.readouterr().out
+    assert out.count("archive demand seed started") == 1
+    assert out.count("archive demand seed reached the end") == 1
