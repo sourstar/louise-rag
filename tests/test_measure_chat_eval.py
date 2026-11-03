@@ -277,3 +277,15 @@ def test_the_blind_sample_shows_what_each_answer_added(tmp_path):
     ev.sample(tmp_path, ["a", "b"], n=1)
     text = (tmp_path / "sample.md").read_text()
     assert text.count("*not in the results:* 1852") == 1 and "1851" not in text.split("not in the results")[-1]
+
+
+def test_what_the_model_sent_louise_is_kept(tmp_path):
+    """How the model talks to Louise: each call's tool and arguments."""
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    turns = [{"tool": "louise_search", "arguments": {"query": "Dumas collier", "collections": ["gutenberg"]},
+              "result": {"lists": []}, "error": None}]
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
+           ask=lambda q, collections=None: {"answer": "x", "turns": turns})
+    assert ev._rows(tmp_path, "m")[0]["calls"] == [
+        {"tool": "louise_search", "arguments": {"query": "Dumas collier", "collections": ["gutenberg"]},
+         "error": None}]
