@@ -1,0 +1,60 @@
+# Qwen3.5-4B at Q4_K_M, the file the operator downloaded with LocalAI (operator,
+# 2026-11-03: "compare also ... Qwen_Qwen3.5-4B-Q4_K_M.gguf ... but only if the
+# models are from Qwen"). FROM QWEN: bartowski's quantization of Qwen's own weights
+#   (Hub tags base_model:quantized:Qwen/Qwen3.5-4B, Apache-2.0; Qwen publishes
+#   no GGUF of this size), the gallery entry's own file, sha256 pinned there:
+#   13c16f426047e2de38cd075bdade4a7bcbc8c774384876f677740cda65f8a983.
+# INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `qwen_qwen3.5-4b`: POST /models/apply
+#   with ../gallery/louise-chat-qwen3.5-4b-q4.json; the file is already on the node.
+# Ours on top, as for the Q8 (louise-chat-qwen3.5-4b-q8.yaml): our llama.cpp
+# package and the measured SYCL set, parallel 1, a 16k context, seed 0, no
+# drafter, no vision projector, thinking off, the card's instruct sampling.
+{
+  "name": "louise-chat-qwen3.5-4b-q4",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "seed": 0,
+    "batch": 2048,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 1.5,
+    "repeat_penalty": 1,
+    "model": "llama-cpp/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6,
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
