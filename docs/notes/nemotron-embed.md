@@ -692,3 +692,28 @@ wiki-gutenberg)").
 - A, Lightning-30B-A3B, is validated as the chat model for the hours it is
   loaded anyway for wiki-gutenberg's jobs, with the same chat_eval run.
 
+
+### Qwen3.5-9B as well (operator, 2026-11-03: "Evaluate also Qwen3.5-9B")
+
+| | Qwen3-8B (now) | Qwen3.5-9B |
+|---|---|---|
+| languages (card) | 119 | 201 |
+| architecture | dense transformer | hybrid: 8 × (3 Gated DeltaNet + 1 gated attention) |
+| thinking | off by `/no_think` and `reasoning_effort: none` | ON by default; no `/no_think`; off by the template's `enable_thinking` |
+| weights | Q4_K_M (Ollama's copy) | gallery `qwen3.5-9b`: Q4_K_M; Q8_0 from the Hub |
+| card numbers (its thinking mode) | — | IFEval 91.5, MMLU-Pro 82.5, MultiChallenge 54.5 |
+
+- **Installed from LocalAI's gallery**, entry `qwen3.5-9b`, named as the `variant`.
+  The 8-bit build is not in the gallery: the same entry with Q8_0 as an added
+  file. Its uri is pinned to the Hub's commit and its sha256 is written in at the
+  install (staged as placeholders, because the Hub API is refused here).
+- **No vision projector.** Ask sends text, and the entry's projector is F32,
+  1.8 GB.
+- **Order, by the operator's rule for Bolt:** q8 first, on the same stack and
+  tags as the others (#270, #272, #273). q4 runs only if q8 is promising.
+- **Engine checks before the benchmark:**
+  - the DeltaNet layers' ops on SYCL. If one falls back to the CPU, generation
+    tok/s shows it;
+  - flash attention at head dim 256;
+  - no thinking in the content, and no reasoning tokens spent (time per answer);
+  - three greedy prompts for garbage.
