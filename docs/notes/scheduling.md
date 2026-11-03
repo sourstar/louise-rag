@@ -459,6 +459,19 @@ tests/test_parallel_exit.py, in this interpreter and in 3.12 when present.
 The lesson: an optimisation's WORKERS can disappear too, so a wait on them
 needs a bound (§6, 5), and so does the exit that cleans them up.
 
+**20. A plan checked at a size the code never sends.** A walk that re-read
+the same 65,536 of wikipedia's 14.6 M candidates every 10 s (23.5 % of its
+pipeline thread) was replaced by demand that fts announces and a lookup by
+uid (#255/#256). Its plan test passed with 2 uids in the `IN` list. The
+code sends 500, and from 50 up, with no `sqlite_stat1`, SQLite preferred
+idx_documents_scope's four equalities to the primary key. That cost 11.8 s
+per 500 uids, and wikipedia's fts fell ~8× the hour it was deployed
+(2026-11-03 04:40, py-spy 89.4 % in the lookup). → Plan-check a query at the
+sizes it is sent, the largest included. Where an index must not be chosen,
+take its columns out of selection with SQLite's unary plus (`+col=?`; #257:
+0.30 ms per 500). And deploy one change at a time, with its AFTER profile
+taken at once: that is what caught this one within the hour.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first
@@ -469,7 +482,8 @@ needs a bound (§6, 5), and so does the exit that cleans them up.
    into the change's commit message. If you cannot say what the current
    cost IS, you are guessing.
 3. **Plan-check AND time every query** you add or touch, against a real
-   manifest (`tools/sched_report.py --queries`). Reject `SCAN`,
+   manifest (`tools/sched_report.py --queries`), at every size the code
+   sends it — an `IN` list of 500 is not planned like one of 2 (§5, 20). Reject `SCAN`,
    `TEMP B-TREE`, `LIST SUBQUERY`, and anything over ~100 ms whose cost
    grows with the corpus.
 4. **Ask where the same defect sits one layer down.** Six of these
