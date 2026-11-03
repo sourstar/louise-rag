@@ -35,7 +35,10 @@ STAGE = ROOT / "deploy" / "vega" / "stage"
 #:         rerankers 2026-10-31, −28 to −36 %; approved-encoders.md). The
 #:         rest at the engine's default: GGML_SYCL_ENABLE_OPT (the reorder of
 #:         quantized weights) is on and exact for the embedders and rerankers
-#:         (Qwen3-Embedding-4B is Q4_K_M).
+#:         (Qwen3-Embedding-4B is Q4_K_M). The chat models take it too
+#:         (2026-11-03): OPT=0 was theirs only for the same bytes over fresh
+#:         loads (approved-encoders.md, 2026-10-21), a check a chat model does
+#:         not get (measuring.md §11).
 #:   cpu:  llama.cpp's CPU offers no mode (invariant 12); nothing set.
 MEASURED: dict[str, dict[str, object]] = {
     "sycl": {"env": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"},
@@ -46,10 +49,6 @@ MEASURED: dict[str, dict[str, object]] = {
 #: (model, setting) → (value, where it was measured). Only that model differs
 #: from the set, only on that setting. An exception nobody measured is drift.
 EXCEPTIONS: dict[tuple[str, str], tuple[str, str]] = {
-    ("louise-chat-qwen3-8b", "GGML_SYCL_ENABLE_OPT"): (
-        "0", ("approved-encoders.md, 2026-10-21 behind VeGa: without it the first greedy "
-              "answer after a load differs from the later ones; with it bit-exact, 3 runs of "
-              "3 loads × 3 answers (old engine, before GGML_SYCL_FA_ONEDNN=0)")),
     ("vega-medcpt-query", "flash_attention"): (
         "off", ("approved-encoders.md, 2026-10-30/31: on, a flip across fresh loads in 3 of 8 "
                 "runs; off, bit-exact in 12 of 12 and the 528-text sweep, and faster "
@@ -156,9 +155,9 @@ def test_a_drifted_file_is_named():
             "env": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0",
                     "GGML_SYCL_ENABLE_GRAPH": "0"}}
     assert settings(chat) != expected("louise-chat-other", "sycl")
-    qwen = {**chat, "env": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}}
-    assert settings(qwen) == expected("louise-chat-other", "sycl")
-    assert settings(qwen) != expected("louise-chat-qwen3-8b", "sycl")
+    measured = {**chat, "env": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}}
+    assert settings(measured) == expected("louise-chat-other", "sycl")
+    assert settings(measured) != expected("vega-medcpt-query", "sycl"), "its exception unheld"
     cpu = {"backend": "vega-louise-llama-cpp-cpu", "env": {"OMP_NUM_THREADS": "8"}}
     assert settings(cpu) == expected("vega-medcpt-query-cpu", "cpu")
     assert vendor("louise-sycl-f16-llama-cpp-16acc89") == "sycl"
