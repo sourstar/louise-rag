@@ -2,6 +2,7 @@
 deterministically (tool use, the answer's language, time)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -198,3 +199,47 @@ def test_answers_whose_results_were_slimmed_are_counted(tmp_path, capsys):
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
     assert row.split("|")[16] == " 1 "
+
+
+def test_the_operators_three_conveys_summarises_cites(tmp_path, capsys):
+    """Operator, 2026-11-03: "how effectively the model conveys the query to
+    Louise, how effectively it summarizes the results, and the amount of
+    citations from the results". The work is the question's label."""
+    works = tmp_path / "works.json"
+    works.write_text(json.dumps([{"work": "W1", "books": ["gutenberg:10", "gutenberg:11"], "original": "fr"},
+                                 {"work": "W2", "books": ["gutenberg:20"], "original": "it"}]))
+    qs = ev.read_queries(_queries(tmp_path))[:3]       # W1:en, W1:it, W2:it
+
+    def search(*uids):
+        return {"tool": "louise_search", "error": None, "seconds": 1.0,
+                "result": {"lists": [{"hits": [{"uid": u} for u in uids]}]}}
+    got = {
+        # found at rank 2 by its second search, and cited
+        qs[0]["query"]: {"answer": "The Queen's Necklace [gutenberg:11].",
+                         "turns": [search("gutenberg:99"), search("gutenberg:98", "gutenberg:11")]},
+        # found at rank 1, but the answer cites another record
+        qs[1]["query"]: {"answer": "Forse [gutenberg:99].", "turns": [search("gutenberg:10", "gutenberg:99")]},
+        # never found
+        qs[2]["query"]: {"answer": "Non so.", "turns": [search("gutenberg:5")]},
+    }
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
+           ask=lambda q, collections=None: got[q])
+    rows = ev._rows(tmp_path, "m")
+    assert rows[0]["hits"] == [["gutenberg:99"], ["gutenberg:98", "gutenberg:11"]]
+    assert rows[0]["cited_uids"] == ["gutenberg:11"]
+    c = ev.conveyed(rows, ev.load_works(works))
+    assert (c["n"], c["found"], c["cited_right"], c["left_out"]) == (3, 2, 1, 1)
+    assert c["mrr"] == pytest.approx((1 / 2 + 1) / 3)
+    capsys.readouterr()
+    ev.score(tmp_path, works)
+    table = capsys.readouterr().out
+    assert "| m | all | 3 | **0.67** | 0.500 | **0.33** | 1 |" in table
+
+
+def test_the_direct_row_searches_the_question_as_typed(monkeypatch):
+    from app.ask import mcp
+    seen = []
+    monkeypatch.setattr(mcp, "_call_tool", lambda name, args: seen.append((name, args)) or {"lists": []})
+    out = ev.ask_direct(["gutenberg"])("romanzo sulla collana")
+    assert seen == [("louise_search", {"query": "romanzo sulla collana", "collections": ["gutenberg"]})]
+    assert out["answer"] == "" and out["turns"][0]["tool"] == "louise_search"

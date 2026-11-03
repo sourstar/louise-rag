@@ -33,6 +33,19 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
   cites in brackets ([gutenberg:2701]), the share of them found in what its
   tools returned ("grounded"; a cited uid no tool returned is invented), and
   the answers given without any tool call.
+- THE OPERATOR'S THREE (2026-11-03: "how effectively the model conveys the
+  query to Louise, how effectively it summarizes the results, and the amount
+  of citations from the results"). Every question is labelled with its work
+  (a Wikidata QID); `works.json` (one_language_works.py) lists the work's
+  gutenberg books. With `score --works`:
+  - conveys: did the model's OWN searches return the work (any edition), and
+    at which rank at best (MRR over its searches)? Set against the question
+    searched as typed: `run --direct` asks no model, it runs louise_search on
+    the question verbatim, so its row is what Louise finds without the model;
+  - summarises: does the answer cite the work it was asked about, and how
+    often did its searches find the work and the answer leave it out;
+  - citations: cited per answer, grounded, citing nothing though results came
+    back (above).
 Quality beyond that is read, not scored: `sample` writes the same questions
 with each model's answer under a blind letter, and the key in a separate
 file.
@@ -81,6 +94,66 @@ def returned_uids(value: Any) -> set[str]:
         for v in value:
             out |= returned_uids(v)
     return out
+
+
+def search_hits(turns: list[dict[str, Any]]) -> list[list[str]]:
+    """Each louise_search call's hits in rank order, as uids: what the model's
+    own queries brought back from Louise."""
+    out = []
+    for t in turns:
+        if t.get("tool") != "louise_search" or not isinstance(t.get("result"), dict):
+            continue
+        uids: list[str] = []
+        for lst in t["result"].get("lists", []):
+            uids += [h["uid"] for h in lst.get("hits", []) if isinstance(h.get("uid"), str)]
+        out.append(uids)
+    return out
+
+
+def load_works(path: Path) -> dict[str, set[str]]:
+    """work id -> the uids of its books (one_language_works.py's works.json)."""
+    return {w["work"]: set(w["books"]) for w in json.loads(path.read_text(encoding="utf-8"))}
+
+
+def gold_of(row: dict[str, Any], works: dict[str, set[str]]) -> set[str]:
+    return works.get(str(row.get("qid", "")).split("#")[0], set())
+
+
+def conveyed(rows: list[dict[str, Any]], works: dict[str, set[str]]) -> dict[str, Any]:
+    """The operator's three for rows whose work is known: found by the model's
+    searches, MRR of the work's best rank over them, the right work cited,
+    found but left out of the answer."""
+    rows = [r for r in rows if "hits" in r and gold_of(r, works)]
+    n = len(rows)
+    found = cited = left_out = 0
+    rr = 0.0
+    for r in rows:
+        gold = gold_of(r, works)
+        ranks = [i + 1 for hits in r["hits"] for i, u in enumerate(hits) if u in gold]
+        hit = bool(ranks)
+        found += hit
+        rr += 1.0 / min(ranks) if ranks else 0.0
+        right = bool(gold & set(r.get("cited_uids", [])))
+        cited += right
+        left_out += hit and not right
+    return {"n": n, "found": found, "mrr": rr / n if n else 0.0, "cited_right": cited,
+            "left_out": left_out}
+
+
+def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, Any]]:
+    """No model: the question searched as typed, through the same tool the
+    model calls — the reference row for "conveys"."""
+    from app.ask import mcp
+
+    def ask(question: str, collections: list[str] | None = collections) -> dict[str, Any]:
+        args: dict[str, Any] = {"query": question}
+        if collections:
+            args["collections"] = list(collections)
+        result = mcp._call_tool("louise_search", args)
+        return {"answer": "", "rounds": 0, "exhausted": False,
+                "turns": [{"tool": "louise_search", "arguments": args, "result": result,
+                           "error": None, "seconds": 0.0}]}
+    return ask
 
 
 def citations(answer: str, turns: list[dict[str, Any]]) -> tuple[int, int]:
@@ -177,6 +250,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             turns = got.get("turns", [])
             cited, grounded = citations(got.get("answer") or "", turns)
             returned = len(returned_uids([t.get("result") for t in turns]))
+            searched = search_hits(turns)
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
@@ -187,7 +261,9 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
                    "search_s": search_seconds(turns),
                    "cited": cited, "grounded": grounded, "no_tool": not turns,
-                   "returned": returned, "slimmed": got.get("slimmed", 0)}
+                   "returned": returned, "slimmed": got.get("slimmed", 0),
+                   "hits": searched,
+                   "cited_uids": sorted(set(CITATION.findall(got.get("answer") or "")))}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -265,8 +341,24 @@ def _median(values: list[float]) -> str:
     return "-" if not values else format(statistics.median(values), ".2f")
 
 
-def score(out: Path) -> int:
+def score(out: Path, works: Path | None = None) -> int:
     groups = _labelled(out)
+    if works is not None:
+        wk = load_works(works)
+        print("THE OPERATOR'S THREE: conveys the query, summarises the results, cites them\n")
+        print("| model | languages | answers with a known work | its searches found the work "
+              "| MRR of the work over its searches | answer cites the work "
+              "| found but left out of the answer |")
+        print("|---|---|---|---|---|---|---|")
+        for name, rows in groups:
+            for label, sub in (("all", rows),
+                               ("the operator's five", [r for r in rows if r["lang"] in OPERATOR_LANGS])):
+                c = conveyed(sub, wk)
+                if not c["n"]:
+                    continue
+                print(f"| {name} | {label} | {c['n']} | **{c['found'] / c['n']:.2f}** | {c['mrr']:.3f} | "
+                      f"**{c['cited_right'] / c['n']:.2f}** | {c['left_out']} |")
+        print()
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
@@ -341,8 +433,12 @@ def main(argv: list[str] | None = None) -> int:
                    "(e.g. opt0, opt-default+graph); score splits by it")
     p.add_argument("--redo", action="store_true", help="ask again, under --tag, the "
                    "questions answered under another tag")
+    p.add_argument("--direct", action="store_true", help="no model: the question searched "
+                   "as typed (the reference row for how well a model conveys it)")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
+                   "scores the operator's three (conveys, summarises, cites)")
     p = sub.add_parser("sample")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--runs", required=True)
@@ -352,9 +448,10 @@ def main(argv: list[str] | None = None) -> int:
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
         return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang, langs),
-                   collections=cols, tag=a.tag, redo=a.redo)
+                   collections=cols, tag=a.tag, redo=a.redo,
+                   **({"ask": ask_direct(cols), "pid": lambda: 0} if a.direct else {}))
     if a.cmd == "score":
-        return score(a.out)
+        return score(a.out, a.works)
     return sample(a.out, [r for r in a.runs.split(",") if r], a.n)
 
 
