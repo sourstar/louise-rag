@@ -1,0 +1,48 @@
+{
+  "id": "localai@qwen3.8-2b-q4",
+  "variant": "qwen3.8-2b-q4",
+  "name": "louise-chat-qwen3.8-2b-q4",
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "function": {
+      "automatic_tool_parsing_fallback": true,
+      "grammar": {
+        "disable": true
+      }
+    },
+    "gpu_layers": 999,
+    "known_usecases": [
+      "chat"
+    ],
+    "mmap": true,
+    "mmproj": "",
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "batch": 2048,
+      "seed": 0,
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0,
+      "presence_penalty": 1.5,
+      "repeat_penalty": 1
+    },
+    "reasoning_effort": "none",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "threads": 6
+  }
+}
