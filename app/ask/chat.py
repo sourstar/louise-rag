@@ -19,6 +19,8 @@ import json
 import time
 from typing import Any, Callable
 
+import httpx
+
 from app.hold.codex import CodexError
 
 MAX_ROUNDS = 6
@@ -90,6 +92,65 @@ def compact(name: str, result: Any) -> Any:
     return result
 
 
+#: THE CONVERSATION FITS THE MODEL'S CONTEXT (2026-11-03, Ask's benchmark: 7 of
+#: 50 answers failed with a 400 once several searches' results outgrew it).
+#: The chat model's context_size (every louise-chat-* model file), the room kept
+#: for its answer (llm.chat_tools' max_tokens) and for its template's own tokens.
+CONTEXT_TOKENS = 16384
+ANSWER_TOKENS = 1500
+MARGIN_TOKENS = 512
+#: characters per token assumed when sizing a request: low on purpose, so the
+#: estimate errs large (European text runs ~4; a refused request is the fault)
+CHARS_PER_TOKEN = 3.0
+#: what is left of a tool answer that is not a search's, once slimmed
+SLIM_CHARS = 1200
+
+
+def request_tokens(messages: list[dict[str, Any]], tools: Any) -> int:
+    """The request's size, estimated from its characters."""
+    chars = len(json.dumps(messages, ensure_ascii=False, default=str))
+    chars += len(json.dumps(tools, ensure_ascii=False)) if tools else 0
+    return int(chars / CHARS_PER_TOKEN)
+
+
+def slim(content: str) -> str:
+    """A tool answer reduced to what can still be cited: a search's hits keep
+    their uid, title, rank and language and lose their text; anything else
+    is cut to SLIM_CHARS. The model is told it was slimmed."""
+    try:
+        data = json.loads(content)
+    except (TypeError, ValueError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("lists"), list):
+        lists = [{"space_id": lst.get("space_id"),
+                  "hits": [{k: h[k] for k in ("uid", "title", "rank", "lang") if k in h}
+                           for h in lst.get("hits", [])]} for lst in data["lists"]]
+        return json.dumps({"lists": lists, "slimmed": "texts dropped to fit the context"},
+                          ensure_ascii=False)
+    if len(content) <= SLIM_CHARS:
+        return content
+    return json.dumps({"slimmed": "cut to fit the context", "start": content[:SLIM_CHARS]},
+                      ensure_ascii=False)
+
+
+def fit(messages: list[dict[str, Any]], tools: Any, *, everything: bool = False) -> int:
+    """Slim the tool answers, oldest first and the latest last, until the
+    request fits CONTEXT_TOKENS with room for the answer; `everything` slims
+    them all. Returns how many were slimmed now."""
+    budget = CONTEXT_TOKENS - ANSWER_TOKENS - MARGIN_TOKENS
+    done = 0
+    for i, m in enumerate(messages):
+        if not everything and request_tokens(messages, tools) <= budget:
+            break
+        if m.get("role") != "tool" or '"slimmed"' in str(m.get("content", "")):
+            continue
+        new = slim(str(m.get("content", "")))
+        if new != m.get("content"):
+            messages[i] = {**m, "content": new}
+            done += 1
+    return done
+
+
 def reader_language(question: str, answer_lang: str | None = None) -> str | None:
     """The language the answer is written in: the one the reader asked for
     (the page's "show results in"), else the one the question is written in
@@ -150,19 +211,49 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     turns: list[dict[str, Any]] = []
     model_s: list[float] = []
 
+    slimmed = 0
+
     def timed_model(tools_offered):
+        nonlocal slimmed
+        slimmed += fit(messages, tools_offered)
         t0 = time.monotonic()
         try:
             return model(messages, tools_offered)
         finally:
             model_s.append(round(time.monotonic() - t0, 3))
+
+    def too_large(e: httpx.HTTPStatusError) -> bool:
+        """The server's refusal of a request over its context — LocalAI's
+        400 "request (17013 tokens) exceeds the available context size
+        (16384 tokens)", measured on the node 2026-11-03 — and nothing else:
+        any other 400 is a fault to see, not to answer around."""
+        try:
+            body = e.response.text
+        except Exception:   # noqa: BLE001 — an unreadable body is not this refusal
+            return False
+        return e.response.status_code == 400 and bool(turns) and "context size" in body
+
+    def answer_with_what_it_has(rounds: int) -> dict[str, Any]:
+        """A request the server refused as too large: every tool answer
+        slimmed, tools withheld, one more ask; never the whole answer lost
+        because the searches returned a lot."""
+        nonlocal slimmed
+        slimmed += fit(messages, None, everything=True)
+        content, _, _ = timed_model(None)
+        return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": True,
+                "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
     rounds = 0
     while rounds < max_rounds:
         rounds += 1
-        content, calls, assistant = timed_model(tools)
+        try:
+            content, calls, assistant = timed_model(tools)
+        except httpx.HTTPStatusError as e:
+            if not too_large(e):
+                raise
+            return answer_with_what_it_has(rounds)
         if not calls:
             return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": False,
-                    "model_s": model_s, "answer_lang": lang}
+                    "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
         messages.append(assistant)
         for c in calls:
             args = c.arguments if isinstance(c.arguments, dict) else {}
@@ -181,6 +272,11 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
                           "seconds": round(time.monotonic() - t0, 3)})
             messages.append(llm.tool_message(c, json.dumps(shown, ensure_ascii=False, default=str)))
     # the bound reached: the model answers with what it has, tools withheld
-    content, _, _ = timed_model(None)
+    try:
+        content, _, _ = timed_model(None)
+    except httpx.HTTPStatusError as e:
+        if not too_large(e):
+            raise
+        return answer_with_what_it_has(rounds)
     return {"answer": content, "turns": turns, "rounds": rounds, "exhausted": True,
-            "model_s": model_s, "answer_lang": lang}
+            "model_s": model_s, "answer_lang": lang, "slimmed": slimmed}
