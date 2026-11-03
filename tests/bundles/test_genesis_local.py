@@ -458,3 +458,39 @@ def test_a_seed_says_when_it_starts_and_when_it_reaches_the_end(collection, anno
     out = capsys.readouterr().out
     assert out.count("archive demand seed started") == 1
     assert out.count("archive demand seed reached the end") == 1
+
+
+def test_a_restart_resumes_the_seed_from_its_saved_cursor(collection, announced, monkeypatch,
+                                                          capsys):
+    """Every deploy restarts the worker; a seed that began at rowid 0 each
+    time might never end (München, 2026-11-03: 04:39, then 05:26)."""
+    monkeypatch.setattr(genesis, "_SEED_WINDOW", 1)
+    monkeypatch.setattr(genesis, "_SEED_REPORT", 2)
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+    for _ in range(2):
+        genesis._candidate_shards(con, collection)
+    assert "archive demand seed: window 2 of" in capsys.readouterr().out
+    genesis.reset_revisit_state()               # the restart: memory gone
+    windows = _windows(con)
+    genesis._candidate_shards(con, collection)
+    assert "rowid>2 " in windows[0], windows
+    assert "archive demand seed resumed at rowid 2" in capsys.readouterr().out
+
+
+def test_a_seed_finished_within_the_hour_stays_finished_after_a_restart(collection, announced):
+    con = db.connect(collection)
+    _seed_to_the_end(con, collection)
+    genesis.reset_revisit_state()
+    windows = _windows(con)
+    genesis._candidate_shards(con, collection)
+    assert windows == []
+
+
+def test_an_unreadable_saved_cursor_starts_the_seed_over(collection, announced):
+    genesis._seed_file(collection).write_text("{not json")
+    con = db.connect(collection)
+    windows = _windows(con)
+    genesis._candidate_shards(con, collection)
+    assert "rowid>0 " in windows[0], windows
