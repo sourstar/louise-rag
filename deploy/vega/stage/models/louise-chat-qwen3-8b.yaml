@@ -1,5 +1,5 @@
 {
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
   "env": {
     "GGML_SYCL_ENABLE_OPT": "0",

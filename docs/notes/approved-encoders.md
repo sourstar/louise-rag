@@ -179,6 +179,26 @@ The louise-python packages are renamed by what they run, `vega-louise-openvino`
 (was `-20261030`) and `vega-pytorch` (was `-20261021a`); their inner trees
 keep their names, so no run changes; `vega-llama-cpp-cpu` stays the CPU build.
 
+**Names (operator, 2026-11-03).** Our backends begin with `vega-louise-` when VeGa
+wraps them and with `louise-` when it does not.
+- The wrappers are `vega-louise-llama-cpp`, `vega-louise-llama-cpp-cpu`,
+  `vega-louise-openvino` and `vega-louise-pytorch` (they were `vega-llama-cpp`,
+  `vega-llama-cpp-cpu` and `vega-pytorch`).
+- A wrapper's directory name enters no run: the run's engine is the backend it
+  wraps.
+- The engines under them already carry `louise-` and keep their names:
+  `louise-sycl-f16-llama-cpp-16acc89`, `louise-cpu-llama-cpp-16acc89`,
+  `louise-python-20261030` and `louise-python-20261021a`.
+  - An engine's directory name is its run's `engine.name`, so renaming it
+    changes every run id, and every space would be gated again for the same
+    bytes (RULE 1).
+  - The wrapper reads the vendor from that name (`sycl`, `cpu`, in
+    `determinism_lacks`). A plain `louise-llama-cpp` would be refused as naming
+    no known vendor.
+- Upstream backends keep upstream's names.
+- A test holds the rule for every staged model
+  (`test_every_staged_model_runs_on_one_of_our_backends_named_by_the_rule`).
+
 **Every live space passes on `16acc89` (München, 2026-11-03 00:32–03:16).**
 - Repro (`vega_repro_check`, 3 loads × 2): bge-m3, qwen3-embedding-4b and
   medcpt-query each 528/528 texts bit-identical over 3,168 vectors.

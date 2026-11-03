@@ -26,9 +26,9 @@ ubuntu nvidia-smi` must list the card first.
    sh deploy/vega/stage/stage_src.sh /tmp/vega-src.tgz HEAD     # unpack as src/
    docker run --rm -v <cache>:/cache -v <src>:/src:ro python@sha256:54c85f3c… \
      sh /src/deploy/vega/stage/fetch.sh
-   docker run --rm -v localai_backends:/backends busybox mkdir -p /backends/vega-llama-cpp
-   docker run --rm -e PKG=vega-llama-cpp -e BACKEND=cuda13-llama-cpp \
-     -e SOCKET=/backends/vega-llama-cpp/run/receipts.sock \
+   docker run --rm -v localai_backends:/backends busybox mkdir -p /backends/vega-louise-llama-cpp
+   docker run --rm -e PKG=vega-louise-llama-cpp -e BACKEND=cuda13-llama-cpp \
+     -e SOCKET=/backends/vega-louise-llama-cpp/run/receipts.sock \
      -e CARDS='{"0000:01:00.0": "NVIDIA GeForce RTX 4090"}' \
      -e NVIDIA_SMI=/usr/bin/nvidia-smi -e OWNER=0:0 \
      -v localai_backends:/backends -v <src>:/src:ro -v <cache>:/cache:ro \

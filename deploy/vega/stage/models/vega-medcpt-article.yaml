@@ -1,5 +1,5 @@
 # vega-medcpt-article — staged in the LocalAI app (docs/notes/vega.md §12), beside the live the model pool;
-# no Louise collection uses it yet. Behind VeGa (backend vega-llama-cpp: the wrapper in front of
+# no Louise collection uses it yet. Behind VeGa (backend vega-louise-llama-cpp: the wrapper in front of
 # intel-sycl-f16-llama-cpp), so every vector has a receipt.
 # The GGUF article encoder of pubmed's CURRENT space (text input). The pair
 # encoder of input-forms.md is vega-medcpt-article-ov. NOT pinned: pubmed
@@ -11,7 +11,7 @@
 # `pinned` differ. JSON, which is YAML.
 {
   "name": "vega-medcpt-article",
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "embeddings": true,
   "pinned": false,
   "context_size": 512,

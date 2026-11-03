@@ -4,7 +4,7 @@
 # Not pinned; takes no card memory. JSON, which is YAML.
 {
   "name": "vega-medcpt-query-cpu",
-  "backend": "vega-llama-cpp-cpu",
+  "backend": "vega-louise-llama-cpp-cpu",
   "embeddings": true,
   "pinned": false,
   "context_size": 513,

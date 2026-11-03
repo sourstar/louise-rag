@@ -151,8 +151,8 @@ docker exec louise-localai-localai-1 sh -c 'command -v nvidia-smi'
 
 Then the wrapper package, from the same commit, as `README.md` step 4 says:
 `CARDS='{"<bus id as 0000:xx:00.0, lower case>": "Tesla T4"}'`,
-`NVIDIA_SMI=<the path above>`, `PKG=vega-llama-cpp BACKEND=cuda13-llama-cpp`,
-`SOCKET=/backends/vega-llama-cpp/run/receipts.sock`, `OWNER=0:0`. Restart:
+`NVIDIA_SMI=<the path above>`, `PKG=vega-louise-llama-cpp BACKEND=cuda13-llama-cpp`,
+`SOCKET=/backends/vega-louise-llama-cpp/run/receipts.sock`, `OWNER=0:0`. Restart:
 `docker compose -f deploy/localai-nvidia/compose.yaml restart localai`.
 
 ## 6. Runs stated, bit-exact

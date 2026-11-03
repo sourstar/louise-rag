@@ -9,7 +9,7 @@
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad-torch",
-  "backend": "vega-pytorch",
+  "backend": "vega-louise-pytorch",
   "context_size": 512,
   "threads": 6,
   "gpu_layers": 0,

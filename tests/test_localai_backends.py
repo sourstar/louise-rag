@@ -761,8 +761,10 @@ def test_the_gallery_lists_a_variant_per_gpu_each_with_its_requirements():
 # BESIDE its predecessor under a dated name, and a rebuild moves the YAML's
 # backend line to it (louise-python-rebuild.md §2); the operator named the two
 # live VeGa wrappers (2026-11-02): vega-louise-openvino (the 20261030 tree,
-# OpenVINO tasks) and vega-pytorch (the 20261021a tree, torch tasks).
-PYTHON_TREES = ("vega-louise-openvino", "vega-pytorch")
+# OpenVINO tasks) and vega-louise-pytorch (the 20261021a tree, torch tasks);
+# OUR backends begin with vega-louise- when VeGa wraps them and louise- when
+# it does not (operator, 2026-11-03).
+PYTHON_TREES = ("vega-louise-openvino", "vega-louise-pytorch")
 
 
 def _on_a_python_tree(backend: str) -> bool:
@@ -778,7 +780,7 @@ RETIRED_PER_MODEL = ("louise-dar-legal-it", "louise-madlad", "louise-medcpt-arti
 # Everything else is llama.cpp: the one VeGa package (and its CPU build), or an
 # engine loaded directly — MADLAD, whose parallel slots the wrapper refuses
 # (approved-encoders.md).
-LLAMA_CPP_BACKENDS = r"vega-llama-cpp(-cpu)?|louise-sycl-f16-llama-cpp-[0-9a-f]{7,40}"
+LLAMA_CPP_BACKENDS = r"vega-louise-llama-cpp(-cpu)?|louise-sycl-f16-llama-cpp-[0-9a-f]{7,40}"
 
 
 def test_the_backend_rules_name_tonights_backends():
@@ -790,6 +792,18 @@ def test_the_backend_rules_name_tonights_backends():
     assert re.fullmatch(LLAMA_CPP_BACKENDS, "louise-sycl-f16-llama-cpp-16acc89")
     assert not re.fullmatch(LLAMA_CPP_BACKENDS, "louise-madlad")
     assert not set(RETIRED_PER_MODEL) & set(PYTHON_TREES)
+
+
+def test_every_staged_model_runs_on_one_of_our_backends_named_by_the_rule():
+    """Operator, 2026-11-03: "the prefix can be either vega-louise- or louise-
+    if vega is used or not". A model the node holds runs on our backend, and
+    its name says whether VeGa wraps it."""
+    for path in sorted((ROOT / "deploy" / "vega" / "stage" / "models").glob("*.yaml")):
+        text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        backend = json.loads(text)["backend"]
+        assert backend.startswith(("vega-louise-", "louise-")), \
+            f"{path.name}: {backend} is not named vega-louise-… (wrapped) or louise-… (not)"
 
 
 def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
@@ -814,7 +828,7 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         task, rest = python_backend.split_task(body["options"])
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
         if backend in PYTHON_TREES:
-            assert (task in python_backend.TORCH_TASKS) == (backend == "vega-pytorch"), \
+            assert (task in python_backend.TORCH_TASKS) == (backend == "vega-louise-pytorch"), \
                 f"{path.name}: task {task} on {backend}, which the operator named for the other kind"
         seen.add(task)
     assert seen == set(tasks), "each live task serves a staged model"

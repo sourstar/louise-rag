@@ -1,5 +1,5 @@
 # vega-bge-m3 — staged in the LocalAI app (docs/notes/vega.md §12), beside the live the model pool;
-# no Louise collection uses it yet. Behind VeGa (backend vega-llama-cpp: the wrapper in front of
+# no Louise collection uses it yet. Behind VeGa (backend vega-louise-llama-cpp: the wrapper in front of
 # intel-sycl-f16-llama-cpp), so every vector has a receipt.
 # NOT pinned: wikipedia, its only space, embeds nothing (embed = "off"); pinned
 # are the encoders Louise embeds with continuously (vega.md §11, §12).
@@ -10,7 +10,7 @@
 # `pinned` differ. JSON, which is YAML.
 {
   "name": "vega-bge-m3",
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "embeddings": true,
   "pinned": false,
   "context_size": 8192,

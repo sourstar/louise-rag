@@ -6,7 +6,7 @@
 # CUDA_VISIBLE_DEVICES: "<its index>" — a load split across cards states no run.
 # A different card is a new engine and run: the space's calibration gate passes it once.
 name: vega-bge-m3
-backend: vega-llama-cpp
+backend: vega-louise-llama-cpp
 embeddings: true
 pinned: false
 context_size: 8192

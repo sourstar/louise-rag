@@ -5,9 +5,9 @@
 # in the pinned python:3.12-slim with the package directory mounted at the
 # path LocalAI's container sees it, so every path the venv bakes in is right:
 #
-#   docker run --rm -e PKG=vega-llama-cpp -e BACKEND=intel-sycl-f16-llama-cpp \
-#     -e SOCKET=/backends/vega-llama-cpp/run/receipts.sock \
-#     -v /mnt/tank/apps/localai/backends/vega-llama-cpp:/backends/vega-llama-cpp \
+#   docker run --rm -e PKG=vega-louise-llama-cpp -e BACKEND=intel-sycl-f16-llama-cpp \
+#     -e SOCKET=/backends/vega-louise-llama-cpp/run/receipts.sock \
+#     -v /mnt/tank/apps/localai/backends/vega-louise-llama-cpp:/backends/vega-louise-llama-cpp \
 #     -v /tmp/vega-stage/src:/src:ro -v /tmp/vega-stage/cache:/cache:ro \
 #     python@sha256:54c85f3c… sh /src/deploy/vega/stage/build_vega_package.sh
 #

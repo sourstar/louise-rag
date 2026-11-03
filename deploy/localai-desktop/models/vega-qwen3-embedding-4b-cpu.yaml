@@ -4,7 +4,7 @@
 # CPU TWIN (tools/cross_device_check.py): the same build with no card at all —
 # no layers, no op offload, and HIP shown no device.
 name: vega-qwen3-embedding-4b-cpu
-backend: vega-llama-cpp
+backend: vega-louise-llama-cpp
 embeddings: true
 pinned: false
 context_size: 8192

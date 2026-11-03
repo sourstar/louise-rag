@@ -105,7 +105,7 @@ else fail "health: louise node health exit $hrc: $(printf '%s' "$health" | grep 
 [ "$(http "http://localhost:$localai_port/readyz")" = 200 ] && pass "localai: ready on :$localai_port" \
   || fail "localai: /readyz on :$localai_port does not answer 200"
 backends=$(curl -s -m 10 "http://localhost:$localai_port/system" 2>/dev/null)
-for b in louise-rocm-llama-cpp vega-llama-cpp; do
+for b in louise-rocm-llama-cpp vega-louise-llama-cpp; do
   printf '%s' "$backends" | grep -q "\"$b\"" && pass "localai: backend $b installed" \
     || fail "localai: backend $b missing (README steps 3-4)"
 done
