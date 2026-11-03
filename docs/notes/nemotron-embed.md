@@ -931,3 +931,42 @@ weights.
 **Run started 17:14:** tag `iface`, the five languages, 10 questions
 each, gutenberg, `--search-cache`. Order: direct-iface (records the
 searches), qwen3-8b, qwen3.5-9b-q8, qwen3.5-4b-q4, qwen3.5-2b-q4.
+
+### The blind read of the iface run (2026-11-03)
+
+A reader agent saw only the letters A–D, shuffled per question, then the
+key was applied. 20 questions × 4 models:
+
+| model | right work | partly | wrong | not named | raw tool call | wrong language | inventions | answers with none | mean quality (1–5) | best of the 4 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| qwen3-8b | 14 | 2 | 1 | 3 | 0 | 1 | 13 | 8 | **3.40** | 9 |
+| qwen3.5-9b-q8 | 12 | 2 | 1 | 5 | 0 | 0 | **12** | **11** | 3.35 | **10** |
+| qwen3.5-4b-q4 | **15** | 0 | 2 | 3 | 0 | 0 | 22 | 6 | 3.15 | 8 |
+| qwen3.5-2b-q4 | 1 | 1 | 1 | 0 | **17** | 1 | 6 | 1 | 1.20 | 0 |
+
+**Read:**
+- Qwen3-8B and Qwen3.5-9B are close. The 8B is faster (4.5 s against
+  7.8 s).
+- The 4B finds the work most often and invents the most.
+- The 2B's answer was a raw `<tool_call>` in 17 of 20 questions: past
+  the round bound, with the tools withheld, it wrote the call as text.
+  Fixed in app/ask/chat.py: a tool call written as text is never the
+  answer; a reply that is only one is asked once more to answer now.
+
+**The model failures that remain**, the same in every model:
+- refusing when a snippet does not state the plot word for word;
+- anchoring on a wrong top-ranked source and inventing a fit (Q8: *Le
+  médecin malgré lui* for *All's Well*);
+- mixing up people across works;
+- invented translated titles.
+
+**The entity checker is not a faithfulness measure.** Its precision, by
+the reader:
+- about 2 % in German, where every noun is capitalised;
+- about 5 % elsewhere (headings, translated names, Gutenberg ids).
+
+It also missed most of the serious errors, because those use words the
+sources contain ("traduit par Maquet", "Isla … 1922", an invented Diderot
+title). Its columns stay in chat_eval as counts, but they decide nothing.
+What decides is the blind read, and next a trained checker
+(LettuceDetect, which has it/de/fr/es models).
