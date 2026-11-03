@@ -1,0 +1,61 @@
+# Qwen3.6-35B-A3B as a CHAT candidate (operator, 2026-11-03, "A": a MoE with 3 B
+# active of 35 B — a far larger model's knowledge at about a small model's
+# speed). Alibaba's own weights, unsloth's UD-Q4_K_M, the gallery entry
+# `qwen3.6-35b-a3b` (sha256 ac0e2c11… pinned there) — the same file
+# louise-sum-qwen3.6-35b-a3b already installed for the summaries; nothing new
+# is downloaded. Outside the "under 9 B" focus by the operator's own choice.
+# Ours on top, as for the other Qwen candidates: our llama.cpp package and the
+# measured SYCL set, parallel 1, a 16k context, seed 0, no drafter, no vision
+# projector, thinking off; the card's instruct sampling (0.7 / 0.8 / 20 /
+# presence 1.5; Ask sends its own temperature per request).
+# FIT: ~20 GB loaded; checked beside the embedder and the reranker before the
+# pilot.
+{
+  "name": "louise-chat-qwen3.6-35b-a3b",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "seed": 0,
+    "batch": 2048,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 1.5,
+    "repeat_penalty": 1,
+    "model": "llama-cpp/models/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}
