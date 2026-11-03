@@ -27,7 +27,12 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
 - the answer's language: `app.query_language.guess` (the node's own
   deterministic guess), set against the query's label. "No guess" is
   counted apart, never as right;
-- time per answer.
+- time per answer;
+- PRECISION AND TOOLS (operator, 2026-11-03: "fast, not too big, precise in
+  articulating the answer and able to use tools"): the sources an answer
+  cites in brackets ([gutenberg:2701]), the share of them found in what its
+  tools returned ("grounded"; a cited uid no tool returned is invented), and
+  the answers given without any tool call.
 Quality beyond that is read, not scored: `sample` writes the same questions
 with each model's answer under a blind letter, and the key in a separate
 file.
@@ -48,6 +53,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import statistics
 import sys
 import time
@@ -57,6 +63,16 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_QUERIES = Path(__file__).with_name("one_language_queries.tsv")
+#: a citation as Ask's prompt asks for it: a record uid or canonical id in brackets
+CITATION = re.compile(r"\[([A-Za-z][\w.-]*:[^\]\s,;]+)\]")
+
+
+def citations(answer: str, turns: list[dict[str, Any]]) -> tuple[int, int]:
+    """(cited, grounded): the distinct ids the answer cites, and how many of
+    them occur in what its tools returned."""
+    cited = set(CITATION.findall(answer or ""))
+    seen = " ".join(json.dumps(t.get("result"), ensure_ascii=False, default=str) for t in turns)
+    return len(cited), sum(1 for c in cited if c in seen)
 OPERATOR_LANGS = frozenset({"en", "it", "de", "fr", "es"})
 
 
@@ -143,6 +159,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             seconds = round(time.monotonic() - t0, 2)
             after = pid() if pid else None
             turns = got.get("turns", [])
+            cited, grounded = citations(got.get("answer") or "", turns)
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
@@ -151,7 +168,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "warm": pid is None or (before is not None and before == after),
                    "model_s": round(sum(got.get("model_s") or ()), 3),
                    "tools_s": round(sum(t.get("seconds") or 0.0 for t in turns), 3),
-                   "search_s": search_seconds(turns)}
+                   "search_s": search_seconds(turns),
+                   "cited": cited, "grounded": grounded, "no_tool": not turns}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -199,7 +217,11 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_errors": sum(r["tool_errors"] for r in rows),
             "lang_right": sum(1 for r in guessed if r["answer_lang"] == r["lang"]),
             "lang_guessed": len(guessed),
-            "median_s": statistics.median(warm) if warm else None}
+            "median_s": statistics.median(warm) if warm else None,
+            "no_tool": sum(1 for r in rows if r.get("no_tool")),
+            "cited": sum(r.get("cited", 0) for r in rows),
+            "grounded": sum(r.get("grounded", 0) for r in rows),
+            "uncited": sum(1 for r in rows if "cited" in r and not r["cited"])}
 
 
 def _labelled(out: Path) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -221,8 +243,9 @@ def _median(values: list[float]) -> str:
 def score(out: Path) -> int:
     groups = _labelled(out)
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
-          "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+          "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
+          "| no tool call | cited per answer | grounded | answers citing nothing |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
                   "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
@@ -235,7 +258,9 @@ def score(out: Path) -> int:
             print(f"| {name} | {label} | {s['n']} | {s['failed']} | {s['exhausted']} | "
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
                   f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
-                  f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} |")
+                  f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "
+                  f"{s['no_tool']} | {s['cited'] / s['n']:.1f} | "
+                  f"{(s['grounded'] / s['cited']) if s['cited'] else 0.0:.2f} | {s['uncited']} |")
     print("\nWhere a warm answer's time goes (medians, seconds; the search parts are the "
           "node's own timings, summed over an answer's searches):\n")
     print("| model | warm answers | answer | model rounds | tool calls | search | rerank "

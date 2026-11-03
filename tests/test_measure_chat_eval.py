@@ -146,3 +146,28 @@ def test_a_run_resumed_under_another_tag_is_scored_apart_with_where_the_time_wen
     assert "| m [opt0] | all | 2 |" in table and "| m [opt1] | all | 2 |" in table
     assert "| m [opt0] | 2 |" in table and "| 3.00 | 1.60 | 1.40 | 0.90 | 0.20 | 0.05 | 0.01 |" in table
     assert "| 1.50 | 1.60 | 1.40 | 0.30 |" in table
+
+
+def test_citations_are_counted_and_checked_against_what_the_tools_returned(tmp_path, capsys):
+    """Operator, 2026-11-03: "precise in articulating the answer and able to
+    use tools". A cited uid no tool returned is invented; an answer with no
+    tool call is counted."""
+    turns = [{"tool": "louise_search", "error": None, "seconds": 1.0,
+              "result": {"lists": [{"hits": [{"uid": "gutenberg:2701"}, {"uid": "gutenberg:15"}]}]}}]
+    assert ev.citations("Ahab [gutenberg:2701], again [gutenberg:2701], and [gutenberg:9999].",
+                        turns) == (2, 1)
+    assert ev.citations("No brackets here.", turns) == (0, 0)
+    qs = ev.read_queries(_queries(tmp_path))[:2]
+    answers = {qs[0]["query"]: {"answer": "It is [gutenberg:2701] and [gutenberg:9999].",
+                                "turns": turns},
+               qs[1]["query"]: {"answer": "Non lo so.", "turns": []}}
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en",
+           ask=lambda q, collections=None: answers[q])
+    rows = ev._rows(tmp_path, "m")
+    assert [(r["cited"], r["grounded"], r["no_tool"]) for r in rows] == [(2, 1, False), (0, 0, True)]
+    s = ev.summary(rows)
+    assert (s["no_tool"], s["cited"], s["grounded"], s["uncited"]) == (1, 2, 1, 1)
+    capsys.readouterr()
+    ev.score(tmp_path)
+    row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
+    assert row.split("|")[11:15] == [" 1 ", " 1.0 ", " 0.50 ", " 1 "]

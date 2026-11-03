@@ -747,3 +747,16 @@ scored as "the operator's five").
 **The run:** `--langs en,it,de,fr,es --per-lang 10`, 50 questions a model. Among
 those that meet the bar, the faster one wins on warm seconds per answer. VRAM
 beside the embedder and the reranker is recorded too.
+
+**The operator's requirements (the same day):** "I need it fast, not too big,
+precise in articulating the answer and able to use tools. Check the qwen 3.5
+and 3.8 models I downloaded in localai."
+
+| requirement | how it is measured |
+|---|---|
+| fast | warm median seconds per answer, and generated tok/s |
+| not too big | VRAM loaded at a 16k context, beside the embedder and the reranker |
+| precise | `chat_eval` (#280): cited sources per answer; the share of cited uids that a tool really returned ("grounded"); answers citing nothing. Plus the blind sample |
+| able to use tools | calls per answer, tool errors, answers given with no tool call, round-bound hits |
+
+The models the operator downloaded run the "five" tag first.
