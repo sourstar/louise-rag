@@ -1188,6 +1188,17 @@ def test_unembedded_carries_the_manifest_and_index_into_another_space(pair):
     assert again["done"] == {"index": "present", "manifest": "present"}
 
 
+def test_a_declared_jsonl_container_holds_the_records_of_an_undeclared_one(pair):
+    """09 §9.5: below version 9 an absent `slicing.container` reads as JSONL, so a
+    version-11 Codex declaring "jsonl" holds its version-8 source's parts
+    (wikidata into Nemotron's space, 2026-11-03); "parquet" is other parts."""
+    _root, old, _new = pair
+    base = old.slicing if isinstance(old.slicing, dict) else {}
+    assert seed.record_differences(old, replace(old, slicing={**base, "container": "jsonl"})) == []
+    assert seed.record_differences(old, replace(old, slicing={**base, "container": "parquet"})) == ["slicing"]
+    seed.refuse_unless_same_records(old, replace(old, slicing={**base, "container": "jsonl"}), "carry")
+
+
 def test_unembedded_refuses_a_source_that_holds_a_vector(pair):
     root, old, _new = pair
     _bge_space(root)

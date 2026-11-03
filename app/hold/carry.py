@@ -455,7 +455,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     state is unusable until `reconcile` has compared every document's
     `content_hash` in the two snapshots."""
     from . import collection as col
-    from .seed import record_differences
+    from .seed import record_differences, records_slicing
     from app import spaces
 
     root = Path(root)
@@ -472,7 +472,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         if src.collection_id == to.collection_id:
             raise CodexError("carry: the source and the target are one collection")
         other = [d for d in record_differences(src, to) if d != "slicing"]
-        if other or src.slicing == to.slicing:
+        if other or records_slicing(src) == records_slicing(to):
             raise CodexError(
                 f"carry --resliced: {to.collection_id} and {src.collection_id} differ in "
                 f"{', '.join(other) or 'nothing'} — only the slicing may differ (A1g); anything else "
