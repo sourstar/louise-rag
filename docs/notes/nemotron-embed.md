@@ -651,8 +651,18 @@ The chat model's jobs in Louise:
 case it fits we switch it right away as chat and we validate option A as an
 alternative for some use cases (i.e. serving chat while working on
 wiki-gutenberg)").
-- Staged: `deploy/vega/stage/models/louise-chat-nemotron-bolt-e4b.yaml`, with
-  the chat model's engine settings.
+- Installed FROM LOCALAI'S MODEL GALLERY (operator, the same day: "If it is
+  available use localai to get the model. Do not reinvent the wheel"):
+  - entry `nemotron-3.5-bolt-e4b-q4`: unsloth's UD-Q4_K_XL and its vision
+    projector, pinned by sha256, plus the entry's tool-call handling;
+  - our overrides carry only the chat model's engine settings
+    (`deploy/vega/stage/gallery/louise-chat-nemotron-bolt-e4b.json`, the
+    `/models/apply` body);
+  - `deploy/vega/stage/models/louise-chat-nemotron-bolt-e4b.yaml` is what
+    LocalAI writes from it.
+- A model the gallery holds is installed from it from now on. Of the Nemotron
+  candidates, it holds Lightning-30B-A3B (q4, q8, nvfp4) and Bolt-E4B (q4,
+  q8), not Rerank-8B or Bolt-74B-A9B, which stay Hub downloads.
 - "It fits" means all of these, against Qwen3-8B on `chat_eval` (10 queries
   per language, the same run):
   1. it loads on the card's SYCL engine, and no thinking reaches the

@@ -1,13 +1,16 @@
 # The chat model candidate B (operator, 2026-11-03: "Evaluate B now, in case
-# it fits we switch it right away as chat"): nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB,
-# Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf (Gemma-4-E4B post-trained by NVIDIA,
-# OpenMDW-1.1, 34 languages). The engine settings are the chat model's
-# (louise-chat-qwen3-8b): the SYCL determinism mode, parallel 1, 16k context,
-# the tokenizer's template. Thinking off, as Qwen3's: Louise's calls want the
-# answer, and strip_think removes only <think> blocks; the engine check
-# confirms that no thinking reaches the content (nemotron-embed.md, "The chat
-# model"). Sampling: the card's top_p 0.95 and Gemma's top_k 64; the caller
-# sets the temperature.
+# it fits we switch it right away as chat"; "If it is available use localai to
+# get the model. Do not reinvent the wheel").
+# INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `nemotron-3.5-bolt-e4b-q4`:
+#   POST /models/apply with ../gallery/louise-chat-nemotron-bolt-e4b.json
+# The gallery fetches unsloth's UD-Q4_K_XL GGUF and its vision projector,
+# pinned by sha256. It also sets the entry's function handling
+# (automatic_tool_parsing_fallback, grammar off) and sampling (top_k 64,
+# top_p 0.95). Our overrides add only the engine settings of the chat model
+# (louise-chat-qwen3-8b): our llama.cpp package, the SYCL determinism env,
+# parallel 1, a 16k context, seed 0, thinking off.
+# This file is what LocalAI writes from them. After the install, the node's
+# file replaces it if the two differ (staged YAMLs = deployed).
 {
   "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
@@ -18,20 +21,28 @@
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
   },
   "flash_attention": "on",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
   "gpu_layers": 999,
+  "known_usecases": ["chat", "vision"],
   "mmap": true,
+  "mmproj": "llama-cpp/mmproj/nemotron-3.5-bolt-e4b/mmproj-F16.gguf",
   "name": "louise-chat-nemotron-bolt-e4b",
   "options": [
+    "use_jinja:true",
     "parallel:1",
     "cache_ram:0",
-    "ubatch:512",
-    "use_jinja:true"
+    "ubatch:512"
   ],
   "parameters": {
     "batch": 2048,
-    "model": "weights/chat/nemotron-3.5-bolt-e4b-q4_k_m.gguf",
-    "repeat_penalty": 1,
+    "model": "llama-cpp/models/nemotron-3.5-bolt-e4b/NVIDIA-Nemotron-3.5-Bolt-E4B-UD-Q4_K_XL.gguf",
     "seed": 0,
+    "temperature": 1,
     "top_k": 64,
     "top_p": 0.95
   },
