@@ -1053,6 +1053,13 @@ answers: 202 with no body for a notification, a batch answered as a
 batch, `GET` 405 (no server-initiated stream). **Connect** (`/connect`)
 shows each viewer how to reach these from Open WebUI, an agent or a
 script, filled in with the address they used and their own token.
+*Amended 2026-11-03* (operator: "Make a skill or whatever works, add it
+to the 'connect to' section"): `GET /connect/louise-skill.md` and
+`/connect/louise-skill.zip` give the agent skill (the Agent Skills
+format, app/ask/SKILL.md), with the node's address in it and no token.
+It says how a model searches with the three tools and how it cites.
+The MCP server's `initialize` gives the same text as its
+`instructions`.
 - the LocalAGI routes below require the token read from
   `DEPOSIT_TOKEN_FILE`, reads included, and that token opens nothing
   else: an agent that can write its memory cannot pause the node.

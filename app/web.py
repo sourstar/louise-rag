@@ -1199,6 +1199,23 @@ def connect_page(request: Request):
         "models": model_ids(), "users_exist": users.any_active()})
 
 
+@ask_router.get("/connect/louise-skill.md")
+def connect_skill(request: Request):
+    """The skill (app/ask/skill.py), this node's address in it, as a file:
+    Claude Code's ~/.claude/skills/louise/SKILL.md, or any agent's prompt."""
+    from .ask import skill
+    return Response(skill.text(_public_base(request)), media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="SKILL.md"'})
+
+
+@ask_router.get("/connect/louise-skill.zip")
+def connect_skill_zip(request: Request):
+    """The skill as the Claude apps take it: louise/SKILL.md in a zip."""
+    from .ask import skill
+    return Response(skill.zip_bytes(_public_base(request)), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="louise-skill.zip"'})
+
+
 def model_ids() -> list[str]:
     """`/v1/models`: `louise` (every collection) and `louise/<name>` per
     collection a search may use — choosing the model chooses what is
