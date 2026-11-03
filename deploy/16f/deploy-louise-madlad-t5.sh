@@ -262,6 +262,7 @@ grep -q 'document_instruction: str | None = None' "$ROOT/src.new/app/hold/codex.
 grep -q '^def announce(collection, uids) -> None:' "$ROOT/src.new/app/bundles/genesis.py" && grep -q 'bundle_genesis.announce(collection' "$ROOT/src.new/app/worker.py"   # #255/#256: a local archive's demand announced by the fts commit, the walk in windows from a cursor
 grep -q '^_BY_UID_WHERE = ("+in_scope=1' "$ROOT/src.new/app/bundles/genesis.py"   # #257: the uid lookup kept on the primary key (unary plus; 11.8 s a chunk on idx_documents_scope, 2026-11-03)
 grep -q '^def _load_seed(collection, w: _Walk) -> None:' "$ROOT/src.new/app/bundles/genesis.py"   # #259: the archive demand seed's cursor saved beside the manifest, resumed after a restart
+grep -q '^def records_slicing(c: Codex) -> Any:' "$ROOT/src.new/app/hold/seed.py"   # 8db6dc10: a declared "jsonl" container is the records of an undeclared one (wikidata into Codex 11)
 echo "staged: $(find "$ROOT/src.new" -name '*.py' | wc -l) python files"
 
 say "2. build louise-rag:staged"
