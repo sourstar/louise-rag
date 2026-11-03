@@ -1,6 +1,6 @@
-# Wikidata, gutenberg-graph and "Philippe in the car" — the operator's design
+# Wikidata, wiki-gutenberg and "Philippe in the car" — the operator's design
 
-*Operator, 2026-10-19: the collection is called **gutenberg-graph** here
+*Operator, 2026-10-19: the collection is called **wiki-gutenberg** here
 and in every note; the original document calls it "gutenberg-wd-kg".*
 
 *Designed by the operator in another conversation, in the Claude Docs
@@ -17,7 +17,7 @@ The first-read notes at the end are not part of the design.*
 Every Codex declares its collection's packet types. Each type has a Parquet
 schema and a join key (e.g. `chunk_id`); the Manifest lists packets per type.
 New types can be added without changing the standard. Existing types: corpus
-and embeddings. New types, introduced with gutenberg-graph:
+and embeddings. New types, introduced with wiki-gutenberg:
 
 | Type | Columns | Key |
 |---|---|---|
@@ -149,7 +149,7 @@ Rules:
 
 ---
 
-## Sibling collection: gutenberg-graph (Gutenberg Wikidata Knowledge Graph)
+## Sibling collection: wiki-gutenberg (Gutenberg Wikidata Knowledge Graph)
 
 Sibling of `gutenberg` (Qwen3 Embedding 4B) and `wikidata` (Jina v3); the
 Codex pins both versions. Called "kg" because it holds mentions, relations
@@ -214,7 +214,7 @@ sources.
 
 ```json
 {
-  "collection": "gutenberg-graph",
+  "collection": "wiki-gutenberg",
   "siblings": [
     {"collection": "gutenberg", "version": "<hash Codex>"},
     {"collection": "wikidata", "snapshot": "2026-05-07", "version": "<hash Codex>"}
@@ -243,7 +243,7 @@ sources.
 
 ```json
 {
-  "collection": "gutenberg-graph",
+  "collection": "wiki-gutenberg",
   "blocks": [
     {"type": "mentions", "scope": "all Gutenberg", "status": "planned", "eta_days": "2-5"},
     {"type": "relations", "scope": "history/art/architecture", "status": "planned", "eta_days": "~7"},
@@ -286,7 +286,7 @@ chunks/graph. Wikipedia joins through QIDs.
 ## Philippe in the car — voice guide to history and geography
 
 While you drive, Philippe tells you about the history, geography and events
-of the places around you, using Wikidata, gutenberg-graph, Gutenberg and
+of the places around you, using Wikidata, wiki-gutenberg, Gutenberg and
 Wikipedia.
 
 ### Requirements
@@ -474,7 +474,7 @@ before building. Not yet a full check.
    corpus and Wikimedia's vectors are CC0.
 5. **Pruning.** Dropping scholarly articles prunes whole entities (allowed,
    invariant 11); every field the origin gives about a kept entity stays.
-6. **Derived collections.** gutenberg-graph is built from two others by
+6. **Derived collections.** wiki-gutenberg is built from two others by
    models whose output is not bit-exact ("verification: TBD"): how such a
    collection is identified and verified is not yet in docs/02 or 09.
 7. **Louise's own IDs** for entities missing from Wikidata are new

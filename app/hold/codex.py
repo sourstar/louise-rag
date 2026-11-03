@@ -117,12 +117,12 @@ CUT_VERSION = 8
 TOKEN_CUT = "tokens"
 
 #: THE GRAPH AMENDMENT (operator, 2026-10-20; 09 §9.3, §9.5, §9.14, §9.18;
-#: docs/notes/gutenberg-graph-amendments.md, A-K1–A-K4). From this version a
+#: docs/notes/wiki-gutenberg-amendments.md, A-K1–A-K4). From this version a
 #: Codex declares its record parts' CONTAINER, `slicing.container` —
 #: `"jsonl"`, the zstd-framed lines of every collection so far, or
 #: `"parquet"`, one Parquet file per part (09 §9.5 "The file") — REQUIRED at
 #: this version and an unknown key below it, where it reads as JSONL; an
-#: annotations Codex carries `annotates` as a LIST of targets (gutenberg-graph
+#: annotations Codex carries `annotates` as a LIST of targets (wiki-gutenberg
 #: annotates gutenberg's text AND wikidata's entities), a list even of one;
 #: and its claims may be of the `mention`, `relation` and `community` types
 #: (app/hold/annotations.py). Written for a Codex that declares one of them
@@ -172,7 +172,7 @@ DOCUMENT_VERSION = 11
 JSONL, PARQUET = "jsonl", "parquet"
 CONTAINERS = (JSONL, PARQUET)
 #: What this build WRITES: both, since 2026-10-20 (app/pack/records.py's
-#: Parquet writer, step 2b of docs/notes/gutenberg-graph-amendments.md). A
+#: Parquet writer, step 2b of docs/notes/wiki-gutenberg-amendments.md). A
 #: container the format declared and the build could not yet write would be
 #: refused at CREATE here, as `record_line` 2 is, never written as the other.
 CONTAINERS_WRITABLE = CONTAINERS

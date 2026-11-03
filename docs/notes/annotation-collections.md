@@ -241,8 +241,8 @@ branch. Open: the worker logged "job 1 (deposit) started … done" right
 after the create; nothing in `create annotations` submits a job, so who
 asked is to be read off the job row.
 
-The operator's "gutenberg graph collection" (2026-10-19 evening) is NOT
-these: it is `gutenberg-graph`, the sibling of gutenberg and wikidata
+The operator's "wiki-gutenberg collection" (2026-10-19 evening) is NOT
+these: it is `wiki-gutenberg`, the sibling of gutenberg and wikidata
 ([wikidata-plugins.md](wikidata-plugins.md), [wikidata-implementation.md](wikidata-implementation.md)),
 which waits on the wikidata collection and decisions D1–D5.
 

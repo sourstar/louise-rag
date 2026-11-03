@@ -1,11 +1,11 @@
-# wikidata and gutenberg-graph — the build plan (2026-10-19)
+# wikidata and wiki-gutenberg — the build plan (2026-10-19)
 
 *The operator decided D1–D5 as recommended on the evening of 2026-10-19
 ("Go ahead with the decisions as you recommended, D1 to D5"); D6 on
 2026-10-18. The design is [wikidata-plugins.md](wikidata-plugins.md), the
 mapping [wikidata-implementation.md](wikidata-implementation.md). This note
 is the ORDER OF WORK, the decisions the mapping left to the build, and the
-measurements still owed. The gutenberg graph is called `gutenberg-graph`.*
+measurements still owed. The gutenberg graph is called `wiki-gutenberg` (named `gutenberg-graph` until 2026-11-03).*
 
 ## 1. The decisions, fixed
 
@@ -15,7 +15,7 @@ measurements still owed. The gutenberg graph is called `gutenberg-graph`.*
 | D2 | no bulk import of Wikimedia's vectors; ask Wikimedia for the chunk texts; meanwhile embed nothing in bulk | no `kind: "archive"` credit at creation (the Codex is written once: an archive adopted later needs a daughter); the collection embeds through the worker like any other, at night |
 | D3 | one layer; the language list a parameter; a language added = a daughter | see §3: the carry-by-hash rule of 06 §6.3 does the rest |
 | D4 | ~~Wikibase's `wbformatvalue` in a pinned image~~ **REVISED 2026-10-19 (operator: "D4 Python")**: dates, coordinates and quantities formatted by a deterministic Python formatter of our own (`app/plugins/wikidata/format.py`), vendored beside the textifier; no service beside the parser | the text is a pure function of the dump and the plugin's code (invariant 3); the formatter's version is the parser's; byte parity with Wikimedia's own texts is not sought (D2 never relied on it) |
-| D5 | gutenberg-graph = an annotations collection amended (A-K1..K4) | written into 02 §2.10, 05 §5.5, 09 §9.5/§9.8/§9.14 when its build starts, after wikidata |
+| D5 | wiki-gutenberg = an annotations collection amended (A-K1..K4) | written into 02 §2.10, 05 §5.5, 09 §9.5/§9.8/§9.14 when its build starts, after wikidata |
 | D6 | `tokenizers` (Hugging Face, Rust) in the platform image, pinned | the chunker cuts at tokens of jina-v3's tokenizer |
 
 ## 2. What the mapping left to the build — decided here
@@ -150,7 +150,7 @@ wikidata:Q42` is the fact; the `keys` restriction (05 §5.2) is what the
 namespace buys. OPEN, two decisions: (1) NO RESOLVER — a label typed in
 a question is not resolved to an entity: the gene resolver's in-memory
 dictionary does not exist at 10⁸ entities, and an exact-label index is
-several GB on /data; gutenberg-graph's entity linking goes through the
+several GB on /data; wiki-gutenberg's entity linking goes through the
 collection's VECTORS by design, not this table. (2) SIZE: the table
 duplicates the pack's labels (one language, ~10⁸ rows, order of 5 GB in
 refs.db) — measure after the first node sync before deciding whether
@@ -171,7 +171,7 @@ stay in the pack; the row carries one.
   section: the recut is carried by chunk hash (06 §6.3), so the mother's
   vectors stay and only the new language is embedded. No new rule, one
   sentence that says so (the A-W1 of the mapping, reduced).
-- **D5's A-K1..K4** — when gutenberg-graph's build starts.
+- **D5's A-K1..K4** — when wiki-gutenberg's build starts.
 
 ## 4. Order of work
 
@@ -211,7 +211,7 @@ stay in the pack; the row carries one.
    determinism measured; `hold collection create wikidata`; the first
    fetch (~100 GB to tank) and build (the pass over 1.5 TB of JSON:
    measured, resumable at entity granularity).
-7. gutenberg-graph: the amendments, then mentions over gutenberg (GLiNER),
+7. wiki-gutenberg: the amendments, then mentions over gutenberg (GLiNER),
    entity linking against wikidata's vectors, relations, communities — as
    wikidata-plugins.md orders them.
 
@@ -299,7 +299,7 @@ hashes before it asks the card (app/hold/collection.py `_dry_build`).
 `snapshot = "20261012"` lives in the held file: the Codex's origin.spec
 pins no files. Next: the fetch and the first streaming scan (§2), the first
 snapshot, the gate against the document run, then §4.5's model-identity
-check is done and gutenberg-graph's methods (gutenberg-graph-amendments.md,
+check is done and wiki-gutenberg's methods (wiki-gutenberg-amendments.md,
 steps 4–5) can run against its vectors.
 
 ## Parser 2 (2026-10-24): a referenced label falls back to `mul`

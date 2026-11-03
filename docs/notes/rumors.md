@@ -7,7 +7,7 @@ Rumors are unofficial tags, connections and stuff, not part of wikidata but
 somehow derived from the corpus with a reasonable degree of confidence.
 It's a unique contribution of louise."*
 
-This supersedes adjustment 1 of gutenberg-graph-strategy.md §10 (PR #4,
+This supersedes adjustment 1 of wiki-gutenberg-strategy.md §10 (PR #4,
 "the gap is a view, not a log") and the reading of 02 §2.3 behind it. A
 rumor's state depends on a snapshot of ANOTHER collection, and its history
 — when it was first seen, which Wikidata review closed it, and how — cannot
@@ -16,8 +16,8 @@ Nothing here is built; the spec changes at the end are for approval.
 
 ## What a rumor is
 
-A claim of a corpus-derived annotations collection (gutenberg-graph's
-exact and reader layers, gutenberg-graph-strategy.md §5) that the CURRENT
+A claim of a corpus-derived annotations collection (wiki-gutenberg's
+exact and reader layers, wiki-gutenberg-strategy.md §5) that the CURRENT
 wikidata snapshot does not state:
 
 | kind | from | a rumor while |
@@ -88,7 +88,7 @@ If nothing is said: the separate list, facts and filter.
 
 ## Back to Wikidata, and what we learn from it
 
-The channels are unchanged from gutenberg-graph-strategy.md §8 and §10.3:
+The channels are unchanged from wiki-gutenberg-strategy.md §8 and §10.3:
 - conflicting values go to Wikidata's Mismatch Finder, the Gutenberg
   passage as the external URL;
 - new connections and entities go in as ordinary edits by a person, the
@@ -143,7 +143,7 @@ Counts of open rumors are descriptive, never a target.
    verifier can ask the source again, but the source may have changed
    since, so they are never a reason to refuse the member.
 
-It is built with gutenberg-graph's first collection, since until then
+It is built with wiki-gutenberg's first collection, since until then
 there is nothing to record. Start small: tier A only (diaries, letters,
 memoirs, personal narratives), with a strict floor. Then report the
 judged precision and the YIELD on a sample: how many rumors are right,

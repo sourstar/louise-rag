@@ -3,7 +3,7 @@ wikidata-build-plan.md §2 "Reference source"): the namespace `wikidata`
 — QIDs and PIDs, `wikidata:Q42`, `wikidata:P31` — registered, so that a
 record of the `wikidata` collection may write its own id and the ids of
 what it is an instance or subclass of into `keys`, and so that a
-gutenberg-graph mention may point at an entity by canonical id (05 §5.2:
+wiki-gutenberg mention may point at an entity by canonical id (05 §5.2:
 a plugin writes only ids a reference source registers; 09 §9.14: an edge
 may end at `<namespace>:<id>` left unresolved).
 

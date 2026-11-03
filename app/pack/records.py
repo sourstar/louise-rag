@@ -25,7 +25,7 @@ frame_len bytes to the payload start, and decodes the index. The index:
 Frame offsets are absolute in the file, so a frame is one pread.
 
 THE OTHER CONTAINER (09 §9.5 "The file (B): Parquet", operator 2026-10-20;
-docs/notes/gutenberg-graph-amendments.md A-K4). A part whose path ends in
+docs/notes/wiki-gutenberg-amendments.md A-K4). A part whose path ends in
 `.parquet` is one Parquet file: one row per record in record order, one
 STRING column per key of the record line in the line's key order — a
 scalar (`uid`, `title`, `date`, …) as the string or null, a nested value

@@ -1,7 +1,9 @@
-# gutenberg-graph — the amendments A-K1..K4, worked out
+# wiki-gutenberg — the amendments A-K1..K4, worked out
+
+*Named `gutenberg-graph` until 2026-11-03; the operator renamed it `wiki-gutenberg`. The name is prose only: it enters no hash, no `collection_id` (codex.py: the local name and the title sit outside it).*
 
 *2026-10-19 night, the architecture session, unattended. D5 (operator: "Go
-ahead with the decisions as you recommended, D1 to D5") made gutenberg-graph
+ahead with the decisions as you recommended, D1 to D5") made wiki-gutenberg
 an annotations collection AMENDED; `wikidata-implementation.md` §4 names the
 four amendments in one line each. This note works them out to the byte so
 that the operator can decide them tomorrow — two of them (A-K3, A-K4) change
@@ -9,7 +11,7 @@ hashed or wire bytes, and CLAUDE.md asks first for those. NOTHING HERE IS
 BUILT: `app/hold/annotations.py` still refuses every claim type but
 `same-work` and `translation-of`.*
 
-## 0. What gutenberg-graph is
+## 0. What wiki-gutenberg is
 
 Claims about gutenberg's TEXT that point into wikidata's ENTITIES: a
 mention of an entity in a chunk (entity linking), a relation between two
@@ -81,7 +83,7 @@ stays a plain key on one that does not. What is new:
 `annotates` becomes a LIST: `[{collection_id, from_snapshot}, …]`, each the
 target it is today, in a fixed order the claims refer to by position
 (`subject`'s and `object`'s collection is implied by the uid's plugin
-prefix, so no index is needed in the claim). gutenberg-graph annotates
+prefix, so no index is needed in the claim). wiki-gutenberg annotates
 gutenberg (the text) and wikidata (the entities). THIS MOVES HASHED BYTES:
 `annotates` is inside `collection_id`, so a list is a new Codex version
 (**9**, written for an annotations Codex with more than one target or any

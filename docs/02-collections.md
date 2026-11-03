@@ -1475,9 +1475,9 @@ What it does **not** have:
   - "An annotation fits a collection from a snapshot date onwards, by
     design": a claim is attached to no answer read from an earlier target
     snapshot.
-  - *Amended 2026-10-20* (operator; `notes/gutenberg-graph-amendments.md`
+  - *Amended 2026-10-20* (operator; `notes/wiki-gutenberg-amendments.md`
     A-K3): at Codex version 9 `annotates` is a LIST of such targets in a
-    fixed order — gutenberg-graph annotates gutenberg, the text its
+    fixed order — wiki-gutenberg annotates gutenberg, the text its
     mentions are read from, and wikidata, the entities they name. A
     claim's end belongs to the target its uid's plugin prefix says. The
     version is inside `collection_id`, so the two collections of 2026-10-09
