@@ -313,3 +313,39 @@ def test_what_the_model_sent_louise_is_kept(tmp_path):
     assert ev._rows(tmp_path, "m")[0]["calls"] == [
         {"tool": "louise_search", "arguments": {"query": "Dumas collier", "collections": ["gutenberg"]},
          "by": "model", "dropped": [], "error": None}]
+
+
+def test_a_search_runs_once_and_is_replayed_for_every_model(tmp_path):
+    """Operator, 2026-11-03: "Do we need the reranker for this kind of
+    test?" The question's own search is the same for every model: it runs
+    once, reranker included, and is replayed (CLAUDE.md RULE 1)."""
+    live = []
+
+    def call(name, args):
+        live.append((name, args))
+        return {"lists": [{"hits": [{"uid": "gutenberg:1"}]}]} if name == "louise_search" else {"facts": []}
+    path = tmp_path / "searches.jsonl"
+    version = {"gutenberg": "snap-1"}
+    cache = ev.SearchCache(path, version, live=call)
+    args = {"query": "q", "translate": True, "collections": ["gutenberg"]}
+    first = cache("louise_search", args)
+    first["lists"].append("written by the caller")
+    again = ev.SearchCache(path, version, live=call)("louise_search", dict(reversed(list(args.items()))))
+    assert again == {"lists": [{"hits": [{"uid": "gutenberg:1"}]}]}, "the recording, not the caller's copy"
+    assert len(live) == 1, "replayed from the file, in another process's order of keys"
+    cache("louise_lookup", {"id": "hgnc:1"})
+    cache("louise_lookup", {"id": "hgnc:1"})
+    assert [n for n, _ in live].count("louise_lookup") == 2, "only searches are kept"
+    with pytest.raises(SystemExit, match="record a new file"):
+        ev.SearchCache(path, {"gutenberg": "snap-2"}, live=call)
+
+
+def test_a_run_says_which_searches_it_replayed(tmp_path):
+    qs = ev.read_queries(_queries(tmp_path))[:2]
+    cache = ev.SearchCache(tmp_path / "s.jsonl", {"g": "1"},
+                           live=lambda n, a: {"lists": [{"hits": [{"uid": "gutenberg:5"}]}]})
+    for name in ("direct", "again"):
+        ev.run(tmp_path, name, model="m", queries=qs, guess=lambda t: "en", pid=lambda: 0,
+               ask=ev.ask_direct(None, call=cache), search_cache=cache)
+    assert [r["replayed"] for r in ev._rows(tmp_path, "direct")] == [0, 0]
+    assert [r["replayed"] for r in ev._rows(tmp_path, "again")] == [1, 1]

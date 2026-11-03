@@ -14,6 +14,13 @@ whose model is `llm.chat_tools` at its production settings, with
 tools (`louise_search`, `louise_lookup`, `louise_traverse`). Run it inside the
 node's image, at night (operator), one model at a time.
 
+THE SEARCHES ONCE (`--search-cache FILE`, SearchCache): Ask searches the
+question before any model speaks, the same for every model, so the 50
+searches are recorded once (`run --direct --search-cache FILE`, reranker
+included, as a reader gets them) and replayed for every model. A row's
+`seconds` is then the model's part; `replayed_s` is what its searches
+took when they ran.
+
 THE QUESTIONS are the 451 labelled queries of one-language-per-work.md, in 18
 languages. THE OPERATOR'S FIVE decide (2026-11-03: "As long as it answers
 correctly for english, italian, german, french and spanish I am good with it.
@@ -210,7 +217,79 @@ def faithfulness(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return out
 
 
-def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, Any]]:
+class SearchCache:
+    """THE QUESTION'S OWN SEARCH, ONCE (operator, 2026-11-03: "Do we need the
+    reranker for this kind of test?"). Since #290 Ask searches the question
+    as typed before any model speaks, with the same arguments for every
+    model; a search is a pure function of its arguments and the data held
+    (invariant 4 (5)). So it runs once, reranker included, as a reader gets
+    it, and is replayed for every model (CLAUDE.md RULE 1: reuse what is
+    provably identical). A search a model makes itself is replayed only if
+    an earlier run made the very same one. Only louise_search is kept.
+
+    The file's first line names the data it was read from (`data_version`:
+    the snapshot of every collection searched); another snapshot refuses it.
+    A change to the search code is not seen: record a new file after one."""
+
+    def __init__(self, path: Path, version: dict[str, Any],
+                 live: Callable[[str, dict[str, Any]], Any] | None = None) -> None:
+        self.path, self.version, self.hits, self.replayed_s = path, version, 0, 0.0
+        self._live = live
+        self._kept: dict[str, tuple[Any, float]] = {}
+        if path.exists():
+            lines = path.read_text(encoding="utf-8").splitlines()
+            head = json.loads(lines[0]) if lines else {}
+            if head.get("data") != version:
+                raise SystemExit(f"{path}: recorded on {head.get('data')}, the node holds {version}: "
+                                 f"record a new file")
+            for line in lines[1:]:
+                row = json.loads(line)
+                self._kept[row["key"]] = (row["result"], float(row.get("seconds") or 0.0))
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"data": version}, sort_keys=True) + "\n", encoding="utf-8")
+
+    def __call__(self, name: str, args: dict[str, Any]) -> Any:
+        live = self._live
+        if live is None:
+            from app.ask import mcp
+            live = mcp._call_tool
+        if name != "louise_search":
+            return live(name, args)
+        key = json.dumps(args, sort_keys=True, ensure_ascii=False)
+        if key in self._kept:
+            result, seconds = self._kept[key]
+            self.hits += 1
+            self.replayed_s += seconds
+            return json.loads(json.dumps(result))       # a copy: the caller may write into it
+        t0 = time.monotonic()
+        result = live(name, args)
+        seconds = round(time.monotonic() - t0, 3)
+        kept = json.loads(json.dumps(result, ensure_ascii=False, default=str))
+        self._kept[key] = (kept, seconds)
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"key": key, "result": kept, "seconds": seconds}, ensure_ascii=False) + "\n")
+        return result
+
+
+def data_version(collections: list[str] | None) -> dict[str, Any]:
+    """The snapshot each collection searched is read from (every one held
+    when none is named): what a recorded search is valid for."""
+    from app.ask import results
+    from app.hold import collection as col
+    from app.share import seeder
+    root = results._root()
+    names = ([col.resolve(root, c)[0] for c in collections] if collections
+             else sorted(n for n, _ in col.list_named(root)))
+    out: dict[str, Any] = {}
+    for n in names:
+        snap = seeder.cached_snapshot(col.shard_dir_of(root, n))
+        out[n] = getattr(snap, "snapshot_id", None)
+    return out
+
+
+def ask_direct(collections: list[str] | None = None,
+               call: Callable[[str, dict[str, Any]], Any] | None = None) -> Callable[..., dict[str, Any]]:
     """No model: the question searched as typed, as the Ask tab searches it
     (translation on), through the same tool the model calls — the reference
     row for "conveys"."""
@@ -221,7 +300,7 @@ def ask_direct(collections: list[str] | None = None) -> Callable[..., dict[str, 
         args: dict[str, Any] = {"query": question, "translate": True}
         if collections:
             args["collections"] = list(collections)
-        result = mcp._call_tool("louise_search", args)
+        result = (call or mcp._call_tool)("louise_search", args)
         return {"answer": "", "rounds": 0, "exhausted": False,
                 "turns": [{"tool": "louise_search", "arguments": args, "by": "louise", "result": result,
                            "error": None, "seconds": 0.0}]}
@@ -285,7 +364,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         ask: Callable[..., dict[str, Any]] | None = None,
         guess: Callable[[str], str | None] = answer_language,
         pid: Callable[[], int | None] | None = None, tag: str = "",
-        redo: bool = False) -> int:
+        redo: bool = False, search_cache: SearchCache | None = None) -> int:
     """WARM ANSWERS ONLY are timed (operator, 2026-11-03): the model is pinned
     for the run and warmed up first, and an answer during which its backend
     was (re)loaded — no backend before, or another pid after — is marked
@@ -313,6 +392,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         from app.ask import chat
         config.CHAT_MODEL = model          # this process asks the candidate only
         ask = chat.ask
+        if search_cache is not None:
+            ask = lambda q, collections=None: chat.ask(q, collections=collections, call=search_cache)
         holder = f"chat_eval pid {os.getpid()}"
         model_pins.hold(config.CHAT_URL, model, holder)
         release = lambda: model_pins.release(holder)   # its prior pin state restored
@@ -323,6 +404,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             if q["key"] in done:
                 continue
             before = pid() if pid else None
+            hits0, replayed0 = ((search_cache.hits, search_cache.replayed_s) if search_cache else (0, 0.0))
             t0 = time.monotonic()
             error = None
             try:
@@ -357,6 +439,11 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "calls": [{"tool": t.get("tool"), "arguments": t.get("arguments"),
                               "by": t.get("by") or "model", "dropped": t.get("dropped") or [],
                               "error": t.get("error")} for t in turns]}
+            if search_cache is not None:
+                # searches served from the recording, and the seconds they took when run:
+                # `seconds` is then the answer's time without them
+                row["replayed"] = search_cache.hits - hits0
+                row["replayed_s"] = round(search_cache.replayed_s - replayed0, 3)
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -547,6 +634,8 @@ def main(argv: list[str] | None = None) -> int:
                    "questions answered under another tag")
     p.add_argument("--direct", action="store_true", help="no model: the question searched "
                    "as typed (the reference row for how well a model conveys it)")
+    p.add_argument("--search-cache", type=Path, default=None, help="searches recorded once and "
+                   "replayed for every model (SearchCache); run --direct with it first")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
@@ -559,9 +648,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "run":
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
+        cache = SearchCache(a.search_cache, data_version(cols)) if a.search_cache else None
         return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang, langs),
-                   collections=cols, tag=a.tag, redo=a.redo,
-                   **({"ask": ask_direct(cols), "pid": lambda: 0} if a.direct else {}))
+                   collections=cols, tag=a.tag, redo=a.redo, search_cache=cache,
+                   **({"ask": ask_direct(cols, call=cache), "pid": lambda: 0} if a.direct else {}))
     if a.cmd == "score":
         return score(a.out, a.works)
     return sample(a.out, [r for r in a.runs.split(",") if r], a.n)
