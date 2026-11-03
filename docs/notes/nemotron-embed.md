@@ -647,3 +647,25 @@ The chat model's jobs in Louise:
 - First, the engine checks: A's nemotron_h on SYCL, B's gemma4, the memory
   beside wikidata's embedding, tokens/s. Run at night.
 
+**B first, now; A for some uses** (operator, 2026-11-03: "Evaluate B now, in
+case it fits we switch it right away as chat and we validate option A as an
+alternative for some use cases (i.e. serving chat while working on
+wiki-gutenberg)").
+- Staged: `deploy/vega/stage/models/louise-chat-nemotron-bolt-e4b.yaml`, with
+  the chat model's engine settings.
+- "It fits" means all of these, against Qwen3-8B on `chat_eval` (10 queries
+  per language, the same run):
+  1. it loads on the card's SYCL engine, and no thinking reaches the
+     answer's content;
+  2. it fits in memory beside wikidata's embedding and the reranker;
+  3. no more failed tool calls and no more loops that hit the bound than
+     Qwen3-8B;
+  4. the answer in the query's language at least as often, overall and in
+     it/en/fr/de;
+  5. median time per answer no worse.
+- Then `CHAT_MODEL=louise-chat-nemotron-bolt-e4b` on web and worker. Qwen3-8B
+  stays installed as the rollback, and the blind sample goes to the operator
+  afterwards.
+- A, Lightning-30B-A3B, is validated as the chat model for the hours it is
+  loaded anyway for wiki-gutenberg's jobs, with the same chat_eval run.
+
