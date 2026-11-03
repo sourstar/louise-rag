@@ -57,6 +57,18 @@
   <button onclick="copyText(document.getElementById('mcpcfg').textContent)">copy</button>
 </div>
 
+<div class="panel" id="skill">
+  <h2>Agents — how to use the tools (skill)</h2>
+  <p>One file tells the agent's model how to search Louise and cite what it finds:
+  <a href="/connect/louise-skill.md" download>SKILL.md</a> · <a href="/connect/louise-skill.zip" download>louise-skill.zip</a>.</p>
+  <table><tr><th>agent</th><th>where it goes</th></tr>
+    <tr><td>Claude Code</td><td><code>~/.claude/skills/louise/SKILL.md</code></td></tr>
+    <tr><td>Claude apps</td><td>the zip, under Skills in the settings</td></tr>
+    <tr><td>any other</td><td>the file's text in the agent's instructions</td></tr>
+  </table>
+  <p class="note">An MCP client that reads the server's instructions gets the same text by itself.</p>
+</div>
+
 <div class="panel">
   <h2>Scripts</h2>
   <p>An answer, as from any OpenAI client:</p>

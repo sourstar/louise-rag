@@ -102,11 +102,12 @@ def handle(message: dict[str, Any], *, call: Callable[[str, dict[str, Any]], Any
     if rid is None and method.startswith("notifications/"):
         return None
     if method == "initialize":
+        from app.ask import skill
         return _result(rid, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {"listChanged": False}},
                              "serverInfo": SERVER,
-                             "instructions": "Three tools: search (ranked lists per space), lookup (a fact "
-                                             "by key), traverse (declared relations). Facts are placed "
-                                             "beside lists, never ranked (05 §5.1)."})
+                             # the skill's own text (app/ask/skill.py): a client that
+                             # installs no skill still gets how to use the tools
+                             "instructions": skill.body()})
     if method == "ping":
         return _result(rid, {})
     if method == "tools/list":
