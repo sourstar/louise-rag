@@ -20,7 +20,7 @@ REFS_REGISTRY = {
     # resolved by key (app/refs/normattiva.py; review §3.12)
     "normattiva-refs": NormattivaRefSource(),
     # Wikidata's entity ids: the namespace `wikidata` (QIDs, PIDs) for the
-    # wikidata collection's keys and gutenberg-graph's mentions
+    # wikidata collection's keys and wiki-gutenberg's mentions
     # (docs/notes/wikidata-build-plan.md §2)
     "wikidata-refs": WikidataRefSource(),
 }

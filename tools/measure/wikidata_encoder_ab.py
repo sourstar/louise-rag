@@ -15,7 +15,7 @@ Italian against English text: the reader's language).
 
 HARRIER (operator, 2026-11-02: "Harrier may be the model of reference for all
 our non specialistic collections (gutenberg, wikipedia, wikidata,
-gutenberg-graph), compare the score also with bge-m3 and wikipedia/wikidata").
+wiki-gutenberg), compare the score also with bge-m3 and wikipedia/wikidata").
 `--encoder harrier` is microsoft/harrier-oss-v1-0.6b (our f16 GGUF,
 `vega-harrier-oss-v1-0.6b`) with its card's retrieval prompt on the query
 side. `sample-table` makes the same known-item test for any collection from

@@ -5,8 +5,8 @@
 
 *Extended 2026-11-02 (the operator): "Harrier may be the model of reference
 for all our non specialistic collections (gutenberg, wikipedia, wikidata,
-gutenberg-graph), compare the score also with bge-m3 and
-wikipedia/wikidata". The plan is in "Three collections" below. gutenberg-graph
+wiki-gutenberg), compare the score also with bge-m3 and
+wikipedia/wikidata". The plan is in "Three collections" below. wiki-gutenberg
 does not exist yet: it takes the reference model when it is created.*
 
 *Planned 2026-11-02; measure only. The question changed twice the same

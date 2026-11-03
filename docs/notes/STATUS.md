@@ -243,7 +243,8 @@ legal-fr-de-eu.md's §8:
   Italian first. This is the operator's named exception to invariant 11,
   written in CLAUDE.md and 02 §2.3.
 - **D3:** a proper legal encoder for each of the four; Qwen3-Embedding-8B
-  as the compromise for the others.
+  as the compromise for the others (measured as the 4B, which the node serves,
+  until the 8B is deployed: legal-embedders-fr-de-eu.md §5).
 - **D4:** published evaluation sets, not our own.
 
 The research is in [`legal-embedders-fr-de-eu.md`](legal-embedders-fr-de-eu.md):
@@ -1228,7 +1229,7 @@ NOT MEASURED at 2 million: that fixture's build filled the shared disk at 1.6 M 
 - a rumor is a corpus-derived claim (a new entity, connection, conflicting value or tag) above a measured confidence floor, which the current wikidata snapshot does not state;
 - its state (open, confirmed, rejected, known) is recorded per snapshot in its own member, keyed by claim uid, and closed rumors stay in the collection;
 - in a search, rumors are an optional pillar, off by default: facts beside hits, a separate list, a filter, never fused.
-This supersedes PR #4's "the gap is a view". The spec changes are listed for approval and built with gutenberg-graph. Review of PR #4 itself:
+This supersedes PR #4's "the gap is a view". The spec changes are listed for approval and built with wiki-gutenberg. Review of PR #4 itself:
 - one real finding, the entity boost against 05 §5.2 (task #33);
 - to fix before merge: wikidata linking with gutenberg's encoder (wikidata's space is jina-v3), torch determinism for GLiNER, new dependencies to ask, per-book surface anchors, linking precision.
 
@@ -1551,7 +1552,7 @@ platform image `sha256:297f2fb5…` (ef2720a). Held file
 files, so the file names the dump). Quarantine until the first snapshot and
 the gate. Next (*done*): `hold records fetch wikidata --profile all` (103.4 GB, the
 pack and the label table in one streaming pass), then the first snapshot,
-then gutenberg-graph's steps 4–5 against it.
+then wiki-gutenberg's steps 4–5 against it.
 
 ### 2026-10-20: pitfall 18 measured on Perugia — the embed stage back at CLI throughput under heavy intake
 
@@ -1561,7 +1562,7 @@ threads are LanceDB's native writers, not `share-fetch`
 ([scheduling-log.md](scheduling-log.md), the pitfall-18 row). The cut
 stays in the intake thread.
 
-### 2026-10-20: gutenberg-graph, step 2a — Codex version 9, the three claim types, several targets
+### 2026-10-20: wiki-gutenberg, step 2a — Codex version 9, the three claim types, several targets
 
 Built on step 1's amendments: `app/hold/codex.py` reads and writes version 9
 (`slicing.container`, `annotates` as a list — `targets_of` is the one reader),
@@ -1575,11 +1576,11 @@ the part named from the Codex's `slicing.container` by every reader (the
 snapshot entry learns it from the `codex.json` beside the snapshot, no wire
 key), a recipe may declare it for any collection. Nothing already written moves: a one-target JSONL collection of the two
 2026-10-09 types is still version 7, byte for byte
-([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "Decided").
+([wiki-gutenberg-amendments.md](wiki-gutenberg-amendments.md), "Decided").
 Tests: tests/hold/test_annotations.py (+6), test_codex.py and
 test_backend_engine.py (version 10 is the unknown one now).
 
-### 2026-10-20: gutenberg-graph, step 1 — the specification amendments written
+### 2026-10-20: wiki-gutenberg, step 1 — the specification amendments written
 
 The operator's decisions of the day (two targets, Parquet parts for every
 collection, a measured agreement floor) are in the documents, dated: 09
@@ -1587,7 +1588,7 @@ collection, a measured agreement floor) are in the documents, dated: 09
 the `mention`, `relation` and `community` claims with their keys and the
 `model` method, "The file (B): Parquet" beside the zstd frames, §9.14 the
 three edges, §9.18; 02 §2.10; 05 §5.3 and §5.5; 03 §3.2 `model-agreement`
-([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "The
+([wiki-gutenberg-amendments.md](wiki-gutenberg-amendments.md), "The
 order"). Nothing is built yet: step 2 is app/hold/annotations.py and the
 Parquet parts, step 3 the Ask side, steps 4–5 the methods once the wikidata
 collection exists.
@@ -1634,9 +1635,9 @@ not the default: every Codex collection's card already carries the
 *shared* toggle, and the default stays OFF — a default of on was built
 and taken back the same hour on the operator's word ("share off by
 default is fine"); nothing deployed. The decisions of the day beside it: the old jina folder was deleted by the operator on the node
-(München's auto mode refuses irreversible deletes outright, no prompt); gutenberg-graph
+(München's auto mode refuses irreversible deletes outright, no prompt); wiki-gutenberg
 gets two targets (Codex version 9), Parquet parts for EVERY collection, and
-a measured agreement floor (gutenberg-graph-amendments.md); pubmed-v8's
+a measured agreement floor (wiki-gutenberg-amendments.md); pubmed-v8's
 40 M unbundled chunks publish after the wikidata work.
 
 ### 2026-10-20: the bundle intake's quadratic hard split (pitfall 18)

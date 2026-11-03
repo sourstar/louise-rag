@@ -39,7 +39,7 @@ the whole claim and the `records` check verifies it unchanged; `origin` is
 the claims file line it came from and `origin_hash` that line's bytes.
 
 THE GRAPH AMENDMENT (operator, 2026-10-20; 02 §2.10, 09 §9.3, §9.5, §9.14;
-docs/notes/gutenberg-graph-amendments.md A-K1–A-K4). Three more claim
+docs/notes/wiki-gutenberg-amendments.md A-K1–A-K4). Three more claim
 types, whose ends are CHUNKS and ENTITIES rather than two records:
 
     mention    subject = a chunk of the text target {uid, chunk_id, text_hash},
@@ -52,7 +52,7 @@ types, whose ends are CHUNKS and ENTITIES rather than two records:
                at least two; summary
 
 An annotations Codex may annotate SEVERAL collections (Codex version 9,
-`annotates` a list): gutenberg-graph annotates gutenberg, whose chunks its
+`annotates` a list): wiki-gutenberg annotates gutenberg, whose chunks its
 mentions are read from, and wikidata, whose records its entities are. A
 claim's end belongs to the target whose plugin its uid prefix names; an
 entity's canonical id becomes a record uid through the plugin's id rule
@@ -1077,7 +1077,7 @@ def preview(root: Path, *, target_ref: str | None = None, from_snapshot: str | N
     """`create annotations --dry-run`: the claims checked against the target
     snapshot(s) exactly as `create` checks them, counted, nothing written —
     for a file of thousands of claims about a live collection, the measure
-    before the write (operator, 2026-10-19: the gutenberg graph collection).
+    before the write (operator, 2026-10-19: the wiki-gutenberg collection).
     `target`, `target_id` and `from_snapshot` are the first target's;
     `targets` lists them all."""
     from collections import Counter
@@ -1479,7 +1479,7 @@ class ClaimIndex:
         #: target record uid -> the GRAPH claims (2026-10-20) naming it — a
         #: mention by its chunk's record and its entity, a relation by its
         #: entities, a community by its members; attached by step 3 of
-        #: docs/notes/gutenberg-graph-amendments.md
+        #: docs/notes/wiki-gutenberg-amendments.md
         self.graph: dict[str, list[Claim]] = {}
         for c in self.claims:
             into = self.by_target if c.claim["type"] in WORK_TYPES else self.graph

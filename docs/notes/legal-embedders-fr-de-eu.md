@@ -465,3 +465,22 @@ MLEB and on German case law here (§2, §3), and the 1B is distilled from it.
    tagged visual-document-retrieval) [U]: check whether its text path is
    the better one before choosing between the two.
 
+**Settled since (2026-11-03).** (1) The engine: llama.cpp runs it on the
+node's one engine, LocalAI 16acc89 / llama.cpp ddf48f8, exact over three
+fresh loads (nemotron-embed.md; approved-encoders.md). (2) The document
+prefix: Codex version 11 states it, `space.document.instruction`, inside
+`space_id` (09 §9.3). (3) is still open.
+
+**The runs (operator, 2026-11-03: "if any benchmark is available (with other
+models but Nemotron) with the test pool, repeat the benchmark with Nemotron
+but do not verify their numbers beforehand").** Nemotron-1B is run on the
+three sets whose other-model rows are recorded, with the pools already on
+the node and their earlier runs' settings: JuriFindIT (§7.1b of
+gazzetta-plugin.md: DAR-legal-it, the 4B, bge-m3), LegalQuAD and LEMUR
+en/fr/de/it (§5 above). `passage: ` on documents, `query: ` on queries;
+batch 1, concurrency 2, as the tool requires. The recorded rows are not run
+again: the new rows sit beside them, from a later engine, which the reader
+of the tables should weigh. BSARD and EUR-Lex-Sum have no other-model rows
+yet, so there is nothing to repeat there. Results: below, when München's
+runs land.
+
