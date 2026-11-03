@@ -211,10 +211,14 @@ def test_the_answer_is_asked_in_the_readers_language_named(chat_model):
 def test_every_language_the_node_can_guess_has_a_name_for_the_prompt():
     """A bare code is echoed back (llm.py LANGUAGE_NAMES); every language the
     guess can return is named."""
-    import inspect
-    import re
-
     from app import query_language
-    scripts = set(re.findall(r'"([a-z]{2,3})"', inspect.getsource(query_language)))
-    guessable = set(query_language.word_lists()) | (scripts - {"utf"})
-    assert not guessable - set(llm.LANGUAGE_NAMES)
+    assert not query_language.guessable() - set(llm.LANGUAGE_NAMES)
+
+
+def test_a_question_in_a_script_without_a_word_list_is_still_named(chat_model):
+    """Greek, Russian, Chinese have no word list; their script names them
+    (Ask's benchmark, 2026-11-03: "no guess" for el, ru, zh)."""
+    for question, lang in (("Ποιος έγραψε την Οδύσσεια;", "el"),
+                           ("Кто написал роман Война и мир?", "ru"), ("谁写了红楼梦？", "zh")):
+        out = chat.ask(question, call=lambda n, a: {}, model=scripted(("ok", [])))
+        assert out["answer_lang"] == lang

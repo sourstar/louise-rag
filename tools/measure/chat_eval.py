@@ -74,7 +74,7 @@ def read_queries(path: Path, per_lang: int | None = None) -> list[dict[str, str]
 
 def answer_language(text: str) -> str | None:
     from app import query_language
-    return query_language.guess(text or "", set(query_language.word_lists()))
+    return query_language.guess(text or "", query_language.guessable())
 
 
 def _warm_up(url: str, model: str) -> None:

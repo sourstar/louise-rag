@@ -284,7 +284,7 @@ def _chrf(hyp: str, ref: str) -> float:
 
 def _english(text: str) -> bool:
     from app import query_language
-    return query_language.guess(text, set(query_language.word_lists())) == "en"
+    return query_language.guess(text, query_language.guessable()) == "en"
 
 
 def _mean(xs: list[float]) -> str:
