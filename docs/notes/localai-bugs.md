@@ -46,6 +46,7 @@ the source):*
 | **P5** | **patch we carry** | llama.cpp backend (ggml-sycl): the batched F16 matmul converts a non-contiguous src1 for the GEMM that RUNS — the oneDNN flat copy only when oneDNN's GEMM runs, the gather for oneMKL (`GGML_SYCL_ENABLE_DNN=0`); before, the KQ product of two or more decoder tokens over an F16 K cache read the wrong queries (the P4 card fault, upstream-bugs.md S1) | the root cause of the wrong text in waves, found by code reading 2026-10-28 and matched by the 32-case pattern of upstream's own suite; the F16 KV cache back for MADLAD (−44 % per token against the f32 workaround) once the rebuilt tar passes its gates | **to file at ggml-org/llama.cpp as a PR** ([upstream-reports/ggml-llama-cpp-sycl.md](upstream-reports/ggml-llama-cpp-sycl.md), second section); [`deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch`](../../deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch) |
 | **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
 | **P7 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
+| **P8 (staged)** | **patch staged, not in the series yet** | llama.cpp (common/chat): Command R7B / Command A ("Command 3") tool calls are parsed by llama.cpp's own Cohere2 MoE parser; before, the autoparser preserved `<\|START_THINKING\|><\|END_THINKING\|><\|START_ACTION\|>` as ONE token string, the server dropped the three markers, and every R7B tool call was an HTTP 500 | Command R7B as a chat candidate (operator, 2026-11-03: "B, check vllm parser before reinventing") | **to file at ggml-org/llama.cpp as a PR** once proven on the node (#20786, closed unreproduced, was this); [`deploy/localai/patches/staged/0008-llama-cpp-chat-cohere-command3.patch`](../../deploy/localai/patches/staged/0008-llama-cpp-chat-cohere-command3.patch); moves into the series after its gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: the model pool checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (model-pool-over-localai.md@c572c3b §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -1056,6 +1057,60 @@ orders, bursts, a late request answered in 0.06 s).
 
 **Card gates** with P5 (one rebuild): plus `test-backend-ops -o
 SET_ROWS,GET_ROWS` on the node for F32, which the device store relies on.
+
+### P8 (staged). llama.cpp (common/chat): Command R7B / Command A tool calls parse
+
+*Base: master `16acc89` (llama.cpp `ddf48f8`), after P1–P5 (independent of
+them: common/chat). File:
+`deploy/localai/patches/staged/0008-llama-cpp-chat-cohere-command3.patch`,
+which adds `backend/cpp/llama-cpp/patches/0008-chat-cohere-command3-parser.patch`
+(applies to plain `ddf48f8` with no fuzz). Written and tested 2026-11-03;
+nothing at llama.cpp master after `ddf48f8` touches it (`git log -S
+START_RESPONSE`, one chat commit since: gpt-oss).*
+
+**What.** Command R7B's tool calls came back as HTTP 500 on our engine
+("Unexpected error in RPC handling"; the backend log: `common_chat_peg_parse:
+unparsed peg-native output: I will search for "…" and its translations.[`).
+Measured with upstream's test harness at `ddf48f8`: the autoparser preserves
+`<|START_THINKING|><|END_THINKING|><|START_ACTION|>` as ONE string, which no
+single token matches, so the server drops those three control tokens from the
+text; and Cohere's original tool templates end every prompt with
+`<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>`, so the derived generation prompt is
+empty (a streamed answer fails on its first token). Upstream: #20786 fixed the
+generation prompt and was closed as unreproduced (2026-03-20); #20729 (catch
+the throw in the server) is open. Ask answers a failed tool round without
+tools meanwhile (#303).
+
+**Not reinvented.** vLLM parses Cohere models through Cohere's own library
+(cohere-ai/melody, MIT), which defines Command 3 (R7B, Command A) as Command 4
+(Cohere2 MoE / North) with `<|START_RESPONSE|>`/`<|END_RESPONSE|>` for
+`<|START_TEXT|>`/`<|END_TEXT|>` and a thinking block the model opens itself.
+llama.cpp already has a dedicated Command 4 parser (`common/parsers/cohere2moe.cpp`,
+written by the autoparser's author because the autoparser "didn't really work"
+for it), so the patch routes Command 3 templates to it: the content markers
+follow the template, every Cohere marker is preserved, the generation prompt
+falls back to the prompt's tail, and the opening `<|START_THINKING|>` is atomic
+(a marker still arriving is not streamed as content). The standardized
+alternative, written down: link melody itself through its C FFI (a Rust
+toolchain in our SYCL build, for one model family) — it would also parse
+R7B's `<co>` citation spans, which Ask does not ask for.
+
+**Tests** (tests/test-chat.cpp): Cohere's ORIGINAL R7B templates as the GGUFs
+carry them (default and tool_use; upstream's test copy is edited), melody's
+cmd3 vectors (src/tests.rs: a plan then a call, a call with no plan, a
+non-ASCII argument, two calls in one action), an answer with tools offered,
+reasoning_format none, and the preserved tokens and generation prompt (which
+a text-fed parser test cannot see). Upstream's R7B and Cohere2 MoE cases pass
+unchanged; test-chat, -chat-auto-parser, -chat-peg-parser, -chat-template,
+-peg-parser, -reasoning-budget, -server-component: 7/7. Without the parser
+change the new checks fail (generation prompt `''`).
+
+**Gates before it moves up.** (1) The SYCL and CPU engines rebuilt with it;
+the current gate's fixed inputs through every live encoder and reranker on
+the new build, byte for byte against the stated runs (the architecture
+session, 2026-11-03: identical bytes = the same arithmetic, RULE 1; any
+difference = the full re-gate). (2) Command R7B walked (no `tools_failed`)
+and piloted (15 answers), read before any whole run.
 
 ---
 
