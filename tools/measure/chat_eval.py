@@ -323,7 +323,10 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "returned": returned, "slimmed": got.get("slimmed", 0),
                    "hits": searched,
                    "cited_uids": sorted(set(CITATION.findall(got.get("answer") or ""))),
-                   "facts": facts}
+                   "facts": facts,
+                   # what the model sent Louise: each call's tool and arguments, as asked
+                   "calls": [{"tool": t.get("tool"), "arguments": t.get("arguments"),
+                              "error": t.get("error")} for t in turns]}
             row["answer_lang"] = guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
