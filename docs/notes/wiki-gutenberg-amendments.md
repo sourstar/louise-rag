@@ -186,6 +186,23 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
   attaches it yet; a community's `state_of` is `unknown`, it pins no record)
   and steps 4–5 after the wikidata collection exists.
 
+## Which gutenberg it annotates (operator, 2026-11-03)
+
+"gutenberg-nemo is just gutenberg with nemo vectors, why should it differ for
+wiki-gutenberg purpose?" It does not.
+- A claim's chunk end is `{uid, chunk_id, text_hash}`, which is content.
+- gutenberg-nemo is re-created by RULE 1 with gutenberg's records and chunks
+  carried byte-identical (nemotron-embed.md, "Production"), so every claim
+  line is the same line.
+- Only the pin differs: `annotates[].collection_id`. A target's
+  `collection_id` holds its space, and so its encoder.
+- Moving wiki-gutenberg to gutenberg-nemo is therefore a new annotations Codex
+  that re-pins the target, with the claim lines carried. Each chunk end is
+  checked again against its `text_hash`; no model runs again.
+- So wiki-gutenberg is built on today's gutenberg as soon as its tools exist,
+  and follows gutenberg to gutenberg-nemo by that re-pin. The carry is built
+  when it is first needed.
+
 ## Nemotron for the task (operator, 2026-11-03) — the evaluation, PLANNED
 
 "Evaluate using a Nemotron model for the task." wiki-gutenberg has no space of
