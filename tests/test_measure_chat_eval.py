@@ -397,3 +397,39 @@ def test_score_shows_what_the_sources_support(tmp_path, capsys):
     assert "| m | 1 | 2 | **0.50** | 1 | 0.00 | **1** | **0** |" in capsys.readouterr().out
     ev.sample(tmp_path, ["m"], n=1)
     assert '*not in its cited source:* Moby Whale ← "It is "Moby Whale"."' in (tmp_path / "sample.md").read_text()
+
+
+def test_a_whole_run_waits_for_a_pilot_read_one_by_one(tmp_path, monkeypatch, capsys):
+    """Operator, 2026-11-03: "Check the first 3 question/answer per test
+    category one by one before launching a whole test that may produce
+    garbage" (measuring.md §12)."""
+    asked = []
+
+    def fake_direct(cols, call=None):
+        def ask(q, collections=None):
+            asked.append(q)
+            return {"answer": f"answer to {q} [1]", "turns": [],
+                    "sources": [{"n": 1, "uid": "gutenberg:1"}],
+                    "cited": [{"n": 1, "uid": "gutenberg:1", "title": "T"}], "cited_unknown": []}
+        return ask
+    monkeypatch.setattr(ev, "ask_direct", fake_direct)
+    out, qs = tmp_path / "out", _queries(tmp_path)
+    base = ["run", "--out", str(out), "--name", "m", "--model", "m", "--queries", str(qs),
+            "--tag", "t", "--direct"]
+    with pytest.raises(SystemExit, match="no pilot read yet"):
+        ev.main(base)
+    assert ev.main(base + ["--pilot", "1"]) == 0
+    assert asked == ["Dumas novel about the necklace", "romanzo sulla collana", "μυθιστόρημα"], \
+        "the first question of every language, and nothing else"
+    report = (out / "runs" / "m" / "pilot-t.md").read_text()
+    assert "## 1. [en] Dumas novel about the necklace" in report and "- cited: gutenberg:1" in report
+    with pytest.raises(SystemExit, match="no pilot read yet"):
+        ev.main(base)
+    with pytest.raises(SystemExit):
+        ev.main(["pilot-ok", "--out", str(out), "--name", "m", "--tag", "t", "--by", " ", "--note", "x"])
+    assert ev.main(["pilot-ok", "--out", str(out), "--name", "m", "--tag", "t", "--by", "dev session",
+                    "--note", "3 read, clean"]) == 0
+    asked.clear()
+    assert ev.main(base) == 0
+    assert asked == ["secondo romanzo"], "the whole run resumes after the pilot's answers"
+    assert len(ev._rows(out, "m")) == 4

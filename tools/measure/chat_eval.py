@@ -14,6 +14,14 @@ whose model is `llm.chat_tools` at its production settings, with
 tools (`louise_search`, `louise_lookup`, `louise_traverse`). Run it inside the
 node's image, at night (operator), one model at a time.
 
+A PILOT BEFORE EVERY WHOLE RUN (operator, 2026-11-03: "Check the first 3
+question/answer per test category one by one before launching a whole test
+that may produce garbage"; measuring.md §12). `run --pilot 3` asks the
+first 3 questions of every language and writes them, one by one, to
+`runs/<name>/pilot-<tag>.md`. They are read, then `pilot-ok --name --tag
+--by --note` records the reading. A whole `run` refuses without one; it
+resumes after the pilot's answers.
+
 THE SEARCHES ONCE (`--search-cache FILE`, SearchCache): Ask searches the
 question before any model speaks, the same for every model, so the 50
 searches are recorded once (`run --direct --search-cache FILE`, reranker
@@ -551,6 +559,68 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
 SEARCH_PARTS = ("languages", "catalog", "fts", "dense", "rerank", "total")
 
 
+def pilot_queries(queries: list[dict[str, str]], n: int) -> list[dict[str, str]]:
+    """The first `n` questions of every language, in the file's order."""
+    seen: dict[str, int] = defaultdict(int)
+    out = []
+    for q in queries:
+        if seen[q["lang"]] < n:
+            seen[q["lang"]] += 1
+            out.append(q)
+    return out
+
+
+def _pilot_ok_path(out: Path, name: str, tag: str) -> Path:
+    return out / "runs" / name / f"pilot-ok-{tag or 'untagged'}.json"
+
+
+def pilot_report(out: Path, name: str, tag: str, keys: list[str]) -> Path:
+    """The pilot's answers, one by one, for a reader: the question, the
+    answer, what each citation is, the flags, the time and what the model
+    itself called. Written beside the run."""
+    rows = {r["key"]: r for r in _rows(out, name) if r.get("tag", "") == tag}
+    lines = [f"# Pilot: {name} [{tag or 'untagged'}], {len(keys)} questions", "",
+             "Read each one; then `chat_eval pilot-ok --out ... --name ... --tag ... --by ... --note ...`.", ""]
+    for i, k in enumerate(keys, 1):
+        r = rows.get(k)
+        if r is None:
+            continue
+        lines += [f"## {i}. [{r['lang']}] {r['query']}", ""]
+        if r.get("error"):
+            lines += [f"**FAILED:** {r['error']}", ""]
+        lines += [r.get("answer") or "(no answer)", ""]
+        lines.append(f"- cited: {', '.join(r.get('cited_uids') or []) or 'nothing'}"
+                     f" ({r.get('cited', 0)} citations, {r.get('grounded', 0)} grounded)")
+        own = [c for c in r.get("calls") or [] if (c.get("by") or "model") == "model"]
+        if own:
+            lines.append("- the model called: " + "; ".join(
+                f"{c.get('tool')} {json.dumps(c.get('arguments'), ensure_ascii=False)}"
+                + (f" REFUSED {c.get('error')}" if c.get("error") else "") for c in own))
+        for u in (r.get("support") or {}).get("uncited", []):
+            lines.append(f"- uncited, in no source: {', '.join(u['missing'])}")
+        lines.append(f"- answer language guessed: {r.get('answer_lang')}; {r.get('seconds')} s "
+                     f"(model {r.get('model_s')} s); rounds {r.get('rounds')}"
+                     + ("; ROUND BOUND HIT" if r.get("exhausted") else ""))
+        lines.append("")
+    path = out / "runs" / name / f"pilot-{tag or 'untagged'}.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def pilot_ok(out: Path, name: str, tag: str, by: str, note: str) -> int:
+    """Records that the pilot was read: who read it and what they found."""
+    if not (out / "runs" / name / f"pilot-{tag or 'untagged'}.md").exists():
+        raise SystemExit(f"{name} [{tag}]: no pilot to have read (run --pilot 3 first)")
+    if not by.strip() or not note.strip():
+        raise SystemExit("pilot-ok needs --by (who read it) and --note (what they found)")
+    path = _pilot_ok_path(out, name, tag)
+    path.write_text(json.dumps({"by": by, "note": note,
+                                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, ensure_ascii=False),
+                    encoding="utf-8")
+    print(f"{name} [{tag}]: pilot read by {by}; a whole run may start")
+    return 0
+
+
 def search_seconds(turns: list[dict[str, Any]]) -> dict[str, float]:
     """The searches' own timings summed over an answer's louise_search
     calls, in seconds: where inside the tool calls the time went."""
@@ -749,6 +819,14 @@ def main(argv: list[str] | None = None) -> int:
                    "as typed (the reference row for how well a model conveys it)")
     p.add_argument("--search-cache", type=Path, default=None, help="searches recorded once and "
                    "replayed for every model (SearchCache); run --direct with it first")
+    p.add_argument("--pilot", type=int, default=None, help="only the first N questions of every "
+                   "language, written for a reader (measuring.md §12); a whole run needs one read")
+    p = sub.add_parser("pilot-ok")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--tag", default="")
+    p.add_argument("--by", required=True, help="who read the pilot")
+    p.add_argument("--note", required=True, help="what they found")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
@@ -761,10 +839,22 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "run":
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
+        queries = read_queries(a.queries, a.per_lang, langs)
+        if a.pilot:
+            queries = pilot_queries(queries, a.pilot)
+        elif not _pilot_ok_path(a.out, a.name, a.tag).exists():
+            raise SystemExit(f"{a.name} [{a.tag}]: no pilot read yet (measuring.md §12): "
+                             f"run --pilot 3, read runs/{a.name}/pilot-{a.tag or 'untagged'}.md, "
+                             f"then `chat_eval pilot-ok`")
         cache = SearchCache(a.search_cache, data_version(cols)) if a.search_cache else None
-        return run(a.out, a.name, model=a.model, queries=read_queries(a.queries, a.per_lang, langs),
+        code = run(a.out, a.name, model=a.model, queries=queries,
                    collections=cols, tag=a.tag, redo=a.redo, search_cache=cache,
                    **({"ask": ask_direct(cols, call=cache), "pid": lambda: 0} if a.direct else {}))
+        if a.pilot:
+            print(f"pilot: {pilot_report(a.out, a.name, a.tag, [q['key'] for q in queries])}")
+        return code
+    if a.cmd == "pilot-ok":
+        return pilot_ok(a.out, a.name, a.tag, a.by, a.note)
     if a.cmd == "score":
         return score(a.out, a.works)
     return sample(a.out, [r for r in a.runs.split(",") if r], a.n)
