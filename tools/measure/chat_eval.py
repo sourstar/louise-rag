@@ -66,10 +66,23 @@ def answer_language(text: str) -> str | None:
     return query_language.guess(text or "", set(query_language.word_lists()))
 
 
+def _warm_up(url: str, model: str) -> None:
+    """One throwaway answer, so the first timed question finds the model loaded."""
+    import httpx
+    httpx.post(f"{url}/v1/chat/completions", timeout=900,
+               json={"model": model, "messages": [{"role": "user", "content": "Say OK."}],
+                     "max_tokens": 1})
+
+
 def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         collections: list[str] | None = None,
         ask: Callable[..., dict[str, Any]] | None = None,
-        guess: Callable[[str], str | None] = answer_language) -> int:
+        guess: Callable[[str], str | None] = answer_language,
+        pid: Callable[[], int | None] | None = None) -> int:
+    """WARM ANSWERS ONLY are timed (operator, 2026-11-03): the model is pinned
+    for the run and warmed up first, and an answer during which its backend
+    was (re)loaded — no backend before, or another pid after — is marked
+    `warm: false`, counted, and left out of the time."""
     run_dir = out / "runs" / name
     run_dir.mkdir(parents=True, exist_ok=True)
     settings = {"model": model, "collections": collections or []}
@@ -82,29 +95,44 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
     answers = run_dir / "answers.jsonl"
     done = ({json.loads(l)["key"] for l in answers.read_text(encoding="utf-8").splitlines() if l}
             if answers.exists() else set())
+    release: Callable[[], None] = lambda: None
     if ask is None:
-        from app import config
+        import os
+
+        from app import config, model_load, model_pins
         from app.ask import chat
         config.CHAT_MODEL = model          # this process asks the candidate only
         ask = chat.ask
-    for q in queries:
-        if q["key"] in done:
-            continue
-        t0 = time.monotonic()
-        error = None
-        try:
-            got = ask(q["query"], collections=collections)
-        except Exception as e:   # noqa: BLE001 — a failed answer is a row, not the end of the run
-            got, error = {"answer": "", "turns": [], "rounds": 0, "exhausted": False}, \
-                f"{type(e).__name__}: {e}"[:300]
-        row = {**q, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
-               "exhausted": bool(got.get("exhausted")),
-               "tools": [t.get("tool") for t in got.get("turns", [])],
-               "tool_errors": sum(1 for t in got.get("turns", []) if t.get("error")),
-               "seconds": round(time.monotonic() - t0, 2), "error": error}
-        row["answer_lang"] = guess(row["answer"])
-        with answers.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        holder = f"chat_eval pid {os.getpid()}"
+        model_pins.hold(config.CHAT_URL, model, holder)
+        release = lambda: model_pins.release(holder)   # noqa: E731 — its prior pin state restored
+        _warm_up(config.CHAT_URL, model)
+        pid = pid or (lambda: model_load.backend_pid(config.CHAT_URL, model, 0.0))
+    try:
+        for q in queries:
+            if q["key"] in done:
+                continue
+            before = pid() if pid else None
+            t0 = time.monotonic()
+            error = None
+            try:
+                got = ask(q["query"], collections=collections)
+            except Exception as e:   # noqa: BLE001 — a failed answer is a row, not the end of the run
+                got, error = {"answer": "", "turns": [], "rounds": 0, "exhausted": False}, \
+                    f"{type(e).__name__}: {e}"[:300]
+            seconds = round(time.monotonic() - t0, 2)
+            after = pid() if pid else None
+            row = {**q, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
+                   "exhausted": bool(got.get("exhausted")),
+                   "tools": [t.get("tool") for t in got.get("turns", [])],
+                   "tool_errors": sum(1 for t in got.get("turns", []) if t.get("error")),
+                   "seconds": seconds, "error": error,
+                   "warm": pid is None or (before is not None and before == after)}
+            row["answer_lang"] = guess(row["answer"])
+            with answers.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    finally:
+        release()
     print(f"{name}: {len(queries) - len(done)} asked now, {len(queries)} in all")
     return 0
 
@@ -120,21 +148,23 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         return {"n": 0}
     calls = sum(len(r["tools"]) for r in rows)
     guessed = [r for r in rows if r["answer_lang"] is not None]
+    warm = [r["seconds"] for r in rows if r.get("warm", True)]
     return {"n": n,
+            "cold": n - len(warm),
             "failed": sum(1 for r in rows if r["error"]),
             "exhausted": sum(1 for r in rows if r["exhausted"]),
             "calls_per_answer": calls / n,
             "tool_errors": sum(r["tool_errors"] for r in rows),
             "lang_right": sum(1 for r in guessed if r["answer_lang"] == r["lang"]),
             "lang_guessed": len(guessed),
-            "median_s": statistics.median(r["seconds"] for r in rows)}
+            "median_s": statistics.median(warm) if warm else None}
 
 
 def score(out: Path) -> int:
     names = sorted(p.name for p in (out / "runs").iterdir() if (p / "answers.jsonl").exists())
     print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
-          "| answer in the query's language (of those guessed) | median s |")
-    print("|---|---|---|---|---|---|---|---|---|")
+          "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
     for name in names:
         rows = _rows(out, name)
         groups = {"all": rows,
@@ -147,7 +177,8 @@ def score(out: Path) -> int:
             share = s["lang_right"] / s["lang_guessed"] if s["lang_guessed"] else 0.0
             print(f"| {name} | {label} | {s['n']} | {s['failed']} | {s['exhausted']} | "
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
-                  f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['median_s']:.1f} |")
+                  f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
+                  f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} |")
     return 0
 
 

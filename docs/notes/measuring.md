@@ -110,7 +110,8 @@ report the interval, not just the point; measure at the depth the system uses
 - [ ] The vendor's deterministic mode on, and bit-exactness measured (invariant 12)
 - [ ] Used the existing harness, or said why not
 - [ ] Inputs are real production shapes, not synthetic stand-ins
-- [ ] One job on the machine; nothing else contending
+- [ ] One job on the machine; nothing else contending — the node paused and every other pass (a calibration, a CPU reference, a build, a test run, a download) stopped or finished first, and the write-up says so (§10)
+- [ ] Warm answers only: the model loaded and warmed up before the clock starts, pinned for the run, and any answer that paid a load counted and left out of the time (§10)
 - [ ] Free space checked before and after
 - [ ] Artefacts on a host path, and cleaned up — no container left running
 - [ ] Numbers labelled measured / modelled / published
@@ -178,3 +179,36 @@ report the interval, not just the point; measure at the depth the system uses
   family). Unload each one (`/backend/shutdown`) before the rebuild, and
   check that the first gate after it names a NEW engine and run. A repeated
   id means the gate ran on the old process.
+
+## 10. Added 2026-11-03 (the chat model check) — a general rule
+
+The operator, 2026-11-03: "For your chat benchmark suspend all the parasite
+tasks to test an unloaded system", "consider only warm model answers", and
+"note it as a general benchmarking rule, this is not the first time it
+happens".
+
+- **An unloaded system.** Before a timed benchmark:
+  - the node is paused (`node pause`; its mode restored after);
+  - every other pass is finished or stopped: a calibration, a CPU reference,
+    a records build, a deploy's test run, a download;
+  - the write-up names what was stopped.
+
+  Qwen3-8B's first row (prefill 180–190 tok/s, gen 20–23) ran beside
+  wikidata's calibrate CPU lane (8 threads) and wikipedia's fts, and was
+  discarded.
+- **Warm answers only.** A request that loads its model pays the load in
+  its time:
+  - a time to the first token after `backend/shutdown` is load plus
+    prefill, not a prefill rate;
+  - the first Ask answer of a run carries the load of the chat model.
+
+  So the model is loaded and warmed up with one throwaway request before
+  the clock starts, and pinned for the run (app/model_pins.py), so that
+  nothing evicts it between answers. An answer during which its backend
+  was (re)loaded is counted and left out of the time. The backend can be
+  missing before the answer, or have another pid after it
+  (`model_load.backend_pid`). tools/measure/chat_eval.py does this: the
+  `warm` field, and the `cold (not timed)` column.
+- **Fresh loads are for reproducibility, not for speed.** The "same bytes
+  over three fresh loads" check reloads on purpose. Its answers are compared
+  for bytes, and the speed is read from warm answers after each load.

@@ -58,6 +58,22 @@ def test_a_run_records_tool_use_language_and_time_and_resumes(tmp_path):
     assert rows[2]["error"].startswith("RuntimeError")
 
 
+def test_an_answer_that_paid_a_load_is_cold_and_not_timed(tmp_path, capsys):
+    """Warm answers only are timed (operator, 2026-11-03): no backend before
+    the question, or another pid after it, is a load the answer paid."""
+    qs = ev.read_queries(_queries(tmp_path))
+    pids = iter([None, 7, 7, 7, 7, 9, 9, 9])          # before/after for each of the four
+    ask = lambda q, collections=None: {"answer": q, "rounds": 1, "exhausted": False, "turns": []}
+    ev.run(tmp_path, "m", model="m", queries=qs, ask=ask, guess=lambda t: "it",
+           pid=lambda: next(pids))
+    assert [r["warm"] for r in ev._rows(tmp_path, "m")] == [False, True, False, True]
+    s = ev.summary(ev._rows(tmp_path, "m"))
+    assert s["cold"] == 2 and s["n"] == 4
+    ev.score(tmp_path)
+    row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
+    assert row.split("|")[9].strip() == "2", "the cold column"
+
+
 def test_other_settings_under_the_same_name_are_refused(tmp_path):
     qs = ev.read_queries(_queries(tmp_path))[:1]
     ask = _fake_ask({"Dumas novel about the necklace": {"answer": "x", "turns": []}})
