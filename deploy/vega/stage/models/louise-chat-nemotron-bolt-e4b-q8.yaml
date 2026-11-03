@@ -19,7 +19,6 @@
   "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
   "env": {
-    "GGML_SYCL_ENABLE_OPT": "0",
     "GGML_SYCL_ENABLE_DNN": "0",
     "GGML_SYCL_FA_ONEDNN": "0",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
