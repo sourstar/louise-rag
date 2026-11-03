@@ -537,6 +537,10 @@ def stage_fts(con, row, collection) -> None:
             _mark_indexed(con, peer, peer_chunks, now)
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
+    # these documents are embed candidates once the marks commit: a LOCAL
+    # archive's demand learns them here instead of re-walking the manifest
+    # (genesis._candidate_shards; "Demand is announced, not polled")
+    bundle_genesis.announce(collection, [r["uid"] for r, _ in batch])
     # A document that clears fts inside a FINAL shard's id range is a
     # document the archive holds a published vector for and can no longer
     # deliver — `final` is decided from documents still UPSTREAM of fts, so

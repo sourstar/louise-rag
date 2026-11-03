@@ -368,9 +368,18 @@ def test_with_nothing_else_to_do_every_candidate_is_taken_at_once(
 def test_candidate_walk_is_an_index_range_never_a_sort(collection):
     con = db.connect(collection)
     plan = " ".join(str(r[-1]) for r in con.execute(
-        "EXPLAIN QUERY PLAN " + genesis._CANDIDATES_PAGE_SQL, (-1, 10)))
+        "EXPLAIN QUERY PLAN " + genesis._CANDIDATES_PAGE_SQL, (0, genesis._SEED_WINDOW)))
     assert "idx_documents_scope" in plan, plan
     assert "TEMP B-TREE" not in plan.upper(), plan
+
+
+def test_an_announced_document_is_found_by_its_primary_key(collection):
+    """The lookup that places what fts announced: the uid key, never a scan."""
+    con = db.connect(collection)
+    plan = " ".join(str(r[-1]) for r in con.execute(
+        "EXPLAIN QUERY PLAN SELECT rowid, uid, path, updated_at FROM documents "
+        f"WHERE uid IN (?,?) AND {genesis._CANDIDATE_WHERE}", ("a", "b")))
+    assert "uid=?" in plan and "SCAN" not in plan.upper(), plan
 
 
 # --- 5. through the worker --------------------------------------------------
