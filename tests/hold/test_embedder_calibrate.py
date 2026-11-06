@@ -280,14 +280,17 @@ def test_the_cpu_lane_is_kept_once_and_the_next_calibration_asks_it_nothing(tmp_
     from app import run_check
     asked = _fake_endpoints(monkeypatch)
 
+    from app.hold import calibrate as calib
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
+    engine = calib.read_endpoint(ref, weights=W_REF).engine.to_dict()
+
     def stated(recipe, **kw):
         cpu = recipe.url == OTHER_URL
         return SimpleNamespace(driver="cpu" if cpu else "xe 1.3 / level-zero 1.21",
                                run_id="sha256:run-" + recipe.url.split("//")[1].split(".")[0],
-                               engine={}, weights=W_OTHER if cpu else W_REF)
+                               engine=engine, weights=W_REF)
     monkeypatch.setattr(run_check, "stated_run", stated)
-    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
-    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
     assert _run(ref, other) == 0
     first = json.loads(capsys.readouterr().out)
     lane = first["against"][0]["cpu_reference"]
@@ -299,3 +302,24 @@ def test_the_cpu_lane_is_kept_once_and_the_next_calibration_asks_it_nothing(tmp_
     assert second["against"][0]["cpu_reference"]["how"] == "stored"
     assert OTHER_URL not in asked, "the CPU twin is not asked again"
     assert second["tolerance"] == first["tolerance"]
+
+
+def test_an_engine_file_that_is_not_the_runs_is_refused_before_any_text(tmp_path, monkeypatch,
+                                                                       capsys):
+    """2026-11-06: wikidata's chain kept engine files of the engine before
+    (16acc89); calibrate measured for 1.5 h, then `collection create` refused
+    the tolerance's engine. The run that answers is held to the file first."""
+    from types import SimpleNamespace
+
+    from app import run_check
+    from app.hold import calibrate as calib
+    asked = _fake_endpoints(monkeypatch)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
+    live = dict(calib.read_endpoint(ref, weights=W_REF).engine.to_dict(),
+                image="sha256:" + "44" * 32)          # the engine rebuilt since the file
+    monkeypatch.setattr(run_check, "stated_run", lambda recipe, **kw: SimpleNamespace(
+        driver="xe", run_id="sha256:run-x", engine=live, weights=W_REF))
+    assert _run(ref, other) == 2
+    assert "hold embedder run" in capsys.readouterr().err
+    assert asked == [], "nothing was embedded"

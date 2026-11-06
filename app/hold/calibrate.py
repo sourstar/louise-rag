@@ -176,18 +176,41 @@ def http_embed(ctx: int, *, document_instruction: str | None = None,
     from .embedder import GateDeferred
     kept: dict[str, dict[str, str]] = {}
 
-    def cpu_lane(ep: Endpoint, recipe, texts: list) -> tuple[list[list[float]], set] | None:
-        """The lane from the node's store when the endpoint answers on the
-        CPU; None for a card, which is embedded as before."""
+    def stated_lane(ep: Endpoint, recipe, texts: list):
+        """The run that answers the lane, held to the engine file BEFORE any
+        text is embedded; None when the endpoint cannot say (not behind VeGa,
+        not `/upstream/<model>`), and the lane is embedded as before.
+
+        THE ENGINE FILE MUST BE THE RUN'S (2026-11-06): wikidata's chain kept
+        engine files written on 2026-11-03 for the engine before (16acc89)
+        while the live one was ea2417d91dcc. Calibrate measured for 1.5 h and
+        wrote the files' engine; `collection create` refused it afterwards
+        (G5, `check_reference_runs`). The same check, here, refuses in the
+        first second."""
+        from . import codex as cx
         from .runs import RunRefused
         probe = run_check.PAIR_PROBE if texts and isinstance(texts[0], tuple) else run_check.PROBE
         try:
             stated = run_check.stated_run(recipe, probe_item=probe)
         except RunRefused:
-            # an endpoint that cannot say what its run is (not behind VeGa,
-            # not `/upstream/<model>`): embedded as before, nothing stored
             return None
-        if stated.driver != "cpu":
+        bad = []
+        got_engine = cx.engine_from_dict(stated.engine, "engine").engine_id
+        if got_engine != ep.engine.engine_id:
+            bad.append(f"engine {got_engine[:23]}… (the file's is {ep.engine.engine_id[:23]}…)")
+        if ep.weights and stated.weights != ep.weights:
+            bad.append(f"weights {stated.weights[:23]}… (the file's are {ep.weights[:23]}…)")
+        if bad:
+            raise CodexError(
+                f"{ep.file}: the run {stated.run_id[:23]}… that answers at {ep.url} has "
+                f"{' and '.join(bad)}. A tolerance is measured for the engine its file names: "
+                f"write the file from `louise hold embedder run`. Nothing was measured")
+        return stated
+
+    def cpu_lane(ep: Endpoint, recipe, texts: list, stated) -> tuple[list[list[float]], set] | None:
+        """The lane from the node's store when the endpoint answers on the
+        CPU; None for a card, which is embedded as before."""
+        if stated is None or stated.driver != "cpu":
             return None
         cpu = dataclasses.replace(recipe, batch=1)
         timeout = cpu_ref.request_timeout(ctx, config.EMBED_CONCURRENCY)
@@ -217,7 +240,8 @@ def http_embed(ctx: int, *, document_instruction: str | None = None,
             # worker's idle sweep stopped a Nemotron calibration's CPU twin
             # every minute, mid-request (2026-11-03), as it had cpu-reference's
             with encoder_use.held(recipe, holder=encoder_use.holder("hold embedder calibrate")):
-                lane = cpu_lane(ep, recipe, texts) if set_id is not None else None
+                stated = stated_lane(ep, recipe, texts) if set_id is not None else None
+                lane = cpu_lane(ep, recipe, texts, stated)
                 if lane is not None:
                     return lane
                 return embeddings.embed_calibration(recipe, texts, runs=runs), runs
