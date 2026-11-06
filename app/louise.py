@@ -564,45 +564,54 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
 
 
 def cmd_collection_new(a) -> int:
-    """`hold collection new <plugin> --recipe FILE --encoder URL --api A
-    --embed-model M --cpu-model T [--name N]`: A NEW COLLECTION, ONE
-    WORKFLOW (operator, 2026-11-06: "A mess up in a collection embedding is
-    the most severe flaw we can have, this is not acceptable. I expected that
-    a clear workflow for the creation of a new collection had been
-    implemented"). Wikidata's Nemotron collection was made by ten commands
-    chained by hand, each given its own copy of what the recipe states; the
-    calibration was measured on inputs cut by characters while the space
-    cuts by tokens, and its CPU reference failed the gate at 0.974831.
+    """`hold collection new <plugin> --recipe FILE --name N --encoder URL
+    --api A --embed-model M --cpu-model T`: A NEW COLLECTION, ONE WORKFLOW
+    (operator, 2026-11-06: "A mess up in a collection embedding is the most
+    severe flaw we can have, this is not acceptable. I expected that a clear
+    workflow for the creation of a new collection had been implemented").
+    Wikidata's Nemotron collection was made by ten commands chained by hand,
+    each given its own copy of what the recipe states; the calibration was
+    measured on inputs cut by characters while the space cuts by tokens, and
+    its CPU reference failed the gate at 0.974831.
 
-    Here every input comes from the recipe, nothing is typed twice, and each
-    step is held to the one before it:
-      1. CALIBRATE: the recipe's encoder (`--encoder`, `--embed-model`)
-         against its CPU twin (`--cpu-model`, which must state a CPU run of
-         the same weights), at the recipe's ctx, cut, document instruction
-         and calibration set: the inputs the gate sends. The CPU lane is kept
-         in the node's store, keyed on all of them.
-      2. THE TOLERANCE: the recipe's `space.tolerance` must be the one just
-         measured. A recipe that states none takes it; one that states
-         another is refused, since a tolerance is measured, never chosen.
-      3. CREATE (07 §7.3). A collection of that name already made is held to
-         the recipe's inputs and the measured tolerance instead, and refused
-         when it differs.
-      4. THE CPU REFERENCE, written from the store entry step 1 made (no
-         second CPU pass), replacing any copy the collection held.
-      5. THE GATE (`hold embedder check`).
-    The measurement is kept as `<collection>/state/calibration.json`.
-    Embedding is not turned on: the collection file says embed = "off"
-    until the operator turns it on, after a pass. Exit 0 when the gate
-    passes, 1 when it fails, 2 for a refusal, 3 when an endpoint cannot be
-    reached. Run again after a stop: the CPU lane resumes from the store's
-    journal, and a step already done is checked, not redone."""
+    Case A of docs/notes/new-collection.md, its steps declared in
+    app/hold/workflow.py and run in their one order, every input from the
+    recipe, each step held to the one before it:
+      resolve   the recipe's ctx, cut, document instruction, set, weights and
+                engine; the model; the CPU twin, which must state a CPU run
+                of the recipe's weights. A recipe with a `space.query.encoder`
+                is case B, refused here (phase 3), before anything is asked.
+      check     the platform image `create` pins; a collection of that name
+                already made is held to the recipe by `space_id`, its engine
+                and its calibration set (the dry Codex the recipe would make,
+                `col.dry_codex`), before anything is measured.
+      calibrate the card against the twin on the inputs the gate sends; the
+                CPU lane kept in the node's store.
+      tolerance the recipe's `space.tolerance` must be the one measured; a
+                recipe that states none takes it.
+      make      create (07 §7.3), or the collection already made, held to the
+                measured tolerance.
+      cpu-reference  written from the store entry calibrate made.
+      gate      `hold embedder check`.
+    The measurement is kept as `<collection>/state/calibration.json`, the
+    run's progress as `<LOUISE_ROOT>/state/new/<name>.json`. Embedding is not
+    turned on: the file says embed = "off" until the operator turns it on,
+    after a pass. Exit 0 when the gate passes, 1 when it fails, 2 for a
+    refusal, 3 when an endpoint cannot be reached. Run again after a stop: a
+    step already done is checked, not redone (the calibration is reused when
+    the card states the run it was measured on), and the CPU lane resumes
+    from the store's journal."""
     import argparse
+    import copy
     import decimal
 
     from app import collections as collections_mod, run_check
-    from app.hold import calibrate as calib, codex as cx
+    from app.hold import calibrate as calib, codex as cx, workflow as wf
     say = (lambda line: print(line, file=sys.stderr))
     recipe = _recipe(a.recipe)
+    given = copy.deepcopy(recipe)
+
+    # resolve: the recipe's inputs, and nothing typed twice
     space = recipe.get("space") or {}
     ctx = int(space.get("ctx") or 0)
     cut = space.get("cut") or "characters"
@@ -612,47 +621,19 @@ def cmd_collection_new(a) -> int:
     if ctx <= 0 or not set_id or not enc.get("weights") or not isinstance(enc.get("engine"), dict):
         raise CodexError(f"{a.recipe}: the space states ctx, calibration.set, encoder.weights and "
                          f"encoder.engine; `new` measures with those and nothing else")
-    q_weights = ((space.get("query") or {}).get("encoder") or {}).get("weights")
-    if q_weights and q_weights != enc["weights"]:
-        raise CodexError(f"{a.recipe}: an asymmetric space (a query encoder of its own weights): "
-                         f"`new` makes a space whose documents and questions share one encoder")
+    if (space.get("query") or {}).get("encoder"):
+        raise CodexError(f"{a.recipe}: the space names a question encoder (space.query.encoder): that is "
+                         f"case B of docs/notes/new-collection.md, whose question side is measured too, "
+                         f"and the workflow does not run it yet (phase 3). Nothing was asked or measured")
     if not a.cpu_model:
         raise CodexError("--cpu-model names the encoder's CPU twin (gpu_layers 0, the device "
                          "hidden): the tolerance and the CPU reference are measured against it")
     api = check_api(a.api)
     model = model_keys(a.encoder, embed_model=a.embed_model)[0]
+    run = wf.Run(wf.case("A"), a.name, {
+        "plugin": a.plugin, "recipe": given, "name": a.name, "encoder": a.encoder, "api": api,
+        "embed_model": model, "cpu_model": a.cpu_model, "platform_image": a.platform_image}, say=say)
     set_id, texts = calib.load_set(set_id)
-    say(f"recipe   ctx {ctx}, cut {cut}, document instruction {instruction!r}, set {set_id[:23]}…")
-
-    # BEFORE ANY MEASUREMENT (the workflow's own review, 2026-11-06): what can
-    # refuse without measuring refuses first, so a refusal costs no card lane.
-    # The platform image create pins, and a collection of that name already
-    # made, held to the recipe in everything but the tolerance (which step 2
-    # measures)
-    a.platform_image = preflight_create(recipe, a.platform_image)
-    existing = None
-    try:
-        existing = col.resolve(a.root, a.name)
-    except CodexError:
-        existing = None
-    if existing is not None:
-        sp = existing[1].space
-        differs = [k for k, got, want in (
-            ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
-            ("document instruction", sp.document_instruction, instruction),
-            ("calibration set", sp.calibration.set, set_id),
-            # the WEIGHTS (`cx.encoder_field` names the engine, not them)
-            ("encoder weights", getattr(sp.encoder, "weights", None), enc["weights"]))
-            if got != want]
-        if differs:
-            raise CodexError(f"{existing[0]} exists and its space differs from the recipe's in "
-                             f"{', '.join(differs)}: a collection is not changed in place; forget it "
-                             f"and run `new` again (RULE 1 for one nothing was published from)")
-
-    # 1. calibrate, on the inputs the gate sends
-    reference = calib.Endpoint(file=f"{a.recipe} (space.encoder)", url=a.encoder, api=api, model=model,
-                               weights=enc["weights"],
-                               engine=cx.engine_from_dict(enc["engine"], "space.encoder.engine"))
     twin_recipe = collections_mod.EmbedRecipe(url=a.encoder, api=api, model=a.cpu_model, dtype="f32",
                                               ctx=ctx, document_instruction=instruction, cut=cut)
     stated = run_check.stated_run(twin_recipe, probe_item=run_check.PROBE)
@@ -661,58 +642,131 @@ def cmd_collection_new(a) -> int:
     if stated.weights != enc["weights"]:
         raise CodexError(f"--cpu-model {a.cpu_model} runs weights {stated.weights[:23]}…, the "
                          f"recipe's are {enc['weights'][:23]}…: a twin is the same weights")
+    run.at("resolve", f"ctx {ctx}, cut {cut}, document instruction {instruction!r}, set {set_id[:23]}…; "
+                      f"{model} with its CPU twin {a.cpu_model}")
+
+    # check: BEFORE ANY MEASUREMENT, so a refusal costs no card lane
+    a.platform_image = preflight_create(recipe, a.platform_image)
+    existing = None
+    try:
+        existing = col.resolve(a.root, a.name)
+    except CodexError:
+        existing = None
+    if existing is not None:
+        dry = copy.deepcopy(recipe)
+        # the tolerance is outside space_id (02 §2.4) and not measured yet
+        dry["space"].setdefault("tolerance", "0.99")
+        differs = _differs_from(existing[1], col.dry_codex(a.plugin, dry, platform_image=a.platform_image))
+        if differs:
+            raise CodexError(f"{existing[0]} exists and is not the collection this recipe makes: "
+                             f"{'; '.join(differs)}. A collection is not changed in place; forget it "
+                             f"and run `new` again (RULE 1 for one nothing was published from)")
+        run.at("check", f"{existing[0]} exists, space {existing[1].space_id[:23]}…: the recipe's")
+    else:
+        run.at("check", f"{a.name} is new; platform image {a.platform_image[:23]}…")
+
+    # calibrate, on the inputs the gate sends
+    reference = calib.Endpoint(file=f"{a.recipe} (space.encoder)", url=a.encoder, api=api, model=model,
+                               weights=enc["weights"],
+                               engine=cx.engine_from_dict(enc["engine"], "space.encoder.engine"))
     twin = calib.Endpoint(file=f"the CPU twin {a.cpu_model}", url=a.encoder, api=api, model=a.cpu_model,
                           weights=stated.weights, engine=cx.engine_from_dict(stated.engine, "the twin's run"))
-    say(f"1/5 calibrate  {model} against {a.cpu_model} (the CPU lane from the node's store when kept)")
-    measured = calib.measure(reference, [twin], set_id=set_id, texts=texts,
-                             embed=calib.http_embed(ctx, document_instruction=instruction,
-                                                    set_id=set_id, cut=cut))
-    measured.update(ctx=ctx, cut=cut, instruction=instruction, cpu_model=a.cpu_model)
+    measured = run.done("calibrate")
+    if measured is not None:
+        card = run_check.stated_run(collections_mod.EmbedRecipe(
+            url=a.encoder, api=api, model=model, dtype="f32", ctx=ctx, document_instruction=instruction,
+            cut=cut), probe_item=run_check.PROBE)
+        if card.run_id not in ((measured.get("reference") or {}).get("runs") or ()):
+            measured = None
+            say("new: the card states another run than the one calibrated: measured again")
+    if measured is not None:
+        run.at("calibrate", "kept from the earlier run (the card states the run it was measured on)")
+    else:
+        run.at("calibrate", f"{model} against {a.cpu_model} (the CPU lane from the node's store when kept)")
+        measured = calib.measure(reference, [twin], set_id=set_id, texts=texts,
+                                 embed=calib.http_embed(ctx, document_instruction=instruction,
+                                                        set_id=set_id, cut=cut))
+        measured.update(ctx=ctx, cut=cut, instruction=instruction, cpu_model=a.cpu_model)
+        run.record("calibrate", measured)
     tolerance = measured["tolerance"]
 
-    # 2. the tolerance is the measured one
+    # tolerance: the measured one
     said = space.get("tolerance")
     if said is None:
         space["tolerance"] = tolerance
-        say(f"2/5 tolerance  {tolerance} (measured; the recipe stated none)")
+        run.at("tolerance", f"{tolerance} (measured; the recipe stated none)")
     elif decimal.Decimal(str(said)) != decimal.Decimal(tolerance):
         raise CodexError(f"{a.recipe}: space.tolerance is {said}, and {tolerance} was measured on "
                          f"the space's own inputs: write {tolerance} (a tolerance is measured, "
                          f"never chosen)")
     else:
-        say(f"2/5 tolerance  {tolerance} (the recipe's, measured)")
+        run.at("tolerance", f"{tolerance} (the recipe's, measured)")
+    run.record("tolerance", {"tolerance": tolerance})
 
-    # 3. create, or hold the collection already made to the recipe
+    # make: create, or hold the collection already made to the measured tolerance
     if existing is not None:
         name, codex = existing
         if decimal.Decimal(str(codex.space.tolerance)) != decimal.Decimal(tolerance):
             raise CodexError(f"{name} exists with tolerance {codex.space.tolerance}, and {tolerance} was "
                              f"measured on its own inputs: a collection is not changed in place; forget "
                              f"it and run `new` again (RULE 1 for one nothing was published from)")
-        say(f"3/5 create     {name} exists, its space the recipe's: kept")
+        run.at("make", f"{name} exists, its space the recipe's: kept")
     else:
         codex, held = create_from(a.root, a.plugin, recipe, platform_image=a.platform_image,
                                   encoder=a.encoder, name=a.name, api=api, embed_model=a.embed_model)
         name = col.name_of(a.root, codex.collection_id)
-        say(f"3/5 create     {name}  {codex.collection_id}  (held: {held})")
+        run.at("make", f"{name}  {codex.collection_id}  (held: {held})")
     state = a.root / name / "state"
     state.mkdir(parents=True, exist_ok=True)
     (state / "calibration.json").write_text(json.dumps(measured, indent=1, sort_keys=True), encoding="utf-8")
+    run.record("make", {"collection_id": codex.collection_id})
 
-    # 4. the CPU reference, from the store entry step 1 made
-    say("4/5 cpu-reference  from the node's store")
+    # cpu-reference, from the store entry calibrate made
+    run.at("cpu-reference", "from the node's store")
     rc = cmd_embedder_cpu_reference(argparse.Namespace(root=a.root, collection=name, model=a.cpu_model,
                                                        query_model=None, again=False, refresh=True))
     if rc != 0:
-        say(f"stopped at 4/5: cpu-reference exited {rc}")
+        say(f"stopped at cpu-reference: it exited {rc}")
         return rc
+    run.record("cpu-reference")
 
-    # 5. the gate
-    say("5/5 gate")
+    # gate
+    run.at("gate", "hold embedder check")
     rc = cmd_embedder_check(argparse.Namespace(root=a.root, collection=name, accept=False,
                                                model=None, query_model=None))
+    run.record("gate", {"rc": rc})
     say(f"{name}: {'the gate PASSED; embedding stays off until the operator turns it on' if rc == 0 else f'the gate exited {rc}: nothing may be embedded'}")
     return rc
+
+
+def _differs_from(held, dry) -> list[str]:
+    """How a collection already made differs from the one a recipe makes,
+    in what decides whether its vectors are the recipe's: its `space_id`
+    (02 §2.4: weights, settings, layers, cleaning), its engine (inside
+    `collection_id`, the build the Codex freezes), its calibration set.
+    The fields a person reads are named; a `space_id` that differs in
+    none of them is named as itself."""
+    sp, want = held.space, dry.space
+
+    def engine(s) -> str | None:
+        return getattr(getattr(getattr(s, "encoder", None), "engine", None), "engine_id", None)
+    out = [f"{k} {got!r}, the recipe's {exp!r}" for k, got, exp in (
+        ("encoder weights", getattr(sp.encoder, "weights", None), getattr(want.encoder, "weights", None)),
+        ("ctx", sp.ctx, want.ctx), ("cut", sp.cut or "characters", want.cut or "characters"),
+        ("document instruction", sp.document_instruction, want.document_instruction),
+        ("dim", getattr(sp, "dim", None), getattr(want, "dim", None)),
+        ("dtype", getattr(sp, "dtype", None), getattr(want, "dtype", None)),
+        ("pooling", getattr(sp, "pooling", None), getattr(want, "pooling", None)),
+        ("normalise", getattr(sp, "normalise", None), getattr(want, "normalise", None)))
+        if got != exp]
+    if held.space_id != dry.space_id and not out:
+        out.append(f"space {held.space_id[:23]}…, the recipe's {dry.space_id[:23]}… (its layers or "
+                   f"cleaning)")
+    if engine(sp) != engine(want):
+        out.append(f"engine {str(engine(sp))[:23]}…, the recipe's {str(engine(want))[:23]}…")
+    if sp.calibration.set != want.calibration.set:
+        out.append(f"calibration set {sp.calibration.set[:23]}…, the recipe's {want.calibration.set[:23]}…")
+    return out
 
 
 def _encoder_key_args(p) -> None:

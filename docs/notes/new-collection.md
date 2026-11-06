@@ -35,8 +35,12 @@ checked against the one before it, and each says what it found.
 | 8 | gate | `hold embedder check`, for each role. | The gate fails (exit 1). |
 | 9 | swap | Re-creation only: forgets the predecessor and takes its name. | — |
 
-The workflow is resumable. Run it again after a stop: a step already done is
-checked, not redone, and the CPU lane resumes from the store's journal.
+The workflow is resumable. Its progress is kept in
+`<LOUISE_ROOT>/state/new/<name>.json`, from before the collection exists. Run it
+again after a stop: a step already done is checked, not redone, and the CPU
+lane resumes from the store's journal. For example, the calibration is reused
+when the card still states the run it was measured on. A different request
+under the same name starts afresh and says so.
 
 ## The cases
 
@@ -105,19 +109,25 @@ The wizard comes later, on the same declarations.
 
 | Case | State |
 |---|---|
-| A | Built: `new` (#331, #333, #334). Not yet run on the node (wikidata, 2026-11-06). |
-| B–J | Planned, phases below. |
+| A | Built: `new` (#331, #333, #334; on the framework in phase 1). Run on the node: wikidata, 2026-11-06, exit 0, the gate PASSED (tolerance 0.999995, exact, CPU worst 0.999996). |
+| B | Refused at resolve, before anything is asked (phase 1); built in phase 3. |
+| C–J | Planned, phases below. |
 
 **The plan.** Each phase ships with tests and is measured on the node before
 the next one starts.
 
-1. **The framework.**
-   - `app/hold/workflow.py`: cases, steps, and a state file per collection (`state/new.json`).
-   - `new` rebuilt on it, without changing its behaviour.
-   - An existing collection is held to the recipe by `space_id`, not by
-     five fields.
-   - Calibrate uses the space's dtype.
-   - The guard test, its allow-list naming each path not yet moved.
+1. **The framework.** Done.
+   - `app/hold/workflow.py`: the steps, the cases, and a run's progress
+     (`<LOUISE_ROOT>/state/new/<name>.json`).
+   - `new` rebuilt on it: steps numbered per case, a done calibration
+     reused when the card states the same run.
+   - An existing collection is held to the recipe by `space_id`, its
+     engine and its calibration set (`col.dry_codex`, the Codex the recipe
+     would make), not by five fields.
+   - A `space.query.encoder` is refused at resolve.
+   - The guard test, `tests/test_creation_framework.py`, with its
+     allow-list naming each path not yet moved.
+   - Calibrate's dtype: checked, not a defect (below).
 2. **E, D, G, I.**
    - The space copy, the reused reference, the private collection (the
      LocalAGI and OpenAI routes go through the workflow), the peer copy.
@@ -144,7 +154,7 @@ the next one starts.
 | The target checked after the measurement; the name optional | `new` | #334 |
 | An existing collection held to five fields, not its `space_id` (engine, dim, dtype, pooling, layers unchecked) | `new` | phase 1 |
 | A recipe with any `space.query.encoder` needs the query side; `new` fails at create, after measuring | `new` | phase 1 (refused first), phase 3 (built) |
-| Calibrate measures in f32, whatever the space's dtype | calibrate | phase 1 |
+| Calibrate measures in f32, whatever the space's dtype | calibrate | not a defect: 03 §3.1 computes every cosine in f32, the gate's too; the dtype is how vectors are stored |
 | The gate passes with no CPU comparison when no CPU reference is kept | gate | phase 2 (every case makes one) |
 | The Library's create sets a hand tolerance, makes no CPU reference, runs no gate, and embeds on demand | Library | phase 4 |
 | A private collection's first space (`[deposit].space`) carries a hand tolerance | deposit | phase 2 |
