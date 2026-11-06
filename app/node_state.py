@@ -550,3 +550,101 @@ def pause_history() -> list[dict]:
             return json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
     except (ValueError, sqlite3.Error):
         return []
+
+
+# ---- what stops one collection from embedding (CLAUDE.md RULE 2) ------------
+#
+# 2026-11-06: wikidata's embedding was turned on in the Library and nothing
+# happened for hours. The collection was paused on its own — carried over by
+# `hold collection rename` — and neither the Library nor `hold collection
+# new` said so; the switch answered ok. RULE 2: "it proceeds with what it has
+# and says in plain words what is missing and what would supply it". Every
+# surface that turns embedding on, or shows it, asks here.
+
+
+def _when(at) -> str | None:
+    """A history entry's `at`, as the Library writes times; None for none."""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(float(at)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _pause_entry(c: sqlite3.Connection, name: str) -> dict | None:
+    """Collection `name`'s pause — `{"by", "at", "when"}` from the latest
+    history entry for it, each None where nothing recorded it — or None
+    when it is not paused."""
+    import json
+    if name not in paused_collections(c):
+        return None
+    try:
+        hist = json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
+    except (TypeError, ValueError):
+        hist = []
+    latest = next((h for h in reversed(hist if isinstance(hist, list) else [])
+                   if isinstance(h, dict) and h.get("collection") == name), None)
+    if latest is None or not latest.get("paused"):
+        # paused before the history was kept, or the history cut short
+        return {"by": None, "at": None, "when": None}
+    return {"by": latest.get("by") or None, "at": latest.get("at"), "when": _when(latest.get("at"))}
+
+
+def pause_of(name: str, con: sqlite3.Connection | None = None) -> dict | None:
+    """Who paused collection `name` and when (`_pause_entry`), or None when
+    it is not paused. Without `con` the store is read creating nothing
+    (`peek`). A store that cannot be read is None here too:
+    `embedding_blockers` is the one that says so."""
+    try:
+        if con is not None:
+            return _pause_entry(con, name)
+        return peek(lambda c: _pause_entry(c, name), None)
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        return None
+
+
+def _pause_says(name: str, pause: dict) -> str:
+    if pause.get("by") or pause.get("when"):
+        head = (f'{name} is paused on its own, by "{pause.get("by") or "unnamed"}"'
+                + (f" on {pause['when']}" if pause.get("when") else ""))
+    else:
+        head = f"{name} is paused on its own (nothing recorded who paused it, or when)"
+    return (f"{head}: the worker runs nothing for it, embedding included. Resume it in the Library "
+            f"(Options › resume, on its card), or run `louise node resume {name}`.")
+
+
+def embedding_blockers(name: str, embed: str | None,
+                       con: sqlite3.Connection | None = None) -> list[str]:
+    """What stops collection `name` from embedding, one plain sentence each
+    saying what blocks and what lifts it; [] when nothing does.
+
+    Read where the worker reads it: the node's mode (`mode_runs(…, EMBED)`),
+    this collection's own pause (`paused_collections`, who and when from its
+    latest history entry), and `embed`, its embed setting, when it is "off".
+    `embed=None` leaves the setting out, for a caller that says it itself.
+    `con` is a `connect()` the caller holds; without one the store is read
+    creating nothing (`peek`), and an absent store reads as the worker reads
+    it. NEVER RAISES: a store that cannot be read is said as unreadable."""
+    def read(c):
+        return db.worker_state(c), _pause_entry(c, name)
+    try:
+        facts = read(con) if con is not None else peek(read, ("paused", None), error=None)
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        facts = None
+    out: list[str] = []
+    if facts is None:
+        out.append(f"The node's state ({path()}) could not be read, so whether the node's mode or a "
+                   f"pause of {name} stops its embedding is not known: `louise node show` reads the "
+                   f"same file.")
+    else:
+        state, pause = facts
+        if not mode_runs(state, EMBED):
+            label = dict(MODE_LABELS).get(state, state)
+            says = MODE_SAYS.get(state, "a mode this node does not know: nothing runs")
+            out.append(f'The node is in "{label}" mode ({says}). Nothing embeds until it is set to '
+                       f'"run everything": at the top of the Library, or with `louise node resume`.')
+        if pause is not None:
+            out.append(_pause_says(name, pause))
+    if embed == "off":
+        out.append(f'{name}\'s embed setting is "off": set it to on-demand, all local or all p2p in its '
+                   f"Embed mode in the Library, or run `louise hold config apply {name} --set embed=all`.")
+    return out

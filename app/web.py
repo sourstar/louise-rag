@@ -2353,8 +2353,16 @@ def _collection_shelf(collection: collections_mod.Collection,
                   "resumes when indexing catches up")
 
     recipe = _shelf_recipe(collection)
+    embed_mode = db.get_scope(con)["embed_mode"]
     return {
-        "embed_mode": db.get_scope(con)["embed_mode"],
+        "embed_mode": embed_mode,
+        # RULE 2 (2026-11-06: wikidata turned on here sat paused for hours,
+        # the card silent): a collection paused on its own says so, by whom
+        # and when, and what stops it embedding is said where the setting is
+        # shown. "off" is the select's own word, so it adds nothing there.
+        "paused": node_state.pause_of(collection.name),
+        "embed_blocked": ([] if embed_mode == "off"
+                          else node_state.embedding_blockers(collection.name, embed_mode)),
         # the file's word and the file's `share`, for the Library's two
         # controls and their confirmations; the note when the file's pair is
         # one the node will not run as written (07 §7.8, 2026-10-19)
@@ -3085,11 +3093,38 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         node_state.request_digest()
     except Exception:   # noqa: BLE001 — the hourly digest says it anyway
         pass
+    # RULE 2 (2026-11-06): saved is not embedding. wikidata was turned on
+    # here, this answered ok, and the collection sat paused for hours: what
+    # still stops it is said, in words, with what lifts it
+    blocked = node_state.embedding_blockers(name, body.mode)
+    busy = None if applied_now else ("saved to the TOML; the manifest is busy, so the worker "
+                                     "applies it within a round")
+    if blocked:
+        note = (f"Saved to {toml_path.name}, but nothing will embed until "
+                f"{'this is' if len(blocked) == 1 else 'these are'} lifted: " + " ".join(blocked)
+                + (f" ({busy})" if busy else ""))
+    else:
+        note = busy
     return {"ok": True, "embed_mode": body.mode, "persisted": True,
             "applied_now": applied_now, "share": share, "share_enabled": share_enabled,
-            "note": None if applied_now else
-            "saved to the TOML; the manifest is busy, so the worker applies "
-            "it within a round"}
+            "blocked": blocked, "note": note}
+
+
+@admin_router.post("/library/{name}/resume")
+def collection_resume(name: str):
+    """The Library's Resume (RULE 2, 2026-11-06): a collection paused on its
+    own — `louise node pause <name>`, or carried by `hold collection rename`
+    — runs again, as `louise node resume <name>` does, the write recorded in
+    the pause history as the Library's. The worker takes it up within a
+    round."""
+    collection = _collection_or_404(name)
+    names = node_state.set_paused(name, False, by="Library (admin)")
+    # the pause history records it; the collection's event log is best-effort
+    with contextlib.suppress(sqlite3.OperationalError):
+        con = db.connect(collection)
+        con.execute("PRAGMA busy_timeout=2000")
+        db.log_event(con, "info", "control", f"collection {name!r} resumed via admin UI")
+    return {"ok": True, "paused": sorted(names)}
 
 
 class EmbedSelectBody(BaseModel):
