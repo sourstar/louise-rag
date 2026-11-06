@@ -465,4 +465,6 @@ def test_calibrate_measures_a_pair_space_over_its_pairs(tmp_path, monkeypatch, c
     out = json.loads(capsys.readouterr().out)
     assert out["set"] == PAIR_SET and out["texts"] == cal.SIZE
     assert bodies and all("input_pairs" in b and "input" not in b for b in bodies)
-    assert sum(len(b["input_pairs"]) for b in bodies) == 2 * cal.SIZE
+    # the set once per lane, plus one probe pair per lane asking which run
+    # answers (a run on the CPU is the node's stored reference, 2026-11-06)
+    assert sum(len(b["input_pairs"]) for b in bodies) == 2 * cal.SIZE + 2

@@ -392,6 +392,12 @@ def _pass(monkeypatch, tmp_path, n, ask):
     return run, stated
 
 
+def _store(role="document", ctx=1024):
+    """The node's store for the pass `_pass` runs: weights w, set s, its window."""
+    return cpu_ref.node_directory(cpu_ref.node_key(weights="w", set_id="s", ctx=ctx,
+                                                   instruction=None, role=role))
+
+
 def _vec(text):
     # a float64 that float32 rounds: the journal must give back the bytes a
     # whole pass would write
@@ -413,15 +419,16 @@ def test_a_pass_stopped_by_an_expired_receipt_resumes_where_it_stopped(monkeypat
         return [_vec(t) for t in texts]
     run, stated = _pass(monkeypatch, tmp_path, 40, ask)
     assert run() == 3, "a receipt that expired defers the pass, it does not fail it"
-    j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
+    j = cpu_ref.journal_in(_store(), run_id=stated.run_id, set_id="s")
     assert len(j.read_text().splitlines()) == 16, "the two windows answered before it are kept"
     asked.clear()
     assert run() == 0
     assert asked[0] == "t16" and "t0" not in asked, "only what the journal does not hold is asked"
     assert not j.exists(), "the journal goes once the reference is kept"
     resumed = cpu_ref.find(tmp_path, "gutenberg", "document", weights="w", set_id="s")
-    # the same bytes as one uninterrupted pass
+    # the same bytes as one uninterrupted pass, on a node whose store is empty
     whole = tmp_path / "whole"
+    monkeypatch.setenv("LOUISE_ROOT", str(tmp_path / "another-node"))
     run2, _ = _pass(monkeypatch, whole, 40, lambda texts: [_vec(t) for t in texts])
     assert run2() == 0
     once = cpu_ref.find(whole, "gutenberg", "document", weights="w", set_id="s")
@@ -438,7 +445,7 @@ def test_a_window_from_another_run_is_not_journalled(monkeypatch, tmp_path):
         return [_vec(t) for t in texts]
     run, stated = _pass(monkeypatch, tmp_path, 20, ask)
     assert run() == 3
-    j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
+    j = cpu_ref.journal_in(_store(), run_id=stated.run_id, set_id="s")
     assert len(j.read_text().splitlines()) == cpu_ref.WINDOW, "only the first window's run is the pass's"
 
 
@@ -449,6 +456,8 @@ def test_a_torn_line_is_asked_again_and_again_starts_over(monkeypatch, tmp_path)
         asked.extend(texts)
         return [_vec(t) for t in texts]
     run, stated = _pass(monkeypatch, tmp_path, 10, ask)
+    # a journal the per-collection pass left before the node's store
+    # (2026-11-06) is taken over, never lost
     j = cpu_ref.journal(tmp_path, "gutenberg", "document", run_id=stated.run_id, set_id="s")
     texts = [f"t{i}" for i in range(10)]
     seen: list[str] = []
@@ -500,3 +509,86 @@ def test_a_journal_line_answers_only_the_same_input_at_the_same_place(tmp_path):
 def _vec_f32(text):
     import numpy as np
     return np.asarray(_vec(text), dtype="<f4").astype(float).tolist()
+
+
+# ---- once per node (operator, 2026-11-06: "I already asked to save the cpu
+# reference values so that we don't have to repeat that time consuming part")
+
+def _answers(fn, run_id):
+    from app.hold import runs as runs_mod
+
+    def call(texts, runs):
+        runs.add(run_id)
+        return fn(texts)
+    return runs_mod.Answers(call)
+
+
+def test_a_reference_kept_once_is_taken_by_the_next_pass_without_the_cpu(tmp_path):
+    texts = [f"t{i}" for i in range(40)]
+    asked: list[str] = []
+
+    def twin(ts):
+        asked.extend(ts)
+        return [_vec(t) for t in ts]
+    run_a = "sha256:" + "a" * 64
+    d = _store()
+    first = cpu_ref.obtain(d, "document", set_id="s", texts=texts, run_id=run_a,
+                           run=CPU_RUN, embed=_answers(twin, run_a), one=_answers(twin, run_a))
+    assert first.how == "computed" and len(asked) >= len(texts)
+    asked.clear()
+    again = cpu_ref.obtain(d, "document", set_id="s", texts=texts, run_id=run_a,
+                           run=CPU_RUN, embed=_answers(twin, run_a), one=_answers(twin, run_a))
+    assert again.how == "stored" and asked == [], "the same run: not one text asked"
+    assert again.vectors == first.vectors
+
+
+def test_another_build_is_carried_only_when_its_fingerprint_answers_are_the_same_bytes(tmp_path):
+    """RULE 1: reuse bytes that are provably identical. A new engine build of
+    the same weights answers the sixteen fingerprint texts; the same bytes
+    carry the kept file, other bytes make it again."""
+    from app.hold import fingerprint
+    texts = [f"t{i}" for i in range(40)]
+    d = _store()
+    same = lambda ts: [_vec(t) for t in ts]
+    run_a, run_b, run_c = ("sha256:" + c * 64 for c in "abc")
+    cpu_ref.obtain(d, "document", set_id="s", texts=texts, run_id=run_a, run=CPU_RUN,
+                   embed=_answers(same, run_a), one=_answers(same, run_a))
+    asked: list[str] = []
+
+    def b(ts):
+        asked.extend(ts)
+        return same(ts)
+    got = cpu_ref.obtain(d, "document", set_id="s", texts=texts, run_id=run_b, run=CPU_RUN,
+                         embed=_answers(b, run_b), one=_answers(b, run_b))
+    assert got.how == "carried" and got.run_id == run_b
+    assert sorted(asked) == sorted(texts[i] for i in fingerprint.indices(texts)), \
+        "only the sixteen were asked"
+    assert cpu_ref.read(got.path).run_id == run_b, "kept under the new run too"
+    other = lambda ts: [[v[0] + 1e-3, v[1]] for v in same(ts)]
+    made = cpu_ref.obtain(d, "document", set_id="s", texts=texts, run_id=run_c, run=CPU_RUN,
+                          embed=_answers(other, run_c), one=_answers(other, run_c))
+    assert made.how == "computed" and made.vectors != got.vectors
+
+
+def test_a_twin_that_does_not_give_back_its_own_bytes_keeps_nothing(tmp_path):
+    texts = [f"t{i}" for i in range(20)]
+    n = {"calls": 0}
+
+    def drifting(ts):
+        n["calls"] += 1
+        return [[_vec(t)[0] + n["calls"] * 1e-3, 1.0] for t in ts]
+    run_a = "sha256:" + "a" * 64
+    with pytest.raises(cpu_ref.NotReproducible):
+        cpu_ref.obtain(_store(), "document", set_id="s", texts=texts, run_id=run_a, run=CPU_RUN,
+                       embed=_answers(lambda ts: [_vec(t) for t in ts], run_a),
+                       one=_answers(drifting, run_a))
+    assert cpu_ref.node_find(_store(), set_id="s", count=len(texts)) is None
+
+
+def test_the_key_is_what_fixes_the_inputs():
+    k = {"weights": "w", "set_id": "s", "ctx": 1024, "instruction": "passage: ", "role": "document"}
+    base = cpu_ref.node_directory(cpu_ref.node_key(**k))
+    for change in ({"weights": "v"}, {"set_id": "t"}, {"ctx": 2048}, {"instruction": None},
+                   {"role": "query"}):
+        assert cpu_ref.node_directory(cpu_ref.node_key(**{**k, **change})) != base, change
+    assert cpu_ref.node_directory(cpu_ref.node_key(**k)) == base

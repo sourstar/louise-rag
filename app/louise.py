@@ -3998,7 +3998,6 @@ def cmd_embedder_cpu_reference(a) -> int:
 
     from app import config, embeddings, encoder_use, run_check
     from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
-    from app.hold import fingerprint
     name, codex = col.resolve(a.root, a.collection)
     if not a.model:
         print("louise: --model names the encoder's CPU twin (gpu_layers 0, the device "
@@ -4053,15 +4052,25 @@ def cmd_embedder_cpu_reference(a) -> int:
                 embed = run_check.answers(cpu, query=query, name=name, timeout=timeout)
                 one = run_check.answers(cpu, how="one", query=query, name=name,
                                         timeout=timeout)
-                # journalled a window at a time: a stop, a kill or a receipt
-                # that expired costs the window in flight, never the role
-                # (gutenberg's query role lost 352 answers, 2026-11-02)
-                vectors = cpu_ref.embed_resumable(a.root, name, role, run_id=stated.run_id,
-                                                  set_id=set_id, texts=texts, embed=embed,
-                                                  say=print)
-                sixteen = [texts[i] for i in fingerprint.indices(texts)]
-                first = one(sixteen)
-                again = list(reversed(one(list(reversed(sixteen)))))
+                # THE NODE'S STORE (operator, 2026-11-06): what `hold embedder
+                # calibrate` or another collection of this encoder already
+                # made is taken, never made again; journalled a window at a
+                # time, so a stop costs the window in flight (gutenberg's query
+                # role lost 352 answers, 2026-11-02)
+                instruction = (getattr(recipe, "document_instruction", None) if role == "document"
+                               else getattr(codex.space.query, "instruction", None))
+                store = cpu_ref.node_directory(cpu_ref.node_key(
+                    weights=stated.weights, set_id=set_id, ctx=recipe.ctx,
+                    instruction=instruction, role=role))
+                cpu_ref.adopt_journal(cpu_ref.journal(a.root, name, role, run_id=stated.run_id,
+                                                      set_id=set_id),
+                                      store, run_id=stated.run_id, set_id=set_id)
+                got = cpu_ref.obtain(store, role, set_id=set_id, texts=texts,
+                                     run_id=stated.run_id,
+                                     run={"driver": stated.driver, "engine": stated.engine,
+                                          "weights": stated.weights},
+                                     embed=embed, one=one,
+                                     again=bool(getattr(a, "again", False)), say=print)
         except (emb.GateDeferred, cpu_ref.Deferred, embeddings.ReceiptDeferred,
                 embeddings.EndpointDeferred, httpx.TransportError) as e:
             # not now: VeGa away, a receipt expired, the twin busy. The
@@ -4069,21 +4078,13 @@ def cmd_embedder_cpu_reference(a) -> int:
             print(f"louise: deferred: {role}: {e}; the answers journalled so far are "
                   f"kept", file=sys.stderr)
             return 3
-        # the role's answers were checked window by window (embed_resumable)
-        if one.runs != {stated.run_id}:
-            print(f"louise: deferred: {role}: answers came from another run than "
-                  f"{stated.run_id[:23]}…; nothing is kept", file=sys.stderr)
-            return 3
-        if not emb.reproduces(first, again):
-            print(f"louise: {role}: the CPU twin did not give back its own bytes (invariant "
-                  f"12): nothing is kept", file=sys.stderr)
+        except cpu_ref.NotReproducible as e:
+            print(f"louise: {e}", file=sys.stderr)
             return 1
-        path = cpu_ref.write(a.root, name, role, run_id=stated.run_id,
-                             run={"driver": stated.driver, "engine": stated.engine,
-                                  "weights": stated.weights},
-                             set_id=codex.space.calibration.set, vectors=vectors)
-        cpu_ref.discard_journal(a.root, name, role, run_id=stated.run_id, set_id=set_id)
-        print(f"kept  {role}  run {stated.run_id[:23]}…  {len(vectors)} vectors  {path}")
+        path = cpu_ref.write(a.root, name, role, run_id=got.run_id, run=got.run,
+                             set_id=set_id, vectors=got.vectors)
+        print(f"kept  {role}  run {got.run_id[:23]}…  {len(got.vectors)} vectors  {path}  "
+              f"({got.how}; the node's store: {got.path})")
     return 0
 
 
@@ -4128,7 +4129,8 @@ def cmd_embedder_calibrate(a) -> int:
         raise CodexError("--document-instruction prefixes a text; a pair space's documents "
                          "are pairs (09 §9.3)")
     _print(calib.measure(reference, against, set_id=set_id, texts=texts,
-                         embed=calib.http_embed(a.ctx, document_instruction=instruction)))
+                         embed=calib.http_embed(a.ctx, document_instruction=instruction,
+                                                set_id=set_id)))
     return 0
 
 

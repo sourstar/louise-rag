@@ -149,17 +149,60 @@ def load_pairs(path: str | Path) -> tuple[str, list[tuple[str, str]]]:
 Embed = Callable[[Endpoint, list], tuple[list[list[float]], set]]
 
 
-def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
+def http_embed(ctx: int, *, document_instruction: str | None = None,
+               set_id: str | None = None) -> Embed:
     """Embed through the existing client (invariant 7), the endpoint's own
     recipe, truncating at `ctx` as the gate does. Returns the vectors and
     the runs the answers stated (`Louise-Run`, 03 §3.3).
 
     `document_instruction`: the space's `space.document.instruction` (09
     §9.3, Codex version 11), prepended by the client as to every document,
-    so the tolerance is measured on the inputs the gate will send."""
+    so the tolerance is measured on the inputs the gate will send.
+
+    A CPU LANE IS THE NODE'S STORED CPU REFERENCE (operator, 2026-11-06: "I
+    already asked to save the cpu reference values so that we don't have to
+    repeat that time consuming part"). With `set_id` given, an endpoint
+    whose run states the CPU is answered from `cpu_reference.obtain`: the
+    store's vectors when kept, else computed one text a request, journalled
+    and kept there. The collection's `hold embedder cpu-reference` then
+    finds them instead of embedding the set again. `embed.kept` says, per
+    file, which file answered and how."""
+    import dataclasses
+
     import httpx
 
-    from app import collections as collections_mod, embeddings, encoder_use
+    from app import collections as collections_mod, config, embeddings, encoder_use, run_check
+    from . import cpu_reference as cpu_ref
+    from .embedder import GateDeferred
+    kept: dict[str, dict[str, str]] = {}
+
+    def cpu_lane(ep: Endpoint, recipe, texts: list) -> tuple[list[list[float]], set] | None:
+        """The lane from the node's store when the endpoint answers on the
+        CPU; None for a card, which is embedded as before."""
+        from .runs import RunRefused
+        probe = run_check.PAIR_PROBE if texts and isinstance(texts[0], tuple) else run_check.PROBE
+        try:
+            stated = run_check.stated_run(recipe, probe_item=probe)
+        except RunRefused:
+            # an endpoint that cannot say what its run is (not behind VeGa,
+            # not `/upstream/<model>`): embedded as before, nothing stored
+            return None
+        if stated.driver != "cpu":
+            return None
+        cpu = dataclasses.replace(recipe, batch=1)
+        timeout = cpu_ref.request_timeout(ctx, config.EMBED_CONCURRENCY)
+        store = cpu_ref.node_directory(cpu_ref.node_key(
+            weights=stated.weights, set_id=set_id or "", ctx=ctx,
+            instruction=document_instruction, role="document"))
+        got = cpu_ref.obtain(store, "document", set_id=set_id or "", texts=texts,
+                             run_id=stated.run_id,
+                             run={"driver": stated.driver, "engine": stated.engine,
+                                  "weights": stated.weights},
+                             embed=run_check.answers(cpu, name="calibrate", timeout=timeout),
+                             one=run_check.answers(cpu, how="one", name="calibrate",
+                                                   timeout=timeout))
+        kept[ep.file] = {"how": got.how, "path": str(got.path), "run": got.run_id}
+        return got.vectors, {got.run_id}
 
     def embed(ep: Endpoint, texts: list) -> tuple[list[list[float]], set]:
         recipe = collections_mod.EmbedRecipe(
@@ -174,7 +217,15 @@ def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
             # worker's idle sweep stopped a Nemotron calibration's CPU twin
             # every minute, mid-request (2026-11-03), as it had cpu-reference's
             with encoder_use.held(recipe, holder=encoder_use.holder("hold embedder calibrate")):
+                lane = cpu_lane(ep, recipe, texts) if set_id is not None else None
+                if lane is not None:
+                    return lane
                 return embeddings.embed_calibration(recipe, texts, runs=runs), runs
+        except (GateDeferred, cpu_ref.Deferred) as e:
+            raise CalibrateUnreachable(f"{ep.file}: {e}; nothing was measured, retry when it "
+                                       f"answers (the CPU lane's journal is kept)") from e
+        except cpu_ref.NotReproducible as e:
+            raise CalibrateFailed(f"{ep.file}: {e}") from e
         except httpx.TransportError as e:
             raise CalibrateUnreachable(
                 f"{ep.file}: the encoder at {ep.url} is unreachable ({e}); "
@@ -200,6 +251,7 @@ def http_embed(ctx: int, *, document_instruction: str | None = None) -> Embed:
                     f"(HTTP {status}); retry when it answers") from e
             raise CalibrateFailed(f"{ep.file}: the encoder at {ep.url}: {e}") from e
 
+    embed.kept = kept   # type: ignore[attr-defined]
     return embed
 
 
@@ -262,6 +314,8 @@ def measure(reference: Endpoint, against: Sequence[Endpoint], *,
         "dim": int(width),
         "reference": {**reference.describe(), "runs": stated[reference.file]},
         "against": [{**a.describe(), "runs": stated[a.file],
+                     **({"cpu_reference": getattr(embed, "kept", {})[a.file]}
+                        if a.file in getattr(embed, "kept", {}) else {}),
                      "n_pairs_measured": by_file[a.file]["n_pairs_measured"],
                      "cos": by_file[a.file]["cos"],
                      "p_miss_honest": by_file[a.file]["p_miss_honest"]}
