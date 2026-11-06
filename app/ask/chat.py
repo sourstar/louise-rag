@@ -383,6 +383,44 @@ def without_tool_text(content: str) -> str:
     return _TOOL_TEXT.sub("", content or "").strip()
 
 
+#: where Ask's first user turn ends its sources (ask(): "Sources: … Question: …")
+_QUESTION = "\n\nQuestion: "
+
+
+def without_tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The conversation as a template WITHOUT tools can render it.
+
+    2026-11-06, Command R7B's pilots: 8 answers of 45 failed with LocalAI's
+    500 "Jinja Exception: Conversation roles must alternate
+    user/assistant/user/assistant/...". Ask withholds the tools by declaring
+    none, and with no tools llama.cpp renders a model's DEFAULT template.
+    Cohere's default template takes user and assistant turns only, strictly
+    alternating, and raises on anything else; Qwen's renders tool turns
+    either way, so the Qwens never showed it. The request without tools
+    therefore carries no tool turn. Each tool answer, whose content is a
+    search block like the first request's sources, joins the sources of the
+    user turn that asked; the calls that asked for them are dropped. The
+    roles then alternate as every template expects. A copy: the
+    conversation with its tool turns stays as it was."""
+    out: list[dict[str, Any]] = []
+    gathered: list[str] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            gathered.append(str(m.get("content") or ""))
+        elif role == "assistant" and m.get("tool_calls"):
+            continue
+        else:
+            out.append(dict(m))
+    if gathered:
+        last = max(i for i, m in enumerate(out) if m.get("role") == "user")
+        head, sep, question = str(out[last]["content"]).rpartition(_QUESTION)
+        joined = "\n\n---\n\n".join(gathered)
+        out[last]["content"] = (f"{head}\n\n---\n\n{joined}{sep}{question}" if sep
+                                else f"{out[last]['content']}\n\n---\n\n{joined}")
+    return out
+
+
 def _searched(call: Callable[[str, dict[str, Any]], Any], args: dict[str, Any], by: str
               ) -> dict[str, Any]:
     """One of Louise's own searches, as a turn."""
@@ -448,12 +486,13 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
     slimmed = 0
     tools_failed: str | None = None
 
-    def timed_model(tools_offered):
+    def timed_model(tools_offered, asked: list[dict[str, Any]] | None = None):
         nonlocal slimmed
-        slimmed += fit(messages, tools_offered)
+        asked = messages if asked is None else asked
+        slimmed += fit(asked, tools_offered)
         t0 = time.monotonic()
         try:
-            return model(messages, tools_offered)
+            return model(asked, tools_offered)
         finally:
             model_s.append(round(time.monotonic() - t0, 3))
 
@@ -478,15 +517,19 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
         return out
 
     def without_tools() -> str:
-        """The model's answer with the tools withheld. One that is only a
-        tool call written as text is asked once more, told to answer now;
-        whatever text remains is the answer, never the call."""
-        content, _, _ = timed_model(None)
+        """The model's answer with the tools withheld, asked on the
+        conversation as a template without tools renders it
+        (`without_tool_turns`). One that is only a tool call written as
+        text is asked once more, told to answer now, after its own turn so
+        the roles still alternate; whatever text remains is the answer,
+        never the call."""
+        asked = without_tool_turns(messages)
+        content, _, _ = timed_model(None, asked)
         answer = without_tool_text(content)
         if answer or not content.strip():
             return answer
-        messages.append({"role": "user", "content": ANSWER_NOW})
-        content, _, _ = timed_model(None)
+        asked += [{"role": "assistant", "content": content}, {"role": "user", "content": ANSWER_NOW}]
+        content, _, _ = timed_model(None, asked)
         return without_tool_text(content)
 
     def answer_with_what_it_has(rounds: int) -> dict[str, Any]:
