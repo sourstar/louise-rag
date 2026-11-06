@@ -1051,6 +1051,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--collections", default="")
     p.add_argument("--search-cache", type=Path, required=True)
     p.add_argument("--window", type=int, default=8192)
+    p = sub.add_parser("wire", help="is the model given its template's prompt, and Ask its raw "
+                       "output? (wire_check.py)")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--gguf", type=Path, required=True, help="the model file's weights, for the "
+                   "templates they carry (GGUF_PY: llama.cpp's gguf-py)")
+    p.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
+    p.add_argument("--keys", required=True, help="the recorded questions, e.g. WQ506865:fr,WQ6950087:fr")
+    p.add_argument("--collections", default="")
+    p.add_argument("--search-cache", type=Path, required=True)
+    p.add_argument("--max-tokens", type=int, default=1500)
+    p.add_argument("--append", default="", help="text added to the reference prompt (what the "
+                   "engine may add, e.g. a closed thinking block)")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
@@ -1067,6 +1080,10 @@ def main(argv: list[str] | None = None) -> int:
             # operator, 2026-11-06: "Be absolutely sure that localai is applying
             # your settings otherwise the test is void"
             sampling_probe.require(a.out, a.model)
+            # operator, 2026-11-06: "Are you sure that the model input/output
+            # are correctly wired?"
+            from tools.measure import wire_check
+            wire_check.require(a.out, a.model)
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
         queries = read_queries(a.queries, a.per_lang, langs)
@@ -1094,6 +1111,23 @@ def main(argv: list[str] | None = None) -> int:
         where.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         print(sizes_report(rows, window=a.window) + f"\n{where}")
         return 0
+    if a.cmd == "wire":
+        from app import config
+        from tools.measure import wire_check
+        cols = [c for c in a.collections.split(",") if c] or None
+        wanted = [k for k in a.keys.split(",") if k]
+        by_key = {q["key"]: q for q in read_queries(a.queries)}
+        missing = [k for k in wanted if k not in by_key]
+        if missing:
+            raise SystemExit(f"wire: no such question: {', '.join(missing)}")
+        templates = wire_check.read_gguf(a.gguf)
+        cache = SearchCache(a.search_cache, data_version(cols))
+        results = [wire_check.check(a.model, by_key[k], templates, collections=cols, search_cache=cache,
+                                    post=sampling_probe.http_post, chat_url=config.CHAT_URL,
+                                    max_tokens=a.max_tokens, append=a.append) for k in wanted]
+        where = wire_check.write(a.out, results)
+        print(wire_check.table(results) + f"\n{where}")
+        return 0 if all(r["passed"] for r in results) else 1
     if a.cmd == "probe":
         result = sampling_probe.probe(a.model)
         where = sampling_probe.write(a.out, result, a.installed, sampling_probe.localai_version())
