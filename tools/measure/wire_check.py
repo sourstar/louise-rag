@@ -28,12 +28,17 @@ THE CHECK, by effect, on Ask's real first request for a recorded question:
    and after the chat request: greedy must repeat itself).
 3. CHAT: Ask's request itself (llm._request, Ask's tools), at greedy.
 Wired when:
-- INPUT: both requests count the same prompt tokens (`usage.prompt_tokens`);
-- OUTPUT: both generate the same number of tokens; the chat answer's text is
-  inside the raw text; every tool call the chat answer carries is in the raw
-  text, name and argument values; a tool named as a JSON string in the raw
-  text is not missing from the chat answer's calls; no control marker is
-  left in the answer.
+- INPUT: the chat request's prompt tokens equal the reference counted by
+  the model's own tokenizer (LocalAI /v1/tokenize, special tokens parsed;
+  what it adds by itself off, the engine's BOS/EOS on). Not the raw
+  request's usage: LocalAI's /v1/completions reports 0 on this backend
+  (the node, 2026-11-06);
+- OUTPUT: the chat answer's text, reasoning and tool calls are inside a raw
+  run's text (a greedy answer can part from itself on a near-tie on this
+  engine, so the agreeing run is the measure, and a third run is asked when
+  neither agrees); a tool named as a JSON string in that raw text is among
+  the parsed calls; no control marker is left in the answer.
+Whether greedy repeats itself is reported, not decided on: it is not wiring.
 A failed check says what differs and keeps the texts; it never guesses why.
 `--append TEXT` adds TEXT to the reference prompt, to test what the engine
 adds (llama.cpp's Command R7B handler appends a closed thinking block when
@@ -77,6 +82,8 @@ class Check:
     name: str
     ok: bool
     detail: str = ""
+    #: False for what is reported but is not wiring (greedy repeating itself)
+    decides: bool = True
 
 
 def read_gguf(path: Path) -> Templates:
@@ -196,43 +203,98 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     raw_body = {"model": model, "prompt": reference, "temperature": 0, "max_tokens": max_tokens}
     checks: list[Check] = []
     got: dict[str, Any] = {}
-    for label, u, b in (("raw", f"{chat_url}/v1/completions", raw_body), ("chat", url, body),
-                        ("raw_again", f"{chat_url}/v1/completions", raw_body)):
+
+    def asked(label: str, u: str, b: dict[str, Any], *, needed: bool = True) -> Any | None:
         status, answer = post(u, b)
         got[label] = {"status": status, "answer": answer}
         if status != 200:
-            checks.append(Check("every request answered", False, f"{label}: {status}: {str(answer)[:300]}"))
-            return _result(model, question, which, t, reference, append, got, checks)
-    raw = got["raw"]["answer"]["choices"][0].get("text") or ""
-    again = got["raw_again"]["answer"]["choices"][0].get("text") or ""
-    msg = got["chat"]["answer"]["choices"][0].get("message") or {}
-    use_raw = got["raw"]["answer"].get("usage") or {}
-    use_chat = got["chat"]["answer"].get("usage") or {}
-    content = msg.get("content") or ""
-    calls = [c.get("function") or {} for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
+            if needed:
+                checks.append(Check("every request answered", False, f"{label}: {status}: {str(answer)[:300]}"))
+            return None
+        return answer
 
-    checks.append(Check("greedy repeats itself (raw, twice)", raw == again,
-                        "the same text" if raw == again else f"{len(raw)} then {len(again)} characters"))
-    p_raw, p_chat = use_raw.get("prompt_tokens"), use_chat.get("prompt_tokens")
-    checks.append(Check("INPUT: the prompt is the template's", p_raw is not None and p_raw == p_chat,
-                        f"{p_chat} prompt tokens through chat, {p_raw} through the template "
-                        f"({which}{', + appended' if append else ''})"))
-    c_raw, c_chat = use_raw.get("completion_tokens"), use_chat.get("completion_tokens")
-    checks.append(Check("OUTPUT: the same tokens generated", c_raw is not None and c_raw == c_chat,
-                        f"{c_chat} through chat, {c_raw} raw"))
-    inside = _norm(content) in _norm(raw)
-    checks.append(Check("OUTPUT: the answer's text is the model's", inside,
-                        "inside the raw text" if inside else f"not in the raw text: {content[:160]!r}"))
-    lost_args = [f"{c.get('name')}: {s[:60]!r}" for c in calls
-                 for s in ([c.get("name") or ""] + _strings(_args(c.get("arguments"))))
-                 if s and s not in raw and json.dumps(s, ensure_ascii=False)[1:-1] not in raw]
+    def count(label: str, text: str) -> int | None:
+        """Tokens of `text` by the model's own tokenizer (LocalAI /v1/tokenize);
+        an empty text may be refused, and then nothing is assumed added."""
+        answer = asked(label, f"{chat_url}/v1/tokenize", {"model": model, "content": text}, needed=bool(text))
+        tokens = (answer or {}).get("tokens") if isinstance(answer, dict) else None
+        if isinstance(tokens, list):
+            got[label]["answer"] = {"tokens": len(tokens)}       # the count, not the ids
+            return len(tokens)
+        return None
+
+    if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
+            or asked("chat", url, body) is None \
+            or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
+        return _result(model, question, which, t, reference, append, got, checks)
+    msg = got["chat"]["answer"]["choices"][0].get("message") or {}
+    content = msg.get("content") or ""
+    thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    calls = [c.get("function") or {} for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
+    p_chat = (got["chat"]["answer"].get("usage") or {}).get("prompt_tokens")
+
+    # INPUT. LocalAI's /v1/completions reports usage 0 on this backend (the
+    # node, 2026-11-06, every model), so the reference is counted by the
+    # model's tokenizer: what it adds on its own (an empty text's tokens) is
+    # taken off and the BOS/EOS the engine adds put on, and a marker of the
+    # template must read as ONE token (special tokens parsed), else the
+    # count says nothing
+    n_ref, n_empty = count("tokenize_reference", reference), count("tokenize_empty", "")
+    empty_refused = n_empty is None and n_ref is not None
+    n_empty = 0 if empty_refused else n_empty
+    marker = re.search(r"<\|[^|>\s]+\|>|<[a-z_]+>", reference)
+    n_marker = count("tokenize_marker", marker.group(0)) if marker else None
+    if n_ref is None or n_empty is None:
+        checks.append(Check("INPUT: the prompt is the template's", False,
+                            "undecidable: /v1/tokenize gave no tokens"))
+    elif marker and n_marker is not None and n_marker - n_empty != 1:
+        checks.append(Check("INPUT: the prompt is the template's", False,
+                            f"undecidable: /v1/tokenize reads {marker.group(0)} as {n_marker - n_empty} tokens"))
+    else:
+        expected = n_ref - n_empty + int(t.add_bos) + int(t.add_eos)
+        checks.append(Check("INPUT: the prompt is the template's", expected == p_chat,
+                            f"{p_chat} prompt tokens through chat; the template's text ({which}"
+                            f"{', + appended' if append else ''}) is {expected}"
+                            + ("" if expected == p_chat else f", {(p_chat or 0) - expected:+d} through chat")
+                            + (" (an empty text refused by /v1/tokenize: nothing assumed added)"
+                               if empty_refused else "")))
+
+    # OUTPUT. A greedy answer does not always repeat itself on this engine
+    # (qwen3-8b-q8, 2026-11-06: two raw runs parted after 596 characters, a
+    # near-tie), so the chat answer is held to the raw run it agrees with,
+    # and a third run is asked when it agrees with neither
+    raws = [got["raw"]["answer"]["choices"][0].get("text") or "",
+            got["raw_again"]["answer"]["choices"][0].get("text") or ""]
+
+    def agrees(raw: str) -> bool:
+        said = [content, thought] + [s for c in calls for s in [c.get("name") or ""] + _strings(_args(c.get("arguments")))]
+        return all(not s or _norm(s) in _norm(raw) or _norm(json.dumps(s, ensure_ascii=False)[1:-1]) in _norm(raw)
+                   for s in said)
+    if not any(agrees(r) for r in raws) and raws[0] != raws[1]:
+        if asked("raw_third", f"{chat_url}/v1/completions", raw_body) is None:
+            return _result(model, question, which, t, reference, append, got, checks)
+        raws.append(got["raw_third"]["answer"]["choices"][0].get("text") or "")
+    checks.append(Check("greedy repeats itself (raw)", len(set(raws)) == 1,
+                        "the same text" if len(set(raws)) == 1 else
+                        f"{len(set(raws))} different texts in {len(raws)} runs (" +
+                        ", ".join(str(len(r)) for r in raws) + " characters)", decides=False))
+    agreeing = [i for i, r in enumerate(raws) if agrees(r)]
+    if agreeing:
+        checks.append(Check("OUTPUT: the answer is the model's own text", True,
+                            f"content, reasoning and calls inside raw run {agreeing[0] + 1}"))
+    else:
+        common = max(len(os.path.commonprefix([_norm(content or thought), _norm(r)])) for r in raws)
+        checks.append(Check("OUTPUT: the answer is the model's own text", False,
+                            f"in no raw run: the closest shares its first {common} characters "
+                            f"({(content or thought)[:120]!r})"))
+    raw = raws[agreeing[0]] if agreeing else raws[0]
     named = sorted({(f.get("function") or {}).get("name") for f in tools or []} - {None})
-    in_raw = [n for n in named if f'"{n}"' in raw]
     called = {c.get("name") for c in calls}
-    lost_calls = [n for n in in_raw if n not in called]
-    checks.append(Check("OUTPUT: every tool call kept", not lost_args and not lost_calls,
-                        f"{len(calls)} call(s) parsed" + (f"; not in the raw text: {lost_args}" if lost_args else "")
-                        + (f"; in the raw text, not parsed: {lost_calls}" if lost_calls else "")))
+    lost_calls = [n for n in named if f'"{n}"' in raw and n not in called]
+    checks.append(Check("OUTPUT: every tool call kept", bool(agreeing) and not lost_calls,
+                        f"{len(calls)} call(s) parsed"
+                        + (f"; in the raw text, not parsed: {lost_calls}" if lost_calls else "")
+                        + ("" if agreeing else "; undecidable: no raw run agrees")))
     left = sorted(set(MARKERS.findall(content)))
     checks.append(Check("OUTPUT: no marker left in the answer", not left,
                         "none" if not left else ", ".join(left)))
@@ -252,7 +314,7 @@ def _result(model: str, question: dict[str, str], which: str, t: Templates, refe
             append: str, got: dict[str, Any], checks: list[Check]) -> dict[str, Any]:
     template = t.tool_use if which == "tool_use" else t.default
     return {"model": model, "key": question["key"], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "passed": bool(checks) and all(c.ok for c in checks),
+            "passed": bool(checks) and all(c.ok for c in checks if c.decides),
             "checks": [asdict(c) for c in checks],
             "template": {"which": which, "sha256": hashlib.sha256((template or "").encode()).hexdigest(),
                          "gguf": t.source, "add_bos": t.add_bos, "add_eos": t.add_eos},
@@ -275,7 +337,8 @@ def table(results: list[dict[str, Any]]) -> str:
     for r in results:
         lines += [(f"{r['model']} on {r['key']}: {'WIRED' if r['passed'] else 'NOT WIRED'} "
                    f"(template {r['template']['which']})"), "", "| check | ok | what was seen |", "|---|---|---|"]
-        lines += [f"| {c['name']} | {'yes' if c['ok'] else '**NO**'} | {c['detail']} |" for c in r["checks"]]
+        lines += [f"| {c['name']} | {'yes' if c['ok'] else ('**NO**' if c.get('decides', True) else 'no (reported)')} "
+                  f"| {c['detail']} |" for c in r["checks"]]
         lines.append("")
     return "\n".join(lines)
 
@@ -292,5 +355,5 @@ def require(out: Path, model: str) -> None:
     got = json.loads(p.read_text(encoding="utf-8"))
     if not got.get("passed"):
         failed = "; ".join(f"{q['key']}: {c['name']} ({c['detail']})" for q in got.get("questions", [])
-                           for c in q.get("checks", []) if not c["ok"])
+                           for c in q.get("checks", []) if not c["ok"] and c.get("decides", True))
         raise SystemExit(f"{model}: NOT WIRED — {failed}. The test would be void")

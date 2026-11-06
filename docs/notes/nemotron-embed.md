@@ -1063,10 +1063,19 @@ On Ask's real first request for a recorded question, the check:
 - sends that text raw to /v1/completions at greedy, twice;
 - sends Ask's own request at greedy.
 
-The model is wired when both requests count the same prompt tokens, generate
-the same number of tokens, the answer's text is inside the raw text, no tool
-call is lost and no marker is left in the answer. A run of a model not shown
-wired is refused.
+The model is wired when:
+- INPUT: the chat request's prompt tokens equal the reference counted by
+  the model's own tokenizer (/v1/tokenize);
+- OUTPUT: the answer's text, reasoning and calls are inside a raw run, no
+  tool call is lost, and no marker is left in the answer.
+
+A run of a model not shown wired is refused. First run (2026-11-06, all six
+"NOT WIRED"): the check's own defect. LocalAI's /v1/completions reports
+usage 0 on this backend, so the token counts could never match. Two greedy
+raw runs of qwen3-8b-q8 also parted after 596 characters, a near-tie. Now
+the reference is counted by the tokenizer, and the answer is held to the raw
+run it agrees with. Whether greedy repeats itself is reported, not decided
+on.
 
 Why now: Command R7B's pilot searched a source's id as a query and searched
 again for titles it had already been given. Two answers failed both with
