@@ -54,6 +54,30 @@ Each flip stays within cosine ≥ 0.999999 of the other answers. Turning it off 
 - **Its format.** The run object, the set id, and the vectors as base64 float32, plus a digest of the whole.
 - **How it is made, once.** `louise hold embedder cpu-reference <collection> --model <cpu twin> [--query-model <cpu twin>]`, an operator verb. On the CPU it takes hours for qwen3-4b, which is why it is stored. The verb embeds the sixteen fingerprint texts twice, in reverse order, and refuses if the CPU twin does not give back its own bytes. It asks ONE TEXT A REQUEST, each bounded at 300 s per 1,024 tokens of the space's window times the requests queued at the twin (`cpu_reference.request_timeout`): the card's flat 300 s and the collection's `[encoder] batch` made wikidata's (ctx 8,191, batch 16) time out three times on 2026-11-01.
 - **Resumable (2026-11-02).** A role already kept by the same run on the same set is skipped (`--again` makes it again). A role in progress is journalled eight texts at a time, beside the reference, as `<run>.<set>.partial.jsonl`. A stop, a kill or a deferral costs the window in flight, never the role. Exit 3 (deferred: VeGa away, a receipt expired, the twin busy) keeps the journal, and the next start asks only what it does not hold. The journal keeps float32 bytes, as the reference does, so a resumed pass writes the bytes a whole pass would (tests/hold/test_cpu_reference.py). The cause: gutenberg's query role held 352 of 512 answers in memory when one request came back after a 5 h `docker pause` with its receipt expired. The pass exited 1 and ~4.6 h of CPU was lost.
+- **Once per node, not once per command (operator, 2026-11-06:** "I
+  already asked to save the cpu reference values so that we don't have to
+  repeat that time consuming part"**).** Wikidata's re-creation on Nemotron
+  embedded the 512 texts on the CPU twin in `hold embedder calibrate`
+  (stage 2: 401 answers in 28 min, kept nowhere), then again in `hold
+  embedder cpu-reference` (stage 10). Both commands now go through
+  `cpu_reference.obtain`, over one store per node:
+  `<LOUISE_ROOT>/state/cpu-reference/<key>/`.
+  - **The key** is what fixes the inputs: the weights, the set, the window,
+    the instruction and the role (`key.json` beside the files).
+  - **This run's file is used as it is.** Calibrate's CPU lane, a
+    collection's reference and a second collection on the same encoder take
+    it without asking the CPU.
+  - **Another build of the same weights is carried** when its answers to the
+    sixteen fingerprint texts are the same bytes (RULE 1). Otherwise it is
+    computed again and kept beside the first.
+  - **The computation is journalled and checked as before:** one text a
+    request, the twin's reproduction of its own bytes.
+  - **Each collection keeps its own copy**, which is what its gate reads. A
+    collection's journal from before the store is taken over.
+  - **Not saved by this:** wikidata's stage 2 of 2026-11-06 ran on the code
+    before, so its document role is computed once more, in stage 10. From
+    then on, gutenberg-nemo and wikipedia-nemo take it from the store, if
+    their window and instruction are the same.
 - **How the gate uses it.** Every gate pass already embeds all 512 items. With a CPU reference present, it also reports each item's cosine to it:
   - worst **< 0.995** (the review line, operator 2026-10-18): the run FAILS. Review means it writes nothing until a human has looked.
   - **Quantised weights: a line per quantization level, measured** (operator, 2026-11-01: "calculate a reasonable threshold per quantization level, do not just assume it is the same as the full precision"; `embedder.cpu_review_line`).

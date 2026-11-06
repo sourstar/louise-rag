@@ -266,3 +266,36 @@ def test_a_relative_path_cannot_pose_as_the_harness_lanes(tmp_path, monkeypatch,
     monkeypatch.chdir(tmp_path)
     assert _run("reference/e.toml", "same/e.toml") == 0
     assert json.loads(capsys.readouterr().out)["tolerance"] == _expected(1e-3)[1]
+
+
+def test_the_cpu_lane_is_kept_once_and_the_next_calibration_asks_it_nothing(tmp_path, monkeypatch,
+                                                                           capsys):
+    """Operator, 2026-11-06: "I already asked to save the cpu reference values
+    so that we don't have to repeat that time consuming part". A lane whose
+    run states the CPU is the node's stored CPU reference: computed once,
+    one text a request, then taken by the next calibration (and by the
+    collection's `hold embedder cpu-reference`)."""
+    from types import SimpleNamespace
+
+    from app import run_check
+    asked = _fake_endpoints(monkeypatch)
+
+    def stated(recipe, **kw):
+        cpu = recipe.url == OTHER_URL
+        return SimpleNamespace(driver="cpu" if cpu else "xe 1.3 / level-zero 1.21",
+                               run_id="sha256:run-" + recipe.url.split("//")[1].split(".")[0],
+                               engine={}, weights=W_OTHER if cpu else W_REF)
+    monkeypatch.setattr(run_check, "stated_run", stated)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
+    assert _run(ref, other) == 0
+    first = json.loads(capsys.readouterr().out)
+    lane = first["against"][0]["cpu_reference"]
+    assert lane["how"] == "computed" and Path(lane["path"]).is_file()
+    assert asked.count(OTHER_URL) >= cal.SIZE, "one text a request on the CPU"
+    asked.clear()
+    assert _run(ref, other) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["against"][0]["cpu_reference"]["how"] == "stored"
+    assert OTHER_URL not in asked, "the CPU twin is not asked again"
+    assert second["tolerance"] == first["tolerance"]
