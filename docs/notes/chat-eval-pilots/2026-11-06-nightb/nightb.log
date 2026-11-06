@@ -1,0 +1,80 @@
+=== 2026-11-06 23:16:02 image chat.py 997b9cb3baa92315 (rules: 0); new fa6656b23898b1a3 (rules: 1)
+=== 2026-11-06 23:16:02 wire louise-chat-qwen3.5-9b-q4-p0 on the new file
+settle: gutenberg: the vector leg is settled
+23:16:41 [gutenberg info:run-check] [gutenberg] document run sha256:b12481cba1aaceb2…: its kept statement re-checked on start (16 of the sample, median 0.999999)
+23:17:20 [gutenberg info:run-check] [gutenberg] query run sha256:b12481cba1aaceb2…: its kept statement re-checked on start (16 of the sample, median 0.999999)
+23:17:20 [gutenberg info:run-check] [gutenberg] embedding enabled: run sha256:b12481cba1aaceb2… is validated for this space
+louise-chat-qwen3.5-9b-q4-p0 on WQ506865:fr: WIRED (template default)
+
+| check | ok | what was seen |
+|---|---|---|
+| INPUT: the prompt is the template's | yes | token for token the engine's (3082 tokens): tools as Ask sends them, the parameters' keys sorted (4 tokens evaluated: a hybrid model resumes from its last state checkpoint; the greedy answers below confirm) |
+| one engine evaluation per request | yes | each request evaluated once |
+| greedy repeats itself (raw) | yes | the same text |
+| OUTPUT: the answer is the model's own text | yes | content, reasoning and calls inside raw run 1 |
+| OUTPUT: every tool call kept | yes | 0 call(s) parsed |
+| OUTPUT: no marker left in the answer | yes | none |
+
+louise-chat-qwen3.5-9b-q4-p0 on WQ6950087:fr: WIRED (template default)
+
+| check | ok | what was seen |
+|---|---|---|
+| INPUT: the prompt is the template's | yes | token for token the engine's (3129 tokens): tools as Ask sends them, the parameters' keys sorted (4 tokens evaluated: a hybrid model resumes from its last state checkpoint; the greedy answers below confirm) |
+| one engine evaluation per request | yes | each request evaluated once |
+| greedy repeats itself (raw) | yes | the same text |
+| OUTPUT: the answer is the model's own text | yes | content, reasoning and calls inside raw run 1 |
+| OUTPUT: every tool call kept | yes | 0 call(s) parsed |
+| OUTPUT: no marker left in the answer | yes | none |
+
+/data/chat-eval/probes/louise-chat-qwen3.5-9b-q4-p0.wire.json
+23:20:29 [node info:models] model pin: vega-qwen3-embedding-4b unpinned again, its state before
+exit 0
+=== 2026-11-06 23:20:31 qwen3-8b-q8.t07.r3.old.s1 (louise-chat-qwen3-8b-q8, seed=1, old prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3-8b-q8.t07.r3.old.s1: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3-8b-q8.t07.r3.old.s1/pilot-iface.md
+23:28:28 [node info:models] model pin: louise-chat-qwen3-8b-q8 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:28:29 qwen3-8b-q8.t07.r3.old.s2 (louise-chat-qwen3-8b-q8, seed=2, old prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3-8b-q8.t07.r3.old.s2: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3-8b-q8.t07.r3.old.s2/pilot-iface.md
+23:31:41 [node info:models] model pin: louise-chat-qwen3-8b-q8 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:31:42 qwen3-8b-q8.t07.r3.new.s1 (louise-chat-qwen3-8b-q8, seed=1, new prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3-8b-q8.t07.r3.new.s1: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3-8b-q8.t07.r3.new.s1/pilot-iface.md
+23:36:49 [node info:models] model pin: louise-chat-qwen3-8b-q8 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:36:51 qwen3-8b-q8.t07.r3.new.s2 (louise-chat-qwen3-8b-q8, seed=2, new prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3-8b-q8.t07.r3.new.s2: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3-8b-q8.t07.r3.new.s2/pilot-iface.md
+23:41:01 [node info:models] model pin: louise-chat-qwen3-8b-q8 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:41:02 qwen3.5-9b-q4-p0.t01.r3.old.s1 (louise-chat-qwen3.5-9b-q4-p0, seed=1, old prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+23:42:04 [node info:models] model pin: louise-chat-qwen3.5-9b-q4-p0 pinned for chat_eval pid 1 (it was unpinned; restored after)
+qwen3.5-9b-q4-p0.t01.r3.old.s1: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3.5-9b-q4-p0.t01.r3.old.s1/pilot-iface.md
+exit 0
+=== 2026-11-06 23:47:27 qwen3.5-9b-q4-p0.t01.r3.old.s2 (louise-chat-qwen3.5-9b-q4-p0, seed=2, old prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3.5-9b-q4-p0.t01.r3.old.s2: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3.5-9b-q4-p0.t01.r3.old.s2/pilot-iface.md
+23:51:53 [node info:models] model pin: louise-chat-qwen3.5-9b-q4-p0 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:51:54 qwen3.5-9b-q4-p0.t01.r3.new.s1 (louise-chat-qwen3.5-9b-q4-p0, seed=1, new prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+qwen3.5-9b-q4-p0.t01.r3.new.s1: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3.5-9b-q4-p0.t01.r3.new.s1/pilot-iface.md
+23:55:10 [node info:models] model pin: louise-chat-qwen3.5-9b-q4-p0 unpinned again, its state before
+exit 0
+=== 2026-11-06 23:55:11 qwen3.5-9b-q4-p0.t01.r3.new.s2 (louise-chat-qwen3.5-9b-q4-p0, seed=2, new prompt) pilot--pilot 3
+settle: gutenberg: the vector leg is settled
+23:58:00 [node info:models] model pin: louise-chat-qwen3.5-9b-q4-p0 unpinned again, its state before
+qwen3.5-9b-q4-p0.t01.r3.new.s2: 15 asked now, 15 in all
+pilot: /data/chat-eval/runs/qwen3.5-9b-q4-p0.t01.r3.new.s2/pilot-iface.md
+exit 0
+=== 2026-11-06 23:58:02 pilots done; waiting for the eight pilot-ok files

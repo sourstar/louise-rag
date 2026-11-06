@@ -1,0 +1,600 @@
+{
+ "model": "louise-chat-qwen3.5-9b-q4-p0",
+ "passed": true,
+ "questions": [
+  {
+   "model": "louise-chat-qwen3.5-9b-q4-p0",
+   "key": "WQ506865:fr",
+   "at": "2026-11-06T23:18:46+0100",
+   "sampling": {
+    "temperature": 0
+   },
+   "passed": true,
+   "checks": [
+    {
+     "name": "INPUT: the prompt is the template's",
+     "ok": true,
+     "detail": "token for token the engine's (3082 tokens): tools as Ask sends them, the parameters' keys sorted (4 tokens evaluated: a hybrid model resumes from its last state checkpoint; the greedy answers below confirm)",
+     "decides": true
+    },
+    {
+     "name": "one engine evaluation per request",
+     "ok": true,
+     "detail": "each request evaluated once",
+     "decides": false
+    },
+    {
+     "name": "greedy repeats itself (raw)",
+     "ok": true,
+     "detail": "the same text",
+     "decides": false
+    },
+    {
+     "name": "OUTPUT: the answer is the model's own text",
+     "ok": true,
+     "detail": "content, reasoning and calls inside raw run 1",
+     "decides": true
+    },
+    {
+     "name": "OUTPUT: every tool call kept",
+     "ok": true,
+     "detail": "0 call(s) parsed",
+     "decides": true
+    },
+    {
+     "name": "OUTPUT: no marker left in the answer",
+     "ok": true,
+     "detail": "none",
+     "decides": true
+    }
+   ],
+   "template": {
+    "which": "default",
+    "sha256": "7f0e529032c25183bcd66c7f238da2d377f43be754a94e2725a58c4e16d2ed67",
+    "gguf": "/gguf/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf",
+    "add_bos": false,
+    "add_eos": false
+   },
+   "reference": {
+    "sha256": "f946961e8e73b65cebd39a559ab57bb9ca23857137441bd36027390b093d8b53",
+    "chars": 11937,
+    "head": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"louise_search\", \"description\": \"Semantic and exact-term search over the collections this peer holds: one fused list per space (05 §5.1), each result naming its collection, snapshot, record, chunk, trust level and producer (05 §5.3); facts from reference sources beside the lis",
+    "tail": "ber, Martin (editor) (de) · gutenberg:52012 · unverified\nFreundschaft. Ich bezweifle nicht, daß diese Dinge, die in der Mitte des Stückes stehen und es in die nächste Beziehung zum Thema der Sonette setzen, hauptsächlich Schuld daran tragen, daß die meisten Gelehrten es mit einer gewissen Angst und Genierlichkeit zu tun bekamen, wenn sie an dieses Drama herangehen mußten. Solche prüde und also häßlich, sei’s auch nur mit Verlegenheit, mißdeutende Zimperlichkeit kann aber an den tiefen Ernst und die Hoheit der Dichtung nicht rühren.\n\nZu dieser inhaltlichen Schwierigkeit kommt nun noch die formale, die damit in Zusammenhang steht und hier schon berühr …\n\nQuestion: comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "appended": ""
+   },
+   "answers": {
+    "chat_count": {
+     "status": 200,
+     "answer": {
+      "created": 1794003471,
+      "object": "chat.completion",
+      "id": "92418a2b-a2c0-4b83-9a98-96aca10768d8",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "length",
+        "message": {
+         "role": "assistant",
+         "content": "La"
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3082,
+       "completion_tokens": 1,
+       "total_tokens": 3083
+      }
+     },
+     "prompt_evaluated": 3082,
+     "prompt_evaluations": [
+      3082
+     ]
+    },
+    "tokenize_empty": {
+     "status": 200,
+     "answer": {
+      "tokens": 0
+     }
+    },
+    "tokenize_candidate_0": {
+     "status": 200,
+     "answer": {
+      "tokens": 3081
+     }
+    },
+    "tokenize_candidate_1": {
+     "status": 200,
+     "answer": {
+      "tokens": 3082
+     }
+    },
+    "tokenize_candidate_2": {
+     "status": 200,
+     "answer": {
+      "tokens": 3097
+     }
+    },
+    "tokenize_candidate_3": {
+     "status": 200,
+     "answer": {
+      "tokens": 3082
+     }
+    },
+    "candidate_0": {
+     "status": 200,
+     "answer": {
+      "created": 1794003473,
+      "object": "text_completion",
+      "id": "2dfd9685-1dbe-45ca-a17b-1b5446849763",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "La"
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 3081,
+     "prompt_evaluations": [
+      3081
+     ]
+    },
+    "prime_1": {
+     "status": 200,
+     "answer": {
+      "created": 1794003475,
+      "object": "chat.completion",
+      "id": "f33d97ed-838f-4f6f-b6d8-efe0ae66c541",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "length",
+        "message": {
+         "role": "assistant",
+         "content": "La"
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3082,
+       "completion_tokens": 1,
+       "total_tokens": 3083
+      }
+     },
+     "prompt_evaluated": 3082,
+     "prompt_evaluations": [
+      3082
+     ]
+    },
+    "candidate_1": {
+     "status": 200,
+     "answer": {
+      "created": 1794003476,
+      "object": "text_completion",
+      "id": "4dd5d055-69de-4054-8316-3ce97414afac",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "La"
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "candidates": [
+     {
+      "candidate": "tools as Ask sends them",
+      "count": 3081,
+      "evaluated": 3081
+     },
+     {
+      "candidate": "tools as Ask sends them, the parameters' keys sorted",
+      "count": 3082,
+      "evaluated": 4
+     },
+     {
+      "candidate": "tools as LocalAI's Tool struct writes them",
+      "count": 3097
+     },
+     {
+      "candidate": "tools with every key sorted",
+      "count": 3082
+     }
+    ],
+    "raw": {
+     "status": 200,
+     "answer": {
+      "created": 1794003477,
+      "object": "text_completion",
+      "id": "364af0cd-ca55-46f2-85b5-fc1224aa5c36",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "La comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit est **_Tout est bien qui finit bien_** (en anglais : *All's Well That Ends Well*) [2][3][4][5][8].\n\nVoici les détails confirmés par les sources :\n\n*   **Le titre et l'intrigue** : La pièce est basée sur une nouvelle de Boccace et met en scène une jeune fille, Gillette (appelée Hélène dans la version anglaise), fille d'un médecin de Narbonne, qui épouse Bertrand, fils du comte de Roussillon [2].\n*   **La guérison du roi** : Hélène utilise ses connaissances médicales pour guérir le roi de France, ce qui lui permet de demander la main de Bertrand [2][5].\n*   **La fuite de Bertrand** : Après le mariage, Bertrand, qui ne l'aime pas et la méprise, la quitte et fuit la France pour aller servir en Italie [2][5][8].\n*   **La poursuite d'Hélène** : Hélène la suit résolument pour le retrouver et le ramener, ce qui correspond à l'inversion des rôles où une femme maîtrise un homme réticent [5].\n*   **Le contexte littéraire** : Certains critiques suggèrent que cette pièce est une version révisée d'une pièce perdue de Shakespeare intitulée *Love's Labour's Won*, qui aurait mis l'accent sur la poursuite résolue d'un homme résistant [1][5].\n\nAinsi, la pièce répondant à votre description est bien *Tout est bien qui finit bien* [2][3][4][5][8]."
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "chat": {
+     "status": 200,
+     "answer": {
+      "created": 1794003495,
+      "object": "chat.completion",
+      "id": "9e571148-9d05-471d-a744-fcd973dadca8",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+         "role": "assistant",
+         "content": "La comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit est **_Tout est bien qui finit bien_** (en anglais : *All's Well That Ends Well*) [2][3][4][5][8].\n\nVoici les détails confirmés par les sources :\n\n*   **Le titre et l'intrigue** : La pièce est basée sur une nouvelle de Boccace et met en scène une jeune fille, Gillette (appelée Hélène dans la version anglaise), fille d'un médecin de Narbonne, qui épouse Bertrand, fils du comte de Roussillon [2].\n*   **La guérison du roi** : Hélène utilise ses connaissances médicales pour guérir le roi de France, ce qui lui permet de demander la main de Bertrand [2][5].\n*   **La fuite de Bertrand** : Après le mariage, Bertrand, qui ne l'aime pas et la méprise, la quitte et fuit la France pour aller servir en Italie [2][5][8].\n*   **La poursuite d'Hélène** : Hélène la suit résolument pour le retrouver et le ramener, ce qui correspond à l'inversion des rôles où une femme maîtrise un homme réticent [5].\n*   **Le contexte littéraire** : Certains critiques suggèrent que cette pièce est une version révisée d'une pièce perdue de Shakespeare intitulée *Love's Labour's Won*, qui aurait mis l'accent sur la poursuite résolue d'un homme résistant [1][5].\n\nAinsi, la pièce répondant à votre description est bien *Tout est bien qui finit bien* [2][3][4][5][8]."
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3082,
+       "completion_tokens": 364,
+       "total_tokens": 3446
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "raw_again": {
+     "status": 200,
+     "answer": {
+      "created": 1794003511,
+      "object": "text_completion",
+      "id": "11d58d26-d1a0-4505-9644-bc1f4414112c",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "La comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit est **_Tout est bien qui finit bien_** (en anglais : *All's Well That Ends Well*) [2][3][4][5][8].\n\nVoici les détails confirmés par les sources :\n\n*   **Le titre et l'intrigue** : La pièce est basée sur une nouvelle de Boccace et met en scène une jeune fille, Gillette (appelée Hélène dans la version anglaise), fille d'un médecin de Narbonne, qui épouse Bertrand, fils du comte de Roussillon [2].\n*   **La guérison du roi** : Hélène utilise ses connaissances médicales pour guérir le roi de France, ce qui lui permet de demander la main de Bertrand [2][5].\n*   **La fuite de Bertrand** : Après le mariage, Bertrand, qui ne l'aime pas et la méprise, la quitte et fuit la France pour aller servir en Italie [2][5][8].\n*   **La poursuite d'Hélène** : Hélène la suit résolument pour le retrouver et le ramener, ce qui correspond à l'inversion des rôles où une femme maîtrise un homme réticent [5].\n*   **Le contexte littéraire** : Certains critiques suggèrent que cette pièce est une version révisée d'une pièce perdue de Shakespeare intitulée *Love's Labour's Won*, qui aurait mis l'accent sur la poursuite résolue d'un homme résistant [1][5].\n\nAinsi, la pièce répondant à votre description est bien *Tout est bien qui finit bien* [2][3][4][5][8]."
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    }
+   }
+  },
+  {
+   "model": "louise-chat-qwen3.5-9b-q4-p0",
+   "key": "WQ6950087:fr",
+   "at": "2026-11-06T23:20:28+0100",
+   "sampling": {
+    "temperature": 0
+   },
+   "passed": true,
+   "checks": [
+    {
+     "name": "INPUT: the prompt is the template's",
+     "ok": true,
+     "detail": "token for token the engine's (3129 tokens): tools as Ask sends them, the parameters' keys sorted (4 tokens evaluated: a hybrid model resumes from its last state checkpoint; the greedy answers below confirm)",
+     "decides": true
+    },
+    {
+     "name": "one engine evaluation per request",
+     "ok": true,
+     "detail": "each request evaluated once",
+     "decides": false
+    },
+    {
+     "name": "greedy repeats itself (raw)",
+     "ok": true,
+     "detail": "the same text",
+     "decides": false
+    },
+    {
+     "name": "OUTPUT: the answer is the model's own text",
+     "ok": true,
+     "detail": "content, reasoning and calls inside raw run 1",
+     "decides": true
+    },
+    {
+     "name": "OUTPUT: every tool call kept",
+     "ok": true,
+     "detail": "0 call(s) parsed",
+     "decides": true
+    },
+    {
+     "name": "OUTPUT: no marker left in the answer",
+     "ok": true,
+     "detail": "none",
+     "decides": true
+    }
+   ],
+   "template": {
+    "which": "default",
+    "sha256": "7f0e529032c25183bcd66c7f238da2d377f43be754a94e2725a58c4e16d2ed67",
+    "gguf": "/gguf/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf",
+    "add_bos": false,
+    "add_eos": false
+   },
+   "reference": {
+    "sha256": "9c4a0d8cdc2e17c075aa1c43a3b688de423e23206c70222d45ed3972dcd0b79b",
+    "chars": 11007,
+    "head": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"louise_search\", \"description\": \"Semantic and exact-term search over the collections this peer holds: one fused list per space (05 §5.1), each result naming its collection, snapshot, record, chunk, trust level and producer (05 §5.3); facts from reference sources beside the lis",
+    "tail": "34612 · unverified\n de Vienne en Aulriche sur le célèbre compositeur, Joseph Haydn, suivies d’une vie de Mozart, et de considérations sur Métastase et l’état présent de la musique en Italie_. His letters on Haydn were borrowed from the _Haydini_ (1812) of Joseph Carpani, and the section on Mozart had no greater claim to originality. The book was reprinted (1817) as _Vies de Haydn, Mozart et Métastase_. His _Histoire de la peinture en Italic_ (2 vols., 1817) was originally dedicated to Napoleon.\n\nHis friendship with some Italian patriots brought him in 1821 under the notice of the Austrian authorities, and he was …\n\nQuestion: autobiographie d'un compositeur romantique français racontant ses voyages et ses concerts en Allemagne et en Russie<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "appended": ""
+   },
+   "answers": {
+    "chat_count": {
+     "status": 200,
+     "answer": {
+      "created": 1794003543,
+      "object": "chat.completion",
+      "id": "ba6db186-b47e-4c1a-9138-f46840852b3f",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "length",
+        "message": {
+         "role": "assistant",
+         "content": "Les"
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3129,
+       "completion_tokens": 1,
+       "total_tokens": 3130
+      }
+     },
+     "prompt_evaluated": 3129,
+     "prompt_evaluations": [
+      3129
+     ]
+    },
+    "tokenize_empty": {
+     "status": 200,
+     "answer": {
+      "tokens": 0
+     }
+    },
+    "tokenize_candidate_0": {
+     "status": 200,
+     "answer": {
+      "tokens": 3128
+     }
+    },
+    "tokenize_candidate_1": {
+     "status": 200,
+     "answer": {
+      "tokens": 3129
+     }
+    },
+    "tokenize_candidate_2": {
+     "status": 200,
+     "answer": {
+      "tokens": 3144
+     }
+    },
+    "tokenize_candidate_3": {
+     "status": 200,
+     "answer": {
+      "tokens": 3129
+     }
+    },
+    "candidate_0": {
+     "status": 200,
+     "answer": {
+      "created": 1794003544,
+      "object": "text_completion",
+      "id": "7c62a5e9-9854-4f0b-ada1-c1b9ab0711b3",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "Les"
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 3128,
+     "prompt_evaluations": [
+      3128
+     ]
+    },
+    "prime_1": {
+     "status": 200,
+     "answer": {
+      "created": 1794003545,
+      "object": "chat.completion",
+      "id": "bc4e069e-5986-4beb-b85d-acafd3cc0a8a",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "length",
+        "message": {
+         "role": "assistant",
+         "content": "Les"
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3129,
+       "completion_tokens": 1,
+       "total_tokens": 3130
+      }
+     },
+     "prompt_evaluated": 3129,
+     "prompt_evaluations": [
+      3129
+     ]
+    },
+    "candidate_1": {
+     "status": 200,
+     "answer": {
+      "created": 1794003547,
+      "object": "text_completion",
+      "id": "57408cee-7472-49e4-b859-f474cd1c4657",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "Les"
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "candidates": [
+     {
+      "candidate": "tools as Ask sends them",
+      "count": 3128,
+      "evaluated": 3128
+     },
+     {
+      "candidate": "tools as Ask sends them, the parameters' keys sorted",
+      "count": 3129,
+      "evaluated": 4
+     },
+     {
+      "candidate": "tools as LocalAI's Tool struct writes them",
+      "count": 3144
+     },
+     {
+      "candidate": "tools with every key sorted",
+      "count": 3129
+     }
+    ],
+    "raw": {
+     "status": 200,
+     "answer": {
+      "created": 1794003547,
+      "object": "text_completion",
+      "id": "f1f587c3-0c39-4dc4-89b9-51663d380f4e",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "Les sources indiquent qu'il existe une autobiographie d'Hector Berlioz, compositeur romantique français, qui raconte ses voyages et ses concerts en Allemagne et en Russie.\n\nVoici les détails tirés des sources :\n\n*   **Titre de l'œuvre :** *Mémoires de Hector Berlioz comprenant ses voyages en Italie, en Allemagne, en Russie et en Angleterre, 1803-1865* [3][5].\n*   **Auteur :** Hector Berlioz [3][5].\n*   **Contenu :** L'ouvrage couvre la période de 1803 à 1865 et inclut des récits de voyages et d'événements musicaux. Les titres de chapitres ou de sections mentionnés incluent « Suite du voyage en Russie », « Mon retour », « Riga », « Berlin », « L'exécution de _Faust_ », « Un dîner à Sans-Souci », « Le roi de Prusse », ainsi que des références à des concerts et des tournées en Allemagne [3].\n*   **Éditions et traductions :**\n    *   Une édition française est disponible (gutenberg:26370) [3].\n    *   Une traduction anglaise, *Memoirs of Hector Berlioz from 1803 to 1865*, a été traduite par Rachel Scott Russell Holmes & Eleanor Holmes, annotée et révisée par Ernest Newman [1][5].\n    *   L'ouvrage est également listé dans des catalogues de livres comme *Les soirées de l'orchestre* et *Lettres intimes* de Berlioz, où il est décrit comme étant en deux volumes [4][6][7].\n*   **Autres sources connexes :** D'autres ouvrages de Berlioz mentionnés dans les sources incluent *A travers chants*, *Les Grotesques de la musique* et *Les Soirées de l'orchestre* [4][6][7]. Une autre source, *Souvenirs d'un musicien* d'Adolphe Adam, mentionne également des voyages en Russie et des concerts, bien que ce soit l'œuvre d'un autre compositeur [8].\n\nAinsi, l'autobiographie recherchée est bien celle d'Hector Berlioz, intitulée *Mémoires de Hector Berlioz*, qui détaille ses voyages et ses activités musicales en Allemagne et en Russie, entre autres pays."
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "chat": {
+     "status": 200,
+     "answer": {
+      "created": 1794003564,
+      "object": "chat.completion",
+      "id": "6cc816b0-fe4d-46fb-98e9-55550f4a2b45",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+         "role": "assistant",
+         "content": "Les sources indiquent qu'il existe une autobiographie d'Hector Berlioz, compositeur romantique français, qui raconte ses voyages et ses concerts en Allemagne et en Russie.\n\nVoici les détails tirés des sources :\n\n*   **Titre de l'œuvre :** *Mémoires de Hector Berlioz comprenant ses voyages en Italie, en Allemagne, en Russie et en Angleterre, 1803-1865* [3][5].\n*   **Auteur :** Hector Berlioz [3][5].\n*   **Contenu :** L'ouvrage couvre la période de 1803 à 1865 et inclut des récits de voyages et d'événements musicaux. Les titres de chapitres ou de sections mentionnés incluent « Suite du voyage en Russie », « Mon retour », « Riga », « Berlin », « L'exécution de _Faust_ », « Un dîner à Sans-Souci », « Le roi de Prusse », ainsi que des références à des concerts et des tournées en Allemagne [3].\n*   **Éditions et traductions :**\n    *   Une édition française est disponible (gutenberg:26370) [3].\n    *   Une traduction anglaise, *Memoirs of Hector Berlioz from 1803 to 1865*, a été traduite par Rachel Scott Russell Holmes & Eleanor Holmes, annotée et révisée par Ernest Newman [1][5].\n    *   L'ouvrage est également listé dans des catalogues de livres comme *Les soirées de l'orchestre* et *Lettres intimes* de Berlioz, où il est décrit comme étant en deux volumes [4][6][7].\n*   **Autres sources connexes :** D'autres ouvrages de Berlioz mentionnés dans les sources incluent *A travers chants*, *Les Grotesques de la musique* et *Les Soirées de l'orchestre* [4][6][7]. Une autre source, *Souvenirs d'un musicien* d'Adolphe Adam, mentionne également des voyages en Russie et des concerts, bien que ce soit l'œuvre d'un autre compositeur [8].\n\nAinsi, l'autobiographie recherchée est bien celle d'Hector Berlioz, intitulée *Mémoires de Hector Berlioz*, qui détaille ses voyages et ses activités musicales en Allemagne et en Russie, entre autres pays."
+        }
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 3129,
+       "completion_tokens": 531,
+       "total_tokens": 3660
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    },
+    "raw_again": {
+     "status": 200,
+     "answer": {
+      "created": 1794003597,
+      "object": "text_completion",
+      "id": "f1071d91-da29-4375-809c-9e940dc87af0",
+      "model": "louise-chat-qwen3.5-9b-q4-p0",
+      "choices": [
+       {
+        "index": 0,
+        "finish_reason": "stop",
+        "text": "Les sources indiquent qu'il existe une autobiographie d'Hector Berlioz, compositeur romantique français, qui raconte ses voyages et ses concerts en Allemagne et en Russie.\n\nVoici les détails tirés des sources :\n\n*   **Titre de l'œuvre :** *Mémoires de Hector Berlioz comprenant ses voyages en Italie, en Allemagne, en Russie et en Angleterre, 1803-1865* [3][5].\n*   **Auteur :** Hector Berlioz [3][5].\n*   **Contenu :** L'ouvrage couvre la période de 1803 à 1865 et inclut des récits de voyages et d'événements musicaux. Les titres de chapitres ou de sections mentionnés incluent « Suite du voyage en Russie », « Mon retour », « Riga », « Berlin », « L'exécution de _Faust_ », « Un dîner à Sans-Souci », « Le roi de Prusse », ainsi que des références à des concerts et des tournées en Allemagne [3].\n*   **Éditions et traductions :**\n    *   Une édition française est disponible (gutenberg:26370) [3].\n    *   Une traduction anglaise, *Memoirs of Hector Berlioz from 1803 to 1865*, a été traduite par Rachel Scott Russell Holmes & Eleanor Holmes, annotée et révisée par Ernest Newman [1][5].\n    *   L'ouvrage est également listé dans des catalogues de livres comme *Les soirées de l'orchestre* et *Lettres intimes* de Berlioz, où il est décrit comme étant en deux volumes [4][6][7].\n*   **Autres sources connexes :** D'autres ouvrages de Berlioz mentionnés dans les sources incluent *A travers chants*, *Les Grotesques de la musique* et *Les Soirées de l'orchestre* [4][6][7]. Une autre source, *Souvenirs d'un musicien* d'Adolphe Adam, mentionne également des voyages en Russie et des concerts, bien que ce soit l'œuvre d'un autre compositeur [8].\n\nAinsi, l'autobiographie recherchée est bien celle d'Hector Berlioz, intitulée *Mémoires de Hector Berlioz*, qui détaille ses voyages et ses activités musicales en Allemagne et en Russie, entre autres pays."
+       }
+      ],
+      "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "prompt_evaluated": 4,
+     "prompt_evaluations": [
+      4
+     ]
+    }
+   }
+  }
+ ]
+}
