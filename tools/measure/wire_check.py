@@ -322,24 +322,39 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     matched: tuple[str, str] | None = None
     unlogged = False
     for i, (name, text) in enumerate(candidates):
-        if i and evaluated(f"prime_{i}", url, {**body, "max_tokens": 1}) is None:
+        for attempt in (0, 1):
+            label = f"candidate_{i}" + ("_again" if attempt else "")
+            if (i or attempt) and evaluated(f"prime_{i}" + ("_again" if attempt else ""), url,
+                                            {**body, "max_tokens": 1}) is None:
+                break
+            if evaluated(label, f"{chat_url}/v1/completions",
+                         {"model": model, "prompt": text, "max_tokens": 1, **greedy}) is None:
+                break
+            tried[i]["evaluated"] = got[label].get("prompt_evaluated")
+            # A CANDIDATE OF THE ENGINE'S COUNT EVALUATED WHOLE is asked once
+            # more after a fresh prime (wire17, 2026-11-06: qwen3-8b-q8 reused
+            # nothing on one question, with Command R7B loading beside it, and
+            # every prefix on the other): a slot emptied meanwhile says nothing
+            ev = tried[i]["evaluated"]
+            if attempt or ev is None or tried[i]["count"] != p_chat or ev < tried[i]["count"] - 1:
+                break
+        if tried[i].get("evaluated") is None:
+            if f"candidate_{i}" in got and got[f"candidate_{i}"].get("status") == 200:
+                unlogged = True                     # no log: token identity cannot be told
             break
-        if evaluated(f"candidate_{i}", f"{chat_url}/v1/completions",
-                     {"model": model, "prompt": text, "max_tokens": 1, **greedy}) is None:
-            break
-        tried[i]["evaluated"] = got[f"candidate_{i}"].get("prompt_evaluated")
-        if tried[i]["evaluated"] is None:
-            unlogged = True                         # no log: token identity cannot be told
-            break
-        if tried[i]["count"] == p_chat and tried[i]["evaluated"] <= 1:
+        if tried[i]["count"] == p_chat and tried[i]["evaluated"] <= CHECKPOINT_SLACK:
             matched = (name, text)
             break
     got["candidates"] = tried
     same_count = next((c for (c, _), r in zip(candidates, tried, strict=True) if r["count"] == p_chat), None)
     if matched:
         reference = matched[1]
+        n_last = tried[[c for c, _ in candidates].index(matched[0])]["evaluated"]
         checks.append(Check("INPUT: the prompt is the template's", True,
-                            f"token for token the engine's ({p_chat} tokens): {matched[0]}"))
+                            f"token for token the engine's ({p_chat} tokens): {matched[0]}"
+                            + ("" if n_last <= 1 else
+                               f" ({n_last} tokens evaluated: a hybrid model resumes from its last "
+                               f"state checkpoint; the greedy answers below confirm)")))
     elif unlogged or no_reuse(tried):
         # NO PREFIX REUSED (2026-11-06, wire16: Qwen3.5-9B re-evaluated every
         # candidate whole, parting "at token 1"): a hybrid or recurrent model's
@@ -461,6 +476,15 @@ def parameters_sorted(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
             tool = {**tool, "function": {**f, "parameters": go_order(f["parameters"])}}
         out.append(tool)
     return out
+
+
+#: The prompt tokens a candidate token for token the engine's may still
+#: evaluate: one (a transformer's KV cache, re-evaluating the last), or a
+#: few (wire17, 2026-11-06: Qwen3.5-9B, a hybrid model, resumed 4 tokens
+#: back, from its last recurrent state checkpoint). Few enough that a
+#: difference in the generation prompt (its thinking block, ~8 tokens)
+#: would show, and the OUTPUT checks decide too.
+CHECKPOINT_SLACK = 8
 
 
 def no_reuse(tried: list[dict[str, Any]]) -> bool:

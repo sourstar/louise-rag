@@ -35,7 +35,8 @@ def tokens(text: str) -> int:
 
 
 def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None,
-           tools_as=None, swap: tuple[str, str] | None = None, raw_bos: bool = True, reuse: bool = True):
+           tools_as=None, swap: tuple[str, str] | None = None, raw_bos: bool = True, reuse: bool = True,
+           checkpoint: int = 1, forget_once: bool = False):
     """LocalAI over llama.cpp as the check sees it.
     - The chat route renders the template with the tools as the engine gets
       them (`tools_as`), plus whatever `adds`, with `swap` replacing a word,
@@ -56,11 +57,18 @@ def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = Non
     def generate(prompt: str) -> str:
         return CALL if "<|tools|>" in prompt else ANSWER
 
-    def evaluate(prompt_toks: list[str]) -> None:
+    forgot = [forget_once]
+
+    def evaluate(prompt_toks: list[str], raw: bool = False) -> None:
+        if raw and forgot[0]:
+            cache.clear()                            # a slot emptied once, as by a reload
+            forgot[0] = False
         common = 0
         while reuse and common < min(len(cache), len(prompt_toks)) and cache[common] == prompt_toks[common]:
             common += 1
         n = max(1, len(prompt_toks) - common)
+        if common and n < checkpoint:
+            n = checkpoint                           # a hybrid model resumes from a state checkpoint
         cache[:] = prompt_toks
         lines.append({"timestamp": f"t{len(lines)}", "text": f"prompt eval time = 9.1 ms / {n} tokens"})
 
@@ -71,7 +79,7 @@ def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = Non
             return 200, {"content": f"<{len(body['tokens'])} tokens>"}
         if url.endswith("/v1/completions"):
             prompt = body["prompt"]
-            evaluate((["<s>"] if raw_bos else []) + toks(prompt))
+            evaluate((["<s>"] if raw_bos else []) + toks(prompt), raw=True)
             raw = next(runs, None) or generate(prompt)
             return 200, {"choices": [{"text": raw}],
                          "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
@@ -330,3 +338,20 @@ def test_an_engine_that_reuses_no_prefix_is_decided_by_count_and_the_greedy_answ
     assert "the same count: tools as Ask sends them, the parameters' keys sorted" in detail
     diverging = run(engine(tools_as=wc.parameters_sorted, reuse=False, chat_says="Something else."))
     assert "in no raw run" in _failed(diverging)["OUTPUT: the answer is the model's own text"]
+
+
+def test_a_hybrid_model_resuming_from_a_checkpoint_matches():
+    """wire17, 2026-11-06: Qwen3.5-9B evaluated 4 tokens for the form that is
+    its prompt (a hybrid model resumes from its last state checkpoint)."""
+    got = run(engine(tools_as=wc.parameters_sorted, checkpoint=4))
+    assert got["passed"], _failed(got)
+    detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    assert "4 tokens evaluated: a hybrid model resumes" in detail
+
+
+def test_a_slot_emptied_between_prime_and_probe_is_primed_and_asked_again():
+    """wire17, 2026-11-06: qwen3-8b-q8 reused nothing on one question, with
+    Command R7B loading beside it, and every prefix on the other."""
+    got = run(engine(forget_once=True))
+    assert got["passed"], _failed(got)
+    assert "candidate_0_again" in got["answers"] and "prime_0_again" in got["answers"]
