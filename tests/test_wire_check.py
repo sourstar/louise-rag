@@ -235,3 +235,23 @@ def test_tools_whose_keys_the_engine_sorts_are_its_template_s_prompt():
         "the raw runs read the sorted rendering"
     plain = run(engine())
     assert plain["passed"] and '{"type": "function"' in plain["reference"]["head"] + plain["reference"]["tail"]
+
+
+def test_a_diagnostic_arm_sends_the_same_sampling_on_both_paths_and_gates_nothing(tmp_path):
+    """2026-11-06: from the same prompt and cached slot the Qwens' chat answers
+    still parted from the raw runs; which setting do the two endpoints apply
+    otherwise? An arm sends the same values on both paths."""
+    bodies = []
+
+    def post(url, body):
+        bodies.append((url, body))
+        return engine()(url, body)
+    got = run(post, sampling={"top_k": 1, "presence_penalty": 1e-6})
+    sent = [b for u, b in bodies if not u.endswith("/v1/tokenize")]
+    assert all(b.get("top_k") == 1 and b.get("presence_penalty") == 1e-6 and b.get("temperature") == 0
+               for b in sent), "every chat and raw request carries the arm"
+    assert got["sampling"] == {"temperature": 0, "top_k": 1, "presence_penalty": 1e-6}
+    where = wc.write(tmp_path, [got], "top_k1")
+    assert where.name == "m.wire.top_k1.json"
+    with pytest.raises(SystemExit, match="no wiring check"):
+        wc.require(tmp_path, "m")

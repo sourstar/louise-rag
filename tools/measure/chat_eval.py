@@ -1064,6 +1064,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-tokens", type=int, default=1500)
     p.add_argument("--append", default="", help="text added to the reference prompt (what the "
                    "engine may add, e.g. a closed thinking block)")
+    p.add_argument("--sampling", default="", help="values BOTH paths send besides temperature 0, "
+                   "e.g. top_k=1 or presence_penalty=1e-6; written as <model>.wire.<arm>.json, "
+                   "which gates nothing")
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
@@ -1120,12 +1123,15 @@ def main(argv: list[str] | None = None) -> int:
         missing = [k for k in wanted if k not in by_key]
         if missing:
             raise SystemExit(f"wire: no such question: {', '.join(missing)}")
+        extra = parse_sampling(a.sampling)
         templates = wire_check.read_gguf(a.gguf)
         cache = SearchCache(a.search_cache, data_version(cols))
         results = [wire_check.check(a.model, by_key[k], templates, collections=cols, search_cache=cache,
                                     post=sampling_probe.http_post, chat_url=config.CHAT_URL,
-                                    max_tokens=a.max_tokens, append=a.append) for k in wanted]
-        where = wire_check.write(a.out, results)
+                                    max_tokens=a.max_tokens, append=a.append,
+                                    sampling=extra) for k in wanted]
+        arm = a.sampling.replace("=", "").replace(",", "-")
+        where = wire_check.write(a.out, results, arm)
         print(wire_check.table(results) + f"\n{where}")
         return 0 if all(r["passed"] for r in results) else 1
     if a.cmd == "probe":

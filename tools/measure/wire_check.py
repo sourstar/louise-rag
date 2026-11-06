@@ -189,15 +189,19 @@ def _strings(x: Any) -> list[str]:
 
 def check(model: str, question: dict[str, str], t: Templates, *, collections: list[str] | None,
           search_cache, post: Post, chat_url: str, max_tokens: int = 1500, append: str = "",
-          ask=None) -> dict[str, Any]:
+          ask=None, sampling: dict[str, Any] | None = None) -> dict[str, Any]:
     """Every check on one question; a refused request fails the check with
-    the server's answer."""
+    the server's answer. `sampling`: values both paths send besides
+    temperature 0, to find which setting the two endpoints apply otherwise
+    (the node, 2026-11-06: with the same prompt and the same cached slot the
+    Qwens' chat answers still parted from the raw runs)."""
+    greedy = {"temperature": 0, **(sampling or {})}
     from app import config, llm
     config.CHAT_MODEL = model
     messages, tools = first_request(question["query"], collections=collections,
                                     search_cache=search_cache, ask=ask)
     url, body = llm._request(messages, stream=False, temperature=None, max_tokens=max_tokens,
-                             num_ctx=16384, sampling={"temperature": 0})
+                             num_ctx=16384, sampling=greedy)
     if tools:
         body["tools"] = tools
     kwargs = dict(body.get("chat_template_kwargs") or {})
@@ -235,7 +239,7 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     # the engine's prompt count, from a one-token chat request; it also
     # leaves the prompt in the slot's cache for every run below
     if asked("chat_count", url, {**body, "max_tokens": 1}) is None:
-        return _result(model, question, which, t, reference, append, got, checks)
+        return _result(model, question, which, t, reference, append, got, checks, greedy)
     p_chat = (got["chat_count"]["answer"].get("usage") or {}).get("prompt_tokens")
 
     # INPUT. LocalAI's /v1/completions reports usage 0 on this backend (the
@@ -287,11 +291,11 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     # which repeated each other, after 45-189 characters: llama.cpp's own
     # warning that a cached prompt's logits need not be bit-identical to a
     # fresh one's, as batch splits differ)
-    raw_body = {"model": model, "prompt": reference, "temperature": 0, "max_tokens": max_tokens}
+    raw_body = {"model": model, "prompt": reference, "max_tokens": max_tokens, **greedy}
     if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
             or asked("chat", url, body) is None \
             or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
-        return _result(model, question, which, t, reference, append, got, checks)
+        return _result(model, question, which, t, reference, append, got, checks, greedy)
     msg = got["chat"]["answer"]["choices"][0].get("message") or {}
     content = msg.get("content") or ""
     thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
@@ -310,7 +314,7 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
                    for s in said)
     if not any(agrees(r) for r in raws) and raws[0] != raws[1]:
         if asked("raw_third", f"{chat_url}/v1/completions", raw_body) is None:
-            return _result(model, question, which, t, reference, append, got, checks)
+            return _result(model, question, which, t, reference, append, got, checks, greedy)
         raws.append(got["raw_third"]["answer"]["choices"][0].get("text") or "")
     checks.append(Check("greedy repeats itself (raw)", len(set(raws)) == 1,
                         "the same text" if len(set(raws)) == 1 else
@@ -336,7 +340,7 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     left = sorted(set(MARKERS.findall(content)))
     checks.append(Check("OUTPUT: no marker left in the answer", not left,
                         "none" if not left else ", ".join(left)))
-    return _result(model, question, which, t, reference, append, got, checks)
+    return _result(model, question, which, t, reference, append, got, checks, greedy)
 
 
 def go_order(x: Any) -> Any:
@@ -403,9 +407,11 @@ def _args(raw: Any) -> Any:
 
 
 def _result(model: str, question: dict[str, str], which: str, t: Templates, reference: str,
-            append: str, got: dict[str, Any], checks: list[Check]) -> dict[str, Any]:
+            append: str, got: dict[str, Any], checks: list[Check],
+            sampling: dict[str, Any] | None = None) -> dict[str, Any]:
     template = t.tool_use if which == "tool_use" else t.default
     return {"model": model, "key": question["key"], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "sampling": sampling,
             "passed": bool(checks) and all(c.ok for c in checks if c.decides),
             "checks": [asdict(c) for c in checks],
             "template": {"which": which, "sha256": hashlib.sha256((template or "").encode()).hexdigest(),
@@ -415,9 +421,12 @@ def _result(model: str, question: dict[str, str], which: str, t: Templates, refe
             "answers": got}
 
 
-def write(out: Path, results: list[dict[str, Any]]) -> Path:
+def write(out: Path, results: list[dict[str, Any]], arm: str = "") -> Path:
+    """probes/<model>.wire.json, the run gate's; a diagnostic arm (extra
+    sampling) is written beside it as <model>.wire.<arm>.json and gates
+    nothing."""
     model = results[0]["model"]
-    p = out / "probes" / f"{model}.wire.json"
+    p = out / "probes" / (f"{model}.wire.{arm}.json" if arm else f"{model}.wire.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"model": model, "passed": all(r["passed"] for r in results),
                              "questions": results}, indent=1, ensure_ascii=False), encoding="utf-8")
