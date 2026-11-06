@@ -1108,3 +1108,32 @@ arms loop and presence 1.5 costs quality.
   - **It thinks aloud at 0.4 and 0.7, with or without presence 1.5, but not at 0.1.** On #1 it named invented titles and retracted them in place: "*La Dame de Monsoreau*? No, that's incorrect… *La Reine Margot*? No, again incorrect". The reader sees invented titles, and that answer ran to 4.5–5.7 k characters and 32–40 s.
   - `chat_eval` now counts this as "thinks aloud". The column is read from the stored answer, so it covers rows of any age; on the pilots it flags exactly these three answers.
 - **Decision:** a pilot-ok for all seven. The whole runs go on.
+
+**The Q8 sweep, read blind** (2026-11-06; whole runs on the 50 recorded searches, then blind samples of 30 questions; the keys were applied only after the reading):
+
+| per model | right work | invented facts | mean quality (1–5) | judged best |
+|---|---|---|---|---|
+| 8B 0.7 / 0.4 / 0.1 | 20 / 20 / 19 | 15 / 19 / 18 | **3.00** / 2.90 / 2.70 | **13** / 8 / 9 of 30 |
+| 9B-p0 card (0.7, presence 1.5) / 0.7 / 0.4 / 0.1 | 18 / 14 / 17 / **18** | 27 / 22 / 20 / **20** | 2.67 / 2.50 / 2.63 / **2.67** | 6 / 8 / 8 / 8 of 30 |
+
+**The finalists, read by one reader** (sample-final-q8, 30 questions):
+
+| model, setting | right | partly | wrong | none | invented facts | mean quality | best | worst |
+|---|---|---|---|---|---|---|---|---|
+| **8B 0.7** | **21** | 4 | 2 | 3 | **14** | **3.07** | **13** | **7** |
+| 8B 0.1 | 19 | 1 | 2 | 8 | 17 | 2.83 | 8 | 11 |
+| 9B 0.1 | 18 | 4 | 0 | 8 | 21 | 2.77 | 9 | 12 |
+
+- **Paired by question:**
+  - 8B 0.7 beat 9B 0.1 on 14 questions and lost on 7 (sign test p = 0.19);
+  - 8B 0.1 against 9B 0.1: 10 against 9;
+  - 8B 0.7 against 8B 0.1: 10 against 8.
+- **Read:** Qwen3-8B at Qwen's own non-thinking card (0.7 / 0.8 / 20 / 0) is the best setting found. It is ahead on every column, but not significantly on 30 questions.
+- **Temperature:** it barely matters for the 8B. At 0.1 the 8B names no work more often (8 against 3).
+- **The 9B:** it needs 0.1 to stop thinking aloud. Its answers are twice as long, slower, and not better.
+- **The automatic "sentences supported" column ranked the 8B's 0.1 first.** The blind reading did not. The column stays a count, as before.
+- **Next, on the winner:**
+  - the KV cache at Q8_0 (`louise-chat-qwen3-8b-q8-kvq8`, the operator's "Go for the first");
+  - Qwen's own Q4_K_M (`louise-chat-qwen3-8b-q4`, the operator's "lower the quantization");
+  - each probed, run whole at 0.7, read blind against the Q8 at 0.7, and timed on an unloaded node;
+  - two more seeds for the Q8 at 0.7.
