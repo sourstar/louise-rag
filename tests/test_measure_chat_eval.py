@@ -533,3 +533,26 @@ def test_the_size_of_asks_request_is_counted_by_the_models_own_template(tmp_path
     assert all(b["max_tokens"] == 1 and b["tools"] for b in bodies), "nothing generated, tools declared"
     report = ev.sizes_report(rows, window=8192)
     assert "1 of 2 fit 8192 with 1500 for the answer" in report and "1 exceed 8192" in report
+
+
+def test_a_failed_row_keeps_what_the_server_said(tmp_path):
+    """2026-11-06, Command R7B's pilot: two rows said only "Server error '500
+    Internal Server Error' for url …"; LocalAI logs no reason at INFO and the
+    backend's ring had rotated past both. The row keeps the body and the note
+    Ask adds when its fallback without tools fails too."""
+    import httpx
+
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    refused = httpx.HTTPStatusError(
+        "Server error '500 Internal Server Error'", request=httpx.Request("POST", "http://x"),
+        response=httpx.Response(500, text='{"error":{"code":500,"message":"failed to parse tool call"}}'))
+    refused.add_note("the request with tools failed first: 500: Unexpected error in RPC handling")
+
+    def ask(query, collections=None):
+        raise refused
+    ev.run(tmp_path, "m", model="m", queries=qs, ask=ask, guess=lambda t: "en")
+    error = ev._rows(tmp_path, "m")[0]["error"]
+    assert error.startswith("HTTPStatusError: Server error '500")
+    assert "failed to parse tool call" in error, "the server's body"
+    assert "the request with tools failed first: 500: Unexpected error" in error, "the note"
+    assert ev.failure(RuntimeError("endpoint down")) == "RuntimeError: endpoint down"

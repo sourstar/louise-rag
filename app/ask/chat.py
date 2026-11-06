@@ -518,7 +518,14 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
             except Exception:   # noqa: BLE001 — an unreadable body is said as unreadable
                 body = "(unreadable)"
             tools_failed = f"{e.response.status_code}: {body[:200]}"
-            return done(without_tools(), rounds, True)
+            try:
+                return done(without_tools(), rounds, True)
+            except httpx.HTTPStatusError as again:
+                # both requests refused (2026-11-06, Command R7B's pilot: two
+                # 500s, no reason left in any log): the first one's body goes
+                # with the raised error, a PEP 678 note, so the row says both
+                again.add_note(f"the request with tools failed first: {tools_failed}")
+                raise
         if not calls:
             return done(without_tool_text(content), rounds, False)
         messages.append(assistant)

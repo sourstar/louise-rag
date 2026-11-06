@@ -563,6 +563,24 @@ def _warm_up(url: str, model: str) -> None:
                      "max_tokens": 1})
 
 
+def failure(e: BaseException) -> str:
+    """A failed answer's row, as the server said it (2026-11-06, Command R7B's
+    pilot: two rows read only "Server error '500 Internal Server Error' for url
+    …", LocalAI logs no reason at INFO and the backend's ring had rotated past
+    both — the diagnosis was lost). An HTTP error carries the server's body;
+    the notes (PEP 678) say what failed before it, as Ask's tool fallback adds."""
+    said = f"{type(e).__name__}: {e}"
+    response = getattr(e, "response", None)
+    if response is not None:
+        try:
+            said += f" | body: {response.text[:600]}"
+        except Exception:   # noqa: BLE001 — an unreadable body is said as unreadable
+            said += " | body: (unreadable)"
+    for note in getattr(e, "__notes__", None) or []:
+        said += f" | {str(note)[:400]}"
+    return said[:1500]
+
+
 def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         collections: list[str] | None = None,
         ask: Callable[..., dict[str, Any]] | None = None,
@@ -618,8 +636,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             try:
                 got = ask(q["query"], collections=collections)
             except Exception as e:   # noqa: BLE001 — a failed answer is a row, not the end of the run
-                got, error = {"answer": "", "turns": [], "rounds": 0, "exhausted": False}, \
-                    f"{type(e).__name__}: {e}"[:300]
+                got, error = {"answer": "", "turns": [], "rounds": 0, "exhausted": False}, failure(e)
             seconds = round(time.monotonic() - t0, 2)
             after = pid() if pid else None
             turns = got.get("turns", [])
