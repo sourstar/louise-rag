@@ -232,9 +232,11 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
             return len(tokens)
         return None
 
-    if asked("chat", url, body) is None:
+    # the engine's prompt count, from a one-token chat request; it also
+    # leaves the prompt in the slot's cache for every run below
+    if asked("chat_count", url, {**body, "max_tokens": 1}) is None:
         return _result(model, question, which, t, reference, append, got, checks)
-    p_chat = (got["chat"]["answer"].get("usage") or {}).get("prompt_tokens")
+    p_chat = (got["chat_count"]["answer"].get("usage") or {}).get("prompt_tokens")
 
     # INPUT. LocalAI's /v1/completions reports usage 0 on this backend (the
     # node, 2026-11-06, every model), so the reference is counted by the
@@ -278,9 +280,16 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
             got["localized"] = parts
 
     # the raw runs on the reference the engine's count matched, so the two
-    # paths read the same prompt
+    # paths read the same prompt; raw, chat, raw, each FROM THE SAME CACHED
+    # PROMPT (the node, 2026-11-06: with the chat request first, its prefill
+    # reused another question's cached prefix and the raw runs reused its
+    # whole prompt; the Qwens' chat answers then parted from both raw runs,
+    # which repeated each other, after 45-189 characters: llama.cpp's own
+    # warning that a cached prompt's logits need not be bit-identical to a
+    # fresh one's, as batch splits differ)
     raw_body = {"model": model, "prompt": reference, "temperature": 0, "max_tokens": max_tokens}
     if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
+            or asked("chat", url, body) is None \
             or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
         return _result(model, question, which, t, reference, append, got, checks)
     msg = got["chat"]["answer"]["choices"][0].get("message") or {}
