@@ -60,6 +60,32 @@ from pathlib import Path
 from typing import Any
 
 Post = Callable[[str, dict[str, Any]], tuple[int, Any]]
+Get = Callable[[str], tuple[int, Any]]
+
+#: llama.cpp's print_timing: the prompt tokens a request had to evaluate
+#: (the rest came from the slot's cache)
+_PROMPT_EVAL = re.compile(r"prompt eval time\s*=\s*[\d.]+ ms /\s*(\d+) tokens")
+
+
+def http_get(url: str) -> tuple[int, Any]:
+    import httpx
+    try:
+        r = httpx.get(url, timeout=20)
+    except httpx.HTTPError as e:
+        return 0, str(e)
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, r.text
+
+
+def _log_lines(get: Get, chat_url: str, model: str) -> list[tuple[str, str]]:
+    """The backend's log ring, as LocalAI keeps it per model
+    (/api/backend-logs/<model>): (timestamp, text) pairs; empty when none."""
+    status, got = get(f"{chat_url}/api/backend-logs/{model}")
+    if status != 200 or not isinstance(got, list):
+        return []
+    return [(str(e.get("timestamp", "")), str(e.get("text", ""))) for e in got if isinstance(e, dict)]
 
 #: what a parsed answer must never carry: a control marker of the template
 #: (Cohere's <|START_RESPONSE|>, ChatML's <|im_end|>), a tool-call or thinking
@@ -189,7 +215,7 @@ def _strings(x: Any) -> list[str]:
 
 def check(model: str, question: dict[str, str], t: Templates, *, collections: list[str] | None,
           search_cache, post: Post, chat_url: str, max_tokens: int = 1500, append: str = "",
-          ask=None, sampling: dict[str, Any] | None = None) -> dict[str, Any]:
+          ask=None, sampling: dict[str, Any] | None = None, get: Get | None = None) -> dict[str, Any]:
     """Every check on one question; a refused request fails the check with
     the server's answer. `sampling`: values both paths send besides
     temperature 0, to find which setting the two endpoints apply otherwise
@@ -216,6 +242,8 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     sorted_ref = (render(t, messages, go_order(tools), kwargs)[0] + append) if tools else None
     checks: list[Check] = []
     got: dict[str, Any] = {}
+    ids: dict[str, list[int]] = {}
+    get = get or http_get
 
     def asked(label: str, u: str, b: dict[str, Any], *, needed: bool = True) -> Any | None:
         status, answer = post(u, b)
@@ -233,6 +261,7 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
         tokens = (answer or {}).get("tokens") if isinstance(answer, dict) else None
         if isinstance(tokens, list):
             got[label]["answer"] = {"tokens": len(tokens)}       # the count, not the ids
+            ids[label] = tokens
             return len(tokens)
         return None
 
@@ -292,10 +321,49 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     # warning that a cached prompt's logits need not be bit-identical to a
     # fresh one's, as batch splits differ)
     raw_body = {"model": model, "prompt": reference, "max_tokens": max_tokens, **greedy}
-    if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
-            or asked("chat", url, body) is None \
-            or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
+
+    def evaluated(label: str, u: str, b: dict[str, Any]) -> Any | None:
+        """`asked`, and the prompt tokens the engine evaluated for it, read
+        from the lines its log gained meanwhile (llama.cpp's print_timing)."""
+        before = set(_log_lines(get, chat_url, model))
+        answer = asked(label, u, b)
+        new = [text for line in _log_lines(get, chat_url, model) if line not in before
+               for text in [line[1]] if _PROMPT_EVAL.search(text)]
+        if answer is not None:
+            got[label]["prompt_evaluated"] = int(_PROMPT_EVAL.search(new[-1]).group(1)) if new else None
+        return answer
+    if evaluated("raw", f"{chat_url}/v1/completions", raw_body) is None \
+            or evaluated("chat", url, body) is None \
+            or evaluated("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
         return _result(model, question, which, t, reference, append, got, checks, greedy)
+
+    # THE SAME TOKENS, not only as many (the node, 2026-11-06: with equal counts
+    # and top_k 1 on both paths, the Qwens' chat answers still parted from the
+    # raw runs at the same characters). After the one-token chat request the
+    # slot holds the engine's prompt; a raw run whose prompt is token for token
+    # the same evaluates only its last token, and one that parts at token P
+    # evaluates from P on. Where it parts is shown in the reference's text.
+    n_eval = got["raw"].get("prompt_evaluated")
+    if n_eval is None:
+        checks.append(Check("INPUT: the same tokens, not only as many", False,
+                            "undecidable: no prompt eval line in the backend's log", decides=False))
+    elif n_eval <= 1:
+        checks.append(Check("INPUT: the same tokens, not only as many", True,
+                            "the raw run reused the engine's whole prompt from the cache"))
+    else:
+        part = (p_chat or 0) - n_eval
+        ref_ids = ids.get("tokenize_reference_keys_sorted" if reference == sorted_ref else "tokenize_reference") or []
+        where = ""
+        if ref_ids and 0 <= part < len(ref_ids):
+            status, said = post(f"{chat_url}/v1/detokenize",
+                                {"model": model, "tokens": ref_ids[max(0, part - 12):part]})
+            status2, said2 = post(f"{chat_url}/v1/detokenize", {"model": model, "tokens": ref_ids[part:part + 12]})
+            if status == 200 and status2 == 200:
+                where = (f": …{(said or {}).get('content', '')!r} ‖ {(said2 or {}).get('content', '')!r}… "
+                         f"(the reference's text before ‖ after)")
+        checks.append(Check("INPUT: the same tokens, not only as many", False,
+                            f"the raw run evaluated {n_eval} of {p_chat} prompt tokens: the prompts part at "
+                            f"token {part}" + where))
     msg = got["chat"]["answer"]["choices"][0].get("message") or {}
     content = msg.get("content") or ""
     thought = msg.get("reasoning_content") or msg.get("reasoning") or ""

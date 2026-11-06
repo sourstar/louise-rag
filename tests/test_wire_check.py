@@ -87,7 +87,12 @@ def _failed(r):
     return {c["name"]: c["detail"] for c in r["checks"] if not c["ok"]}
 
 
+def no_log(url):
+    return 404, "no such route"
+
+
 def run(post, **kw):
+    kw.setdefault("get", no_log)
     return wc.check("m", Q, T, collections=None, search_cache=None, post=post, chat_url="http://chat",
                     ask=ask, **kw)
 
@@ -255,3 +260,49 @@ def test_a_diagnostic_arm_sends_the_same_sampling_on_both_paths_and_gates_nothin
     assert where.name == "m.wire.top_k1.json"
     with pytest.raises(SystemExit, match="no wiring check"):
         wc.require(tmp_path, "m")
+
+
+def logged(*, parts_at: int | None = None):
+    """An engine whose log ring says how many prompt tokens each request
+    evaluated: the one-token chat request all of them; a raw run whose
+    prompt is the cached one, its last token only, or, when the prompts
+    part at token `parts_at`, all from there on."""
+    lines: list[dict] = []
+    inner = engine()
+    total = {}
+
+    def post(url, body):
+        if url.endswith("/v1/detokenize"):
+            return 200, {"content": f"<{len(body['tokens'])} tokens>"}
+        status, got = inner(url, body)
+        if url.endswith("/v1/chat/completions") and body.get("max_tokens") == 1:
+            total["n"] = got["usage"]["prompt_tokens"]
+            n = total["n"]
+        elif url.endswith(("/v1/completions", "/v1/chat/completions")):
+            n = 1 if parts_at is None else total["n"] - parts_at
+        else:
+            return status, got
+        lines.append({"timestamp": f"t{len(lines)}", "text": f"prompt eval time = 12.5 ms / {n} tokens"})
+        return status, got
+
+    def get(url):
+        assert url == "http://chat/api/backend-logs/m"
+        return 200, list(lines)
+    return post, get
+
+
+def test_the_same_tokens_not_only_as_many():
+    """2026-11-06: equal counts, top_k 1 on both paths, and the Qwens' chat
+    answers still parted from the raw runs. The engine's log says how many
+    prompt tokens a raw run evaluated after the chat request left its
+    prompt in the slot: one when the prompts are token for token the same."""
+    post, get = logged()
+    got = run(post, get=get)
+    same = next(c for c in got["checks"] if c["name"] == "INPUT: the same tokens, not only as many")
+    assert same["ok"] and "reused the engine's whole prompt" in same["detail"]
+    assert got["answers"]["raw"]["prompt_evaluated"] == 1
+    post, get = logged(parts_at=7)
+    parted = _failed(run(post, get=get))["INPUT: the same tokens, not only as many"]
+    assert "the prompts part at token 7" in parted and "<7 tokens>" in parted and "<12 tokens>" in parted
+    unread = next(c for c in run(engine())["checks"] if c["name"] == "INPUT: the same tokens, not only as many")
+    assert not unread["ok"] and not unread["decides"], "no log: said, and decides nothing"
