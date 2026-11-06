@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -43,6 +44,8 @@ STATE_FILE = "scheduled-check.json"
 BEAT_S = 600.0                    # how often the runner looks for a due collection
 TIMEOUT_S = 3 * 3600.0            # gutenberg's plan took 25.5 min; three hours is a stuck one
 STOP_GRACE_S = 30.0
+#: the check's pool is the parse pool's size divided by this (`check_processes`)
+CHECK_SHARE = 4
 PERIOD_S = {"monthly": 30 * 86400.0, "weekly": 7 * 86400.0}
 
 
@@ -86,6 +89,34 @@ def argv_for(collection) -> list[str]:
     return argv
 
 
+def check_processes() -> int:
+    """The background check's pool: a quarter of the parse pool's. The check
+    runs inside the worker's memory cap BESIDE the parse pool, and with the
+    whole quota it doubled the worker's processes: wikidata's check at twelve
+    children (5.3 GB) beside the parse pool's eleven (12 GB) and the worker
+    (4.5 GB) passed the 24 GiB cap, and the kernel killed the worker twice
+    in seven minutes (2026-11-07, 00:35 and 00:42). A check is a background
+    verification at nice 10, never a round's work: slower is right."""
+    from app import parallel
+    return max(1, parallel.processes() // CHECK_SHARE)
+
+
+def child_env() -> dict[str, str]:
+    return {**os.environ, "PARSE_PROCESSES": str(check_processes())}
+
+
+def _signal(child: subprocess.Popen, sig: int) -> None:
+    """`sig` to the check and every process of its session: its pool's
+    children are in it (start_new_session)."""
+    try:
+        if os.name == "posix":
+            os.killpg(child.pid, sig)
+        else:
+            child.send_signal(sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass                          # already gone
+
+
 def _nice() -> None:                  # in the child, before exec
     try:
         os.nice(10)
@@ -97,23 +128,32 @@ def run_one(collection, *, stop: Callable[[], bool], timeout_s: float = TIMEOUT_
             argv: list[str] | None = None) -> dict[str, Any]:
     """One plan run in a child; returns what `record` keeps. Never raises."""
     t0 = time.time()
+    posix = os.name == "posix"
     try:
+        # its OWN SESSION, so a stop reaches the check's pool too (below), and
+        # a pool of CHECK_PROCESSES children: the worker's cgroup holds this
+        # check beside the parse pool
         child = subprocess.Popen(argv or argv_for(collection), stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, preexec_fn=_nice if os.name == "posix" else None)
+                                 stderr=subprocess.PIPE, preexec_fn=_nice if posix else None,
+                                 start_new_session=posix, env=child_env())
     except OSError as e:
         return {"exit": None, "outcome": f"could not start: {type(e).__name__}: {e}", "secs": 0.0}
     ended = None
     while child.poll() is None:
         if stop() or time.time() - t0 > timeout_s:
             ended = "stopped" if stop() else "timed out"
-            child.terminate()
+            _signal(child, signal.SIGTERM)
             try:
                 child.wait(STOP_GRACE_S)
             except subprocess.TimeoutExpired:
-                child.kill()
+                _signal(child, signal.SIGKILL)
                 child.wait()
             break
         time.sleep(1.0)
+    # the pool's children outlive a check the kernel or a stop ended: they
+    # wait on a queue whose parent is gone, holding their memory (live
+    # 2026-11-07: twelve of wikidata's check, 5.3 GB, after its parent went)
+    _signal(child, signal.SIGKILL)
     out, err = child.communicate()
     report: Any = None
     try:

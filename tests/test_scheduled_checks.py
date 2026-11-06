@@ -133,3 +133,44 @@ def test_a_collection_renamed_while_it_is_checked_is_recorded_under_its_new_name
     # held under no name: not recorded
     shutil.rmtree(root / "gutenberg-renamed")
     assert col.where_now(root, "gutenberg", cid) is None
+
+
+def test_the_check_runs_with_a_quarter_of_the_parse_pool(monkeypatch):
+    """2026-11-07: wikidata's check at the whole quota (12 children, 5.3 GB)
+    beside the parse pool passed the worker's 24 GiB cap twice in 7 minutes."""
+    from app import parallel
+    monkeypatch.setattr(parallel, "processes", lambda: 11)
+    assert sc.check_processes() == 2 and sc.child_env()["PARSE_PROCESSES"] == "2"
+    monkeypatch.setattr(parallel, "processes", lambda: 2)
+    assert sc.check_processes() == 1, "never none"
+    got = sc.run_one(SimpleNamespace(name="c"), stop=lambda: False,
+                     argv=_py("import os, json; print(json.dumps({'p': os.environ['PARSE_PROCESSES']}))"))
+    assert got["report"] == {"p": "1"}, "the child is told its pool"
+
+
+def test_a_stop_ends_the_check_s_own_children_too(tmp_path):
+    """A pool child outlives its parent, waiting on a queue, and keeps its
+    memory: a stop and a timeout end the check's whole session."""
+    import os
+    import pytest
+    if os.name != "posix":
+        pytest.skip("process groups are POSIX")
+    pidfile = tmp_path / "grandchild.pid"
+    code = ("import subprocess, sys, time; "
+            f"p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']); "
+            f"open({str(pidfile)!r}, 'w').write(str(p.pid)); time.sleep(120)")
+    got = sc.run_one(SimpleNamespace(name="c"), stop=lambda: False, timeout_s=2.0, argv=_py(code))
+    assert got["outcome"] == "timed out"
+    pid = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        time.sleep(0.1)
+    else:
+        raise AssertionError("the check's own child outlived the stop")
