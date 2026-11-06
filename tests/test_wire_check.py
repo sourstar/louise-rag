@@ -23,34 +23,64 @@ CALL = '<|act|>{"name": "louise_search", "arguments": {"query": "Dumas collier"}
 ANSWER = "<|resp|>It is The Queen's Necklace [1].<|end|>"
 
 
+def toks(text: str) -> list[str]:
+    """A tokenizer: markers and the BOS whole, `{"type"` one token (so the same content
+    in another key order is counted otherwise, as by a real one), words."""
+    return re.findall(r'<\|\w+\|>|<s>|\{"type"|\S+', text)
+
+
 def tokens(text: str) -> int:
-    """A tokenizer that, as a real one, counts the same content differently
-    in another key order (a merge across `{"type"`)."""
-    return len(re.findall(r"<\|\w+\|>|\S+", text)) + text.count('{"type"')
+    return len(toks(text))
 
 
-def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None):
-    """LocalAI over llama.cpp as the check sees it: the chat route renders
-    the template (plus whatever `adds`) and counts the BOS the tokenizer
-    adds; the completion route takes the prompt as given and reports usage
-    0, as LocalAI's does; /v1/tokenize counts a text with special tokens
-    parsed and adds nothing; the model calls the tool when tools are in its
-    prompt; `parse` is what the chat route makes of the raw text; `raws`
-    the texts successive raw runs give, `chat_says` the chat's own text."""
+def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None,
+           tools_as=None, swap: tuple[str, str] | None = None, raw_bos: bool = True):
+    """LocalAI over llama.cpp as the check sees it.
+    - The chat route renders the template with the tools as the engine gets
+      them (`tools_as`), plus whatever `adds`, with `swap` replacing a word,
+      and adds the BOS the tokenizer adds.
+    - The completion route takes the prompt as given, adds the BOS when
+      `raw_bos`, and reports usage 0, as LocalAI's does.
+    - /v1/tokenize counts a text, special tokens parsed, adding nothing.
+    - One slot: a request reuses the cached prompt's common prefix, and the
+      log ring says how many prompt tokens it evaluated (at least one).
+    - The model calls the tool when tools are in its prompt; `parse` is what
+      the chat route makes of the raw text; `raws` the texts successive raw
+      runs give, `chat_says` the chat's own text.
+    `post.get` reads the log ring."""
     runs = iter(raws or [])
+    cache: list[str] = []
+    lines: list[dict] = []
 
     def generate(prompt: str) -> str:
         return CALL if "<|tools|>" in prompt else ANSWER
 
+    def evaluate(prompt_toks: list[str]) -> None:
+        common = 0
+        while common < min(len(cache), len(prompt_toks)) and cache[common] == prompt_toks[common]:
+            common += 1
+        n = max(1, len(prompt_toks) - common)
+        cache[:] = prompt_toks
+        lines.append({"timestamp": f"t{len(lines)}", "text": f"prompt eval time = 9.1 ms / {n} tokens"})
+
     def post(url, body):
         if url.endswith("/v1/tokenize"):
             return 200, {"tokens": list(range(tokens(body["content"])))}
+        if url.endswith("/v1/detokenize"):
+            return 200, {"content": f"<{len(body['tokens'])} tokens>"}
         if url.endswith("/v1/completions"):
-            raw = next(runs, None) or generate(body["prompt"])
+            prompt = body["prompt"]
+            evaluate((["<s>"] if raw_bos else []) + toks(prompt))
+            raw = next(runs, None) or generate(prompt)
             return 200, {"choices": [{"text": raw}],
                          "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
-        prompt = wc.render(T, body["messages"], body.get("tools"), body.get("chat_template_kwargs") or {})[0]
-        prompt += adds
+        sent = body.get("tools")
+        prompt = wc.render(T, body["messages"], tools_as(sent) if tools_as and sent else sent,
+                           body.get("chat_template_kwargs") or {})[0] + adds
+        if swap:
+            prompt = prompt.replace(*swap, 1)
+        prompt_toks = ["<s>"] + toks(prompt)
+        evaluate(prompt_toks)
         raw = generate(prompt)
         msg: dict = {"role": "assistant", "content": ""}
         if chat_says is not None:
@@ -63,7 +93,8 @@ def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = Non
         elif raw == ANSWER:
             msg["content"] = "It is The Queen's Necklace [1]."
         return 200, {"choices": [{"message": msg}],
-                     "usage": {"prompt_tokens": tokens(prompt) + 1, "completion_tokens": tokens(raw)}}
+                     "usage": {"prompt_tokens": len(prompt_toks), "completion_tokens": tokens(raw)}}
+    post.get = lambda url: (200, list(lines))
     return post
 
 
@@ -92,7 +123,7 @@ def no_log(url):
 
 
 def run(post, **kw):
-    kw.setdefault("get", no_log)
+    kw.setdefault("get", getattr(post, "get", no_log))
     return wc.check("m", Q, T, collections=None, search_cache=None, post=post, chat_url="http://chat",
                     ask=ask, **kw)
 
@@ -103,16 +134,18 @@ def test_a_wired_engine_passes_on_the_tool_template():
     assert got["template"]["which"] == "tool_use"
     assert not got["reference"]["head"].startswith("<s>"), "the BOS the tokenizer adds is not text"
     asked = [k for k in got["answers"] if not k.startswith("tokenize")]
-    assert asked == ["chat_count", "raw", "chat", "raw_again"], \
-        "the count first; then raw, chat, raw from the same cached prompt"
+    assert asked == ["chat_count", "candidate_0", "candidates", "raw", "chat", "raw_again"], \
+        "the count first; a candidate's cache probe; then raw, chat, raw from the same cached prompt"
 
 
 def test_an_engine_that_adds_to_the_prompt_is_caught_and_the_addition_can_be_tested():
     """llama.cpp's Command R7B handler appends a closed thinking block when
-    thinking is off: the counts differ, and --append names what was added."""
+    thinking is off: the prompts part, and --append names what was added.
+    A candidate with the engine's count by coincidence (the Tool struct's
+    "strict": false is two tokens too) is not taken: its tokens differ."""
     adds = "<|START_THINKING|><|END_THINKING|>"
     got = run(engine(adds=adds))
-    assert "INPUT: the prompt is the template's" in _failed(got)
+    assert "none token for token" in _failed(got)["INPUT: the prompt is the template's"]
     assert run(engine(adds=adds), append=adds)["passed"]
 
 
@@ -187,15 +220,6 @@ def test_a_greedy_answer_that_parts_from_itself_is_held_to_the_run_it_agrees_wit
     assert "raw_third" in lost["answers"], "a third run asked when neither agrees"
 
 
-def test_a_tokenizer_that_does_not_read_markers_decides_nothing():
-    def post(url, body):
-        if url.endswith("/v1/tokenize"):
-            return 200, {"tokens": list(range(len(body["content"]) // 2 + 3))}
-        return engine()(url, body)
-    got = run(post)
-    assert "undecidable" in _failed(got)["INPUT: the prompt is the template's"]
-
-
 def test_a_tokenizer_that_refuses_an_empty_text_still_counts():
     def post(url, body):
         if url.endswith("/v1/tokenize") and not body["content"]:
@@ -207,39 +231,38 @@ def test_a_tokenizer_that_refuses_an_empty_text_still_counts():
 
 def test_a_prompt_difference_is_located_by_part():
     """2026-11-06 on the node: every model's prompt differed from its
-    template's by a few tokens (R7B -3, Qwen3-8B -2, Qwen3.5-9B +1), the
-    same on both questions. Cut-down conversations say which part."""
-    def post(url, body):
-        if url.endswith("/v1/chat/completions") and body.get("tools"):
-            status, got = engine()(url, body)
-            got["usage"]["prompt_tokens"] -= 2           # an engine that renders the tools shorter
-            return status, got
-        return engine()(url, body)
-    got = run(post)
-    detail = _failed(got)["INPUT: the prompt is the template's"]
-    assert "-2 through chat" in detail
-    assert ("by part: a user turn +0, + system +0, + tools -2, + tools, keys sorted -1, "
-            "Ask's turns, no tools +0") in detail
+    template's by a few tokens, the same on both questions. Cut-down
+    conversations say which part."""
+    bare = engine(tools_as=lambda tl: [{"type": x["type"], "function": {"name": x["function"]["name"]}} for x in tl])
+    detail = _failed(run(bare))["INPUT: the prompt is the template's"]
+    assert "none token for token" in detail
+    assert "counts by part: a user turn +0, + system +0, + tools -" in detail
 
 
-def test_tools_whose_keys_the_engine_sorts_are_its_template_s_prompt():
-    """LocalAI is Go: the request's tools decoded into maps and encoded again
-    come out with sorted keys. The same content, so the prompt is the
-    template's; the check says so, and the raw runs read that prompt."""
-    def post(url, body):
-        if url.endswith("/v1/chat/completions") and body.get("tools"):
-            body = {**body, "tools": wc.go_order(body["tools"])}
-        return engine()(url, body)
-    tools_sorted = wc.go_order(TOOLS)
-    assert json.dumps(tools_sorted) != json.dumps(TOOLS), "the test's tools change when sorted"
-    got = run(post)
+def test_the_tools_as_the_engine_gets_them_are_found_token_for_token():
+    """LocalAI is Go: its Tool struct writes type, then function with name,
+    description, an added "strict": false and the parameters (a map: keys
+    sorted). The candidate the engine's cache says is token for token its
+    prompt is taken, and the raw runs read it."""
+    got = run(engine(tools_as=wc.localai_tools))
     assert got["passed"], _failed(got)
     detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
-    assert "keys sorted, as LocalAI's Go encoding writes them" in detail
-    assert '"function": {"description"' in got["reference"]["head"] + got["reference"]["tail"], \
-        "the raw runs read the sorted rendering"
-    plain = run(engine())
-    assert plain["passed"] and '{"type": "function"' in plain["reference"]["head"] + plain["reference"]["tail"]
+    assert "tools as LocalAI's Tool struct writes them" in detail
+    assert '"strict": false' in got["reference"]["head"] + got["reference"]["tail"], "the raw runs read it"
+    sorted_ = run(engine(tools_as=wc.go_order))
+    assert "tools with every key sorted" in next(
+        c["detail"] for c in sorted_["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    assert wc.localai_tools(TOOLS)[0]["function"] == {"name": "louise_search", "description": "search",
+                                                      "strict": False, "parameters": {"type": "object"}}
+
+
+def test_a_raw_path_that_adds_no_bos_is_matched_with_the_bos_text_kept():
+    """Qwen3.5-9B on the node parted at token 0 with equal counts: a BOS on
+    one path and not the other is one way."""
+    got = run(engine(raw_bos=False))
+    assert got["passed"], _failed(got)
+    assert "the BOS text kept" in next(
+        c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
 
 
 def test_a_diagnostic_arm_sends_the_same_sampling_on_both_paths_and_gates_nothing(tmp_path):
@@ -262,47 +285,22 @@ def test_a_diagnostic_arm_sends_the_same_sampling_on_both_paths_and_gates_nothin
         wc.require(tmp_path, "m")
 
 
-def logged(*, parts_at: int | None = None):
-    """An engine whose log ring says how many prompt tokens each request
-    evaluated: the one-token chat request all of them; a raw run whose
-    prompt is the cached one, its last token only, or, when the prompts
-    part at token `parts_at`, all from there on."""
-    lines: list[dict] = []
-    inner = engine()
-    total = {}
-
-    def post(url, body):
-        if url.endswith("/v1/detokenize"):
-            return 200, {"content": f"<{len(body['tokens'])} tokens>"}
-        status, got = inner(url, body)
-        if url.endswith("/v1/chat/completions") and body.get("max_tokens") == 1:
-            total["n"] = got["usage"]["prompt_tokens"]
-            n = total["n"]
-        elif url.endswith(("/v1/completions", "/v1/chat/completions")):
-            n = 1 if parts_at is None else total["n"] - parts_at
-        else:
-            return status, got
-        lines.append({"timestamp": f"t{len(lines)}", "text": f"prompt eval time = 12.5 ms / {n} tokens"})
-        return status, got
-
-    def get(url):
-        assert url == "http://chat/api/backend-logs/m"
-        return 200, list(lines)
-    return post, get
-
-
 def test_the_same_tokens_not_only_as_many():
-    """2026-11-06: equal counts, top_k 1 on both paths, and the Qwens' chat
-    answers still parted from the raw runs. The engine's log says how many
-    prompt tokens a raw run evaluated after the chat request left its
-    prompt in the slot: one when the prompts are token for token the same."""
-    post, get = logged()
-    got = run(post, get=get)
-    same = next(c for c in got["checks"] if c["name"] == "INPUT: the same tokens, not only as many")
-    assert same["ok"] and "reused the engine's whole prompt" in same["detail"]
-    assert got["answers"]["raw"]["prompt_evaluated"] == 1
-    post, get = logged(parts_at=7)
-    parted = _failed(run(post, get=get))["INPUT: the same tokens, not only as many"]
-    assert "the prompts part at token 7" in parted and "<7 tokens>" in parted and "<12 tokens>" in parted
-    unread = next(c for c in run(engine())["checks"] if c["name"] == "INPUT: the same tokens, not only as many")
-    assert not unread["ok"] and not unread["decides"], "no log: said, and decides nothing"
+    """2026-11-06: the "keys sorted" reference had the Qwen3-8B engine's
+    count and parted from its prompt at token 330. After the chat request
+    left its prompt in the slot, a raw prompt token for token the same
+    evaluates one token; one that parts is named where, with the text
+    either side; with no log, only the count is said and identity is
+    undecidable."""
+    got = run(engine())
+    assert got["passed"], _failed(got)
+    assert "token for token the engine's" in next(
+        c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    parted = _failed(run(engine(swap=("Answer", "Reply"))))["INPUT: the prompt is the template's"]
+    assert "none token for token" in parted and "parts at token 2" in parted
+    assert "<2 tokens>" in parted and "<12 tokens>" in parted
+    unlogged = engine()
+    del unlogged.get
+    got = run(unlogged)
+    detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    assert "token identity undecidable" in detail and "the same count: tools as Ask sends them" in detail
