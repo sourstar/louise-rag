@@ -6,6 +6,7 @@ Nemotron-3.5-Bolt-E4B; the incumbent Qwen3-8B is the reference row).
     python -m tools.measure.chat_eval run    --out DIR --name lightning --model <chat yaml name> \\
         [--queries tools/measure/one_language_queries.tsv] [--per-lang 10] [--collections gutenberg]
     python -m tools.measure.chat_eval score  --out DIR
+    python -m tools.measure.chat_eval rescore --out DIR --runs a,b --search-cache FILE
     python -m tools.measure.chat_eval sample --out DIR --runs qwen3-8b,lightning,bolt-e4b [--n 30]
 
 WHAT RUNS. Ask's tool loop exactly as the node serves it: `app.ask.chat.ask`,
@@ -127,8 +128,10 @@ import re
 import statistics
 import sys
 import time
+import unicodedata
 from collections import defaultdict
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -162,29 +165,75 @@ _NAME = re.compile(r"(?<![.!?:\n]\s)(?<!^)\b([A-ZÀ-ÖØ-ÞĀ-ſ][\w'’-]{2,})"
 _NUMBER = re.compile(r"\b\d[\d.,]*\d\b|\b\d\b")
 
 
-def stated_facts(answer: str) -> tuple[list[str], list[str]]:
+#: the checker's version, written on every row it scored (`rescore` rewrites
+#: a run's rows under the current one): 2 = labels and markup out, German
+#: names not counted, a name held in another spelling (operator, 2026-11-06)
+CHECKER = 2
+
+#: a list item's label — "Auteur:", "* **Personnages principaux**:" — a
+#: heading the answer gives its item, not a fact it states; at most three words
+_LABEL = re.compile(r"(?m)^[\s>*#-]*(?:\*\*)?(?:[^\W\d_][\w'’-]*\s?){1,3}(?:\*\*)?\s*:(?:\*\*)?")
+#: markdown a line opens with (bullets, headings, bold): what follows opens the sentence
+_MARKUP = re.compile(r"(?m)^[\s>*#-]+|\*\*|__")
+
+
+def stated_facts(answer: str, lang: str | None = None) -> tuple[list[str], list[str]]:
     """(names, numbers) an answer states, citations taken out. Numbers hold
-    in every language; names are noisy in German, which capitalises every
-    noun, so the two are counted apart."""
+    in every language. A name is a capitalised word not opening a sentence,
+    a list item's label taken out first — and none in German, which
+    capitalises every noun: the walk of 2026-11-06 (München) found the
+    measure's German "names" were Quelle ×18, Werk, Konzerte, Städten.
+
+    THE STANDARD, NOT ADOPTED: a multilingual named-entity recogniser
+    (spaCy's xx_ent_wiki_sm, or a common-word list such as wordfreq's)
+    would find German names too; it is a new dependency (CLAUDE.md: ask
+    first), and pays when German answers' names must be checked."""
     from app.ask.chat import CITE_N
     # both citation forms out: Ask's [n] would otherwise count as numbers stated
     text = CITE_N.sub(" ", CITATION.sub(" ", answer or ""))
-    names = sorted({m.group(1) for m in _NAME.finditer(text)})
+    text = _MARKUP.sub("", _LABEL.sub("", text))
+    names = [] if lang == "de" else sorted({m.group(1) for m in _NAME.finditer(text)})
     numbers = sorted({m.group(0).rstrip(".,") for m in _NUMBER.finditer(text)} - {""})
     return names, numbers
 
 
-def unsupported(answer: str, question: str, turns: list[dict[str, Any]]) -> dict[str, Any]:
+def fold(text: str) -> str:
+    """Casefolded, accents off: "Calibán" is the sources' "Caliban"."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold())
+                   if not unicodedata.combining(c))
+
+
+_WORD = re.compile(r"\w+")
+
+
+def held(name: str, hay: str, words: set[str] | None = None) -> bool:
+    """Is a name in `hay` (folded), in its spelling or another of it: the
+    answer's "Principe", "Nápoles" for the sources' "Prince", "Naples" — the
+    same first letter, at most two letters apart, difflib's ratio 0.8 (the
+    Ratcliff/Obershelp similarity). A NAME ONLY: a quoted span and a number
+    are looked up as written."""
+    f = fold(name)
+    if f in hay:
+        return True
+    for w in words if words is not None else set(_WORD.findall(hay)):
+        if w[:1] == f[:1] and abs(len(w) - len(f)) <= 2 and SequenceMatcher(None, f, w).ratio() >= 0.8:
+            return True
+    return False
+
+
+def unsupported(answer: str, question: str, turns: list[dict[str, Any]],
+                lang: str | None = None) -> dict[str, Any]:
     """The names and numbers stated, and those found neither in what the
     tools showed the model nor in the question: what it added or distorted."""
     from app.ask.chat import compact
     seen = " ".join(json.dumps(compact(t.get("tool", ""), t.get("result")), ensure_ascii=False,
                                default=str) for t in turns if t.get("result") is not None)
-    hay = (seen + " " + (question or "")).casefold()
-    names, numbers = stated_facts(answer)
+    hay = fold(seen + " " + (question or ""))
+    words = set(_WORD.findall(hay))
+    names, numbers = stated_facts(answer, lang)
     return {"names": len(names), "numbers": len(numbers),
-            "added_names": [f for f in names if f.casefold() not in hay][:20],
-            "added_numbers": [f for f in numbers if f.casefold() not in hay][:20]}
+            "added_names": [f for f in names if not held(f, hay, words)][:20],
+            "added_numbers": [f for f in numbers if fold(f) not in hay][:20]}
 
 
 #: a quoted span: what an answer gives as a title or as a source's words
@@ -196,7 +245,7 @@ _POSSESSIVE = re.compile(r"[’']s$")
 
 
 def citation_support(got: dict[str, Any], turns: list[dict[str, Any]],
-                     question: str = "") -> dict[str, Any] | None:
+                     question: str = "", lang: str | None = None) -> dict[str, Any] | None:
     """Does each sentence say only what its sources say? ALCE's citation
     precision (Gao et al., EMNLP 2023), at the level of entities as
     `unsupported` (Nan et al.):
@@ -226,33 +275,40 @@ def citation_support(got: dict[str, Any], turns: list[dict[str, Any]],
                     parts += [e.get("title") for e in h.get("editions") or []]
                     seen[h["uid"]] = seen.get(h["uid"], "") + " " + " ".join(str(x) for x in parts if x)
     by_n = {e.get("n"): e.get("uid") for e in sources}
-    everything = " ".join(seen.values()).casefold()
-    asked = (question or "").casefold()
+    everything = fold(" ".join(seen.values()))
+    every_word = set(_WORD.findall(everything))
+    asked = fold(question or "")
     out: dict[str, Any] = {"sentences": 0, "supported": 0, "quotes": 0, "quotes_found": 0, "unsupported": [],
                            "uncited_claims": 0, "uncited": []}
     for sentence in _SENTENCES.split(got.get("answer") or ""):
         ns = [int(x) for m in CITE_N.finditer(sentence) for x in re.findall(r"\d+", m.group(1))]
         ids = CITE_ID.findall(sentence)
         said = re.sub(r"\s+([.,;:!?])", r"\1", " ".join(CITE_ID.sub(" ", CITE_N.sub(" ", sentence)).split()))
-        names, numbers = stated_facts(said)
+        names, numbers = stated_facts(said, lang)
         quotes = [q.strip() for q in _QUOTED.findall(said)]
         # a name inside a quoted span is judged with the span, not again alone
-        inside = " ".join(quotes).casefold()
-        terms = [_POSSESSIVE.sub("", e) for e in names + numbers if e.casefold() not in inside]
+        inside = fold(" ".join(quotes))
+        terms = [_POSSESSIVE.sub("", e) for e in names + numbers if fold(e) not in inside]
+        named = {_POSSESSIVE.sub("", e) for e in names}
+
+        def found(e: str, hay: str, words: set[str]) -> bool:
+            return held(e, hay, words) if e in named else fold(e) in hay
         if not ns and not ids:
-            missing = [e for e in quotes + terms if e.casefold() not in everything and e.casefold() not in asked]
+            missing = ([q for q in quotes if fold(q) not in everything and fold(q) not in asked]
+                       + [e for e in terms if not found(e, everything, every_word) and fold(e) not in asked])
             if missing:
                 out["uncited_claims"] += 1
                 out["uncited"].append({"sentence": said[:300], "missing": missing[:8]})
             continue
         hay = " ".join(seen.get(by_n.get(n) or "", "") for n in ns)
-        hay = (hay + " " + " ".join(seen.get(i, "") for i in ids)).casefold()
-        missing = ([q for q in quotes if q.casefold() not in hay]
-                   + [e for e in terms if e.casefold() not in hay and e.casefold() not in asked])
+        hay = fold(hay + " " + " ".join(seen.get(i, "") for i in ids))
+        words = set(_WORD.findall(hay))
+        missing = ([q for q in quotes if fold(q) not in hay]
+                   + [e for e in terms if not found(e, hay, words) and fold(e) not in asked])
         out["sentences"] += 1
         out["supported"] += not missing
         out["quotes"] += len(quotes)
-        out["quotes_found"] += sum(1 for q in quotes if q.casefold() in hay)
+        out["quotes_found"] += sum(1 for q in quotes if fold(q) in hay)
         if missing:
             out["unsupported"].append({"sentence": said[:300], "missing": missing[:8]})
     out["unsupported"] = out["unsupported"][:10]
@@ -643,8 +699,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             cited, grounded, cited_uids = cited_of(got)
             returned = len(returned_uids([t.get("result") for t in turns]))
             searched = search_hits(turns)
-            facts = unsupported(got.get("answer") or "", q["query"], turns)
-            support = citation_support(got, turns, q["query"])
+            facts = unsupported(got.get("answer") or "", q["query"], turns, q.get("lang"))
+            support = citation_support(got, turns, q["query"], q.get("lang"))
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "sampling": dict(sampling or {}),
                    "looped": looped(got.get("answer") or ""),
@@ -662,7 +718,7 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                    "rewrites": got.get("rewrites") or [],
                    "rewrite_s": got.get("rewrite_s"),
                    "cited_uids": cited_uids,
-                   "facts": facts, "support": support,
+                   "facts": facts, "support": support, "checker": CHECKER,
                    # the engine could not parse the model's tool call: answered without tools
                    "tools_failed": got.get("tools_failed"),
                    # what the model sent Louise: each call's tool and arguments, as asked
@@ -1007,6 +1063,61 @@ def sample(out: Path, runs: list[str], n: int = 30, seed: int = 0) -> int:
     return 0
 
 
+def rescore(out: Path, name: str, cache: Path) -> int:
+    """A run's rows scored again by the current checker (CHECKER), without
+    asking the model again: each row's searches replayed from the recording
+    they were served from (SearchCache's file), numbered as Ask numbered
+    them (`Sources`, `shown_search`), and its answer checked anew. A row is
+    rewritten only when the rebuilt sources give back what the row recorded
+    that the change cannot touch — its citing sentences, quoted spans and
+    the spans found; otherwise it is kept as it was and counted. The rows as
+    they were are kept beside, once (answers.checker-<n>.jsonl)."""
+    from app.ask.chat import Sources, shown_search
+    kept: dict[str, Any] = {}
+    for line in cache.read_text(encoding="utf-8").splitlines()[1:]:
+        row = json.loads(line)
+        kept[row["key"]] = row["result"]
+    path = out / "runs" / name / "answers.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    done = kept_as_was = 0
+    new: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("error") or r.get("checker") == CHECKER or not isinstance(r.get("support"), dict):
+            new.append(r)
+            continue
+        sources, turns, whole = Sources(), [], True
+        for c in r.get("calls") or []:
+            if c.get("tool") != "louise_search" or c.get("error"):
+                continue
+            args = c.get("arguments") or {}
+            key = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            if key not in kept:
+                whole = False
+                break
+            shown_search(str(args.get("query", "")), kept[key], sources,
+                         translated=bool(args.get("translate", True)))
+            turns.append({"tool": "louise_search", "result": kept[key]})
+        support = citation_support({"answer": r["answer"], "sources": sources.entries}, turns,
+                                   r.get("query", ""), r.get("lang")) if whole else None
+        same = support is not None and all(support[k] == r["support"].get(k)
+                                           for k in ("sentences", "quotes", "quotes_found"))
+        if not same:
+            kept_as_was += 1
+            new.append(r)
+            continue
+        new.append({**r, "facts": unsupported(r["answer"], r.get("query", ""), turns, r.get("lang")),
+                    "support": support, "checker": CHECKER})
+        done += 1
+    if done:
+        before = path.with_name(f"answers.checker-{rows[0].get('checker', 1)}.jsonl")
+        if not before.exists():
+            before.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in new), encoding="utf-8")
+    print(f"{name}: {done} rows rescored (checker {CHECKER}), {kept_as_was} kept as they were "
+          f"(their sources could not be rebuilt)")
+    return 0 if not kept_as_was else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1071,6 +1182,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
                    "scores the operator's three (conveys, summarises, cites)")
+    p = sub.add_parser("rescore", help="a run's rows scored again by the current checker, "
+                       "its searches replayed from their recording")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--runs", required=True, help="run names, comma-separated")
+    p.add_argument("--search-cache", type=Path, required=True)
     p = sub.add_parser("sample")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--runs", required=True)
@@ -1134,6 +1250,9 @@ def main(argv: list[str] | None = None) -> int:
         where = wire_check.write(a.out, results, arm)
         print(wire_check.table(results) + f"\n{where}")
         return 0 if all(r["passed"] for r in results) else 1
+    if a.cmd == "rescore":
+        codes = [rescore(a.out, n, a.search_cache) for n in a.runs.split(",") if n]
+        return max(codes, default=0)
     if a.cmd == "probe":
         result = sampling_probe.probe(a.model)
         where = sampling_probe.write(a.out, result, a.installed, sampling_probe.localai_version())

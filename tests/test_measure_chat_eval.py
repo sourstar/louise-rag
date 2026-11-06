@@ -556,3 +556,56 @@ def test_a_failed_row_keeps_what_the_server_said(tmp_path):
     assert "failed to parse tool call" in error, "the server's body"
     assert "the request with tools failed first: 500: Unexpected error" in error, "the note"
     assert ev.failure(RuntimeError("endpoint down")) == "RuntimeError: endpoint down"
+
+
+def test_german_nouns_labels_and_translated_names_are_not_flagged():
+    """The walk of 2026-11-06 (München): the measure's "names" were German
+    nouns (Quelle ×18, Werk, Konzerte), list labels ("Auteur:") and the
+    reader's spelling of a source's name ("Principe" for "Prince", "Nápoles"
+    for "Naples", "Calibán"); a name no source holds is still flagged."""
+    assert ev.stated_facts("In der Quelle wird erwähnt, dass Berlioz Konzerte gab.", "de")[0] == []
+    assert ev.stated_facts("* **Auteur:** Hector Berlioz, avec Liszt.", "fr")[0] == ["Berlioz", "Liszt"]
+    assert ev.stated_facts("Personnages principaux: la comtesse et Rohan.", "fr")[0] == ["Rohan"]
+    turns = [{"tool": "louise_search", "result": {"lists": [{"hits": [
+        {"uid": "gutenberg:1232", "title": "The Prince", "text": "Machiavelli on Cesare Borgia"},
+        {"uid": "gutenberg:23042", "title": "The Tempest", "text": "Caliban; Alonso, King of Naples"}]}]}}]
+    sources = [{"n": 1, "uid": "gutenberg:1232"}, {"n": 2, "uid": "gutenberg:23042"}]
+    es = "La obra incluye a Calibán y al rey Alonso de Nápoles [2]. También aparece Próspero [2]."
+    s = ev.citation_support({"answer": es, "sources": sources}, turns, "La tempestad", "es")
+    assert (s["sentences"], s["supported"]) == (2, 1)
+    assert [u["missing"] for u in s["unsupported"]] == [["Próspero"]], "a name no source holds"
+    it = "Nel testo si parla del Principe e di Cesare Borgia [1]."
+    s = ev.citation_support({"answer": it, "sources": sources}, turns, "Machiavelli", "it")
+    assert (s["sentences"], s["supported"]) == (1, 1)
+    assert ev.unsupported(es, "La tempestad", turns, "es")["added_names"] == ["Próspero"]
+    assert not ev.held("Principe", ev.fold("the tempest caliban"))
+
+
+def test_rescore_rewrites_a_run_from_its_recorded_searches(tmp_path, capsys):
+    """`rescore`: the searches replayed from their recording, numbered as Ask
+    numbers them, the answer checked anew; a row whose sources cannot be
+    rebuilt is kept as it was, and the rows as they were are kept beside."""
+    args = {"collections": ["gutenberg"], "query": "La tempestad", "translate": True}
+    result = {"lists": [{"hits": [
+        {"uid": "gutenberg:23042", "title": "The Tempest", "text": "Caliban; Alonso, King of Naples"}]}]}
+    cache = tmp_path / "s.jsonl"
+    cache.write_text(json.dumps({"data": {"gutenberg": "1"}}) + "\n"
+                     + json.dumps({"key": json.dumps(args, sort_keys=True, ensure_ascii=False),
+                                   "result": result, "seconds": 1.0}) + "\n", encoding="utf-8")
+    answer = "La obra incluye a Calibán y al rey Alonso de Nápoles [1]."
+    old = {"sentences": 1, "supported": 0, "quotes": 0, "quotes_found": 0,
+           "unsupported": [{"sentence": answer, "missing": ["Calibán", "Nápoles"]}],
+           "uncited_claims": 0, "uncited": []}
+    rows = [{"key": "W1:es", "lang": "es", "query": "La tempestad", "answer": answer, "error": None,
+             "support": old, "facts": {}, "calls": [{"tool": "louise_search", "arguments": args}]},
+            {"key": "W2:es", "lang": "es", "query": "otra", "answer": answer, "error": None,
+             "support": old, "facts": {}, "calls": [{"tool": "louise_search", "arguments": {"query": "x"}}]}]
+    run = tmp_path / "runs" / "m"
+    run.mkdir(parents=True)
+    (run / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    assert ev.main(["rescore", "--out", str(tmp_path), "--runs", "m", "--search-cache", str(cache)]) == 1
+    got = ev._rows(tmp_path, "m")
+    assert got[0]["checker"] == ev.CHECKER and got[0]["support"]["supported"] == 1
+    assert "checker" not in got[1] and got[1]["support"] == old, "its search is not recorded: kept"
+    assert (run / "answers.checker-1.jsonl").read_text(encoding="utf-8").count("\n") == 2
+    assert "1 rows rescored" in capsys.readouterr().out
