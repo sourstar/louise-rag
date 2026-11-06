@@ -5,10 +5,24 @@
 # answers (blind read), speed and memory on an unloaded node; its probe must pass first.
 # SAMPLING, EVERY VALUE STATED (2026-11-06): the Q8 file's, the card's non-thinking values; neutral
 # penalties, repeat_last_n 64 (docs/notes/nemotron-embed.md "Sampling, Q8 first").
+# f16, function.grammar.disable and stopwords: written by the gallery's qwen3-8b base at install (2026-11-06);
+# kept here so this file equals the node's, key for key.
 {
   "name": "louise-chat-qwen3-8b-q8-kvq8",
   "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
+  "f16": true,
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "stopwords": [
+    "<|im_end|>",
+    "<dummy32000>",
+    "</s>",
+    "<|endoftext|>"
+  ],
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",
     "GGML_SYCL_FA_ONEDNN": "0",

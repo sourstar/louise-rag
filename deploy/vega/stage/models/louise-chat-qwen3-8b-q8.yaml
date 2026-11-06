@@ -16,10 +16,24 @@
 # one back to 0 (LocalAI reads 0 as unset): the chat benchmark's arms send the penalty
 # they test; `repeat_last_n` 64 (llama.cpp's default) because LocalAI sends 0 when the
 # file names none, and 0 DISABLES every penalty in llama.cpp.
+# f16, function.grammar.disable and stopwords: written by the gallery's qwen3-8b base at install (2026-11-06);
+# kept here so this file equals the node's, key for key.
 {
   "name": "louise-chat-qwen3-8b-q8",
   "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
+  "f16": true,
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "stopwords": [
+    "<|im_end|>",
+    "<dummy32000>",
+    "</s>",
+    "<|endoftext|>"
+  ],
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",
     "GGML_SYCL_FA_ONEDNN": "0",
