@@ -291,10 +291,21 @@ class Obtained:
     path: Path
 
 
-def node_key(*, weights: str, set_id: str, ctx: int, instruction: str | None, role: str) -> dict[str, Any]:
-    """What fixes the 512 inputs and the function that answers them."""
-    return {"weights": weights, "set": set_id, "ctx": int(ctx),
-            "instruction": instruction or "", "role": role}
+def node_key(*, weights: str, set_id: str, ctx: int, instruction: str | None, role: str,
+             cut: str = "characters") -> dict[str, Any]:
+    """What fixes the 512 inputs and the function that answers them.
+
+    THE CUT IS PART OF THE INPUT (2026-11-06, wikidata's gate: worst 0.974831
+    against the stored reference). Calibrate cut by characters while the
+    space cuts by tokens, and the key, which did not name the cut, handed
+    those vectors to `cpu-reference` for a token space: its 54 long items
+    were other inputs. A key names its cut when it is not the default
+    `characters`, so every characters entry keeps the digest it had."""
+    key = {"weights": weights, "set": set_id, "ctx": int(ctx),
+           "instruction": instruction or "", "role": role}
+    if cut != "characters":
+        key["cut"] = cut
+    return key
 
 
 def node_directory(key: dict[str, Any]) -> Path:

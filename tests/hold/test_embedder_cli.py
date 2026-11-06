@@ -28,7 +28,7 @@ def test_the_verbs_are_in_the_tree():
                  ["hold", "embedder", "check", "g", "--accept"],
                  ["hold", "embedder", "benchmark", "g"],
                  ["hold", "embedder", "calibrate", "--encoder-weights", "d",
-                  "--engine", "e.toml", "--against", "f.toml", "--ctx", "512"]):
+                  "--engine", "e.toml", "--against", "f.toml", "--ctx", "512", "--cut", "tokens"]):
         assert p.parse_args(argv).fn is not None
 
 

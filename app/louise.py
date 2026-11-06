@@ -4061,7 +4061,8 @@ def cmd_embedder_cpu_reference(a) -> int:
                                else getattr(codex.space.query, "instruction", None))
                 store = cpu_ref.node_directory(cpu_ref.node_key(
                     weights=stated.weights, set_id=set_id, ctx=recipe.ctx,
-                    instruction=instruction, role=role))
+                    instruction=instruction, role=role,
+                    cut=getattr(recipe, "cut", "characters")))
                 cpu_ref.adopt_journal(cpu_ref.journal(a.root, name, role, run_id=stated.run_id,
                                                       set_id=set_id),
                                       store, run_id=stated.run_id, set_id=set_id)
@@ -4128,9 +4129,11 @@ def cmd_embedder_calibrate(a) -> int:
     if instruction and getattr(a, "pairs", None):
         raise CodexError("--document-instruction prefixes a text; a pair space's documents "
                          "are pairs (09 §9.3)")
-    _print(calib.measure(reference, against, set_id=set_id, texts=texts,
-                         embed=calib.http_embed(a.ctx, document_instruction=instruction,
-                                                set_id=set_id)))
+    measured = calib.measure(reference, against, set_id=set_id, texts=texts,
+                             embed=calib.http_embed(a.ctx, document_instruction=instruction,
+                                                    set_id=set_id, cut=a.cut))
+    # the inputs the tolerance was measured on: the recipe's `cut` must be this
+    _print({**measured, "ctx": a.ctx, "cut": a.cut})
     return 0
 
 
@@ -5312,6 +5315,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the space's space.document.instruction (09 §9.3, Codex version 11), "
                         "prepended to every text as the documents will be: Nemotron's "
                         "\"passage: \"; not with --pairs")
+    p.add_argument("--cut", required=True, choices=("characters", "tokens"),
+                   help="how the space cuts an input longer than --ctx: its recipe's `cut`. "
+                        "The tolerance and the CPU reference are measured on the inputs the "
+                        "gate sends; stated, never defaulted (2026-11-06: a token space "
+                        "calibrated by characters failed its gate at 0.974831)")
     p.set_defaults(fn=cmd_embedder_calibrate)
 
     p = everbs.add_parser("run", help="the run an endpoint states now — engine, weights, driver, "

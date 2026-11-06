@@ -92,7 +92,7 @@ def _file(tmp_path: Path, name: str, *, url: str, weights: str | None = None,
 
 def _run(ref: str, *against: str, extra: list[str] | None = None) -> int:
     argv = ["hold", "embedder", "calibrate", "--encoder-weights", W_REF,
-            "--engine", ref, "--ctx", str(CTX)]
+            "--engine", ref, "--ctx", str(CTX), "--cut", "characters"]
     if against:
         argv += ["--against", *against]
     return louise.main(argv + (extra or []))
@@ -323,3 +323,26 @@ def test_an_engine_file_that_is_not_the_runs_is_refused_before_any_text(tmp_path
     assert _run(ref, other) == 2
     assert "hold embedder run" in capsys.readouterr().err
     assert asked == [], "nothing was embedded"
+
+
+def test_the_cut_is_stated_used_and_recorded(tmp_path, monkeypatch, capsys):
+    """2026-11-06, wikidata: calibrate cut by characters (its recipe named no
+    cut) while the space cuts by tokens; the lanes agreed on inputs the gate
+    never sends. --cut is stated, every lane's recipe carries it, and the
+    result names it with the window."""
+    cuts = []
+    _fake_endpoints(monkeypatch)
+    real = embeddings._request_vectors
+
+    def seen(batch, timeout, recipe, runs=None):
+        cuts.append(recipe.cut)
+        return real(batch, timeout, recipe, runs)
+    monkeypatch.setattr(embeddings, "_request_vectors", seen)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_OTHER)
+    assert _run(ref, other) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(cuts) == {"characters"} and (out["cut"], out["ctx"]) == ("characters", CTX)
+    with pytest.raises(SystemExit):
+        louise.main(["hold", "embedder", "calibrate", "--encoder-weights", W_REF, "--engine", ref,
+                     "--against", other, "--ctx", str(CTX)])
