@@ -904,6 +904,59 @@ def score(out: Path, works: Path | None = None) -> int:
     return 0
 
 
+#: what a refusal over the context says: "request (21673 tokens) exceeds the
+#: available context size (8192 tokens)" (LocalAI, measured 2026-11-03)
+_EXCEEDS = re.compile(r"request \((\d+) tokens\)")
+
+
+def prompt_sizes(model: str, queries: list[dict[str, str]], *, collections: list[str] | None = None,
+                 search_cache: SearchCache | None = None, post=None, ask=None) -> list[dict[str, Any]]:
+    """The tokens of Ask's first request for each question, counted by the
+    MODEL'S OWN template (2026-11-06: Command R7B serves 8,192 tokens where
+    the Qwens serve 16,384; does Ask's request fit?). The body Ask sends,
+    tools declared, with `max_tokens` 1: `usage.prompt_tokens` is read, or
+    the count a refusal over the context names. Nothing is generated."""
+    from app import config, llm
+    from app.ask import chat
+    from tools.measure import sampling_probe as sp
+    post = post or sp.http_post
+    ask = ask or chat.ask
+    config.CHAT_MODEL = model
+    out: list[dict[str, Any]] = []
+    for q in queries:
+        seen: dict[str, Any] = {}
+
+        def counted(messages, tools, seen=seen):
+            url, body = llm._request(messages, stream=False, temperature=None, max_tokens=1,
+                                     num_ctx=16384)
+            if tools:
+                body["tools"] = tools
+            status, got = post(url, body)
+            if status == 200:
+                seen["tokens"] = ((got or {}).get("usage") or {}).get("prompt_tokens")
+            else:
+                m = _EXCEEDS.search(str(got))
+                seen.update(tokens=int(m.group(1)) if m else None, refused=status)
+            # one round is the measure: an answer with no call ends the loop
+            return "(measured)", [], {"role": "assistant", "content": "(measured)"}
+        ask(q["query"], collections=collections, call=search_cache, model=counted)
+        out.append({"key": q["key"], "lang": q["lang"], **seen})
+    return out
+
+
+def sizes_report(rows: list[dict[str, Any]], *, window: int, answer: int = 1500) -> str:
+    """How many requests fit `window` with room for an answer of `answer`."""
+    got = sorted(r["tokens"] for r in rows if isinstance(r.get("tokens"), int))
+    if not got:
+        return "no request was counted"
+    def at(p):
+        return got[min(len(got) - 1, int(p * len(got)))]
+    fit = sum(1 for t in got if t + answer <= window)
+    return (f"{len(got)} requests counted of {len(rows)}: median {at(0.5)}, p90 {at(0.9)}, max {got[-1]} "
+            f"tokens; {fit} of {len(got)} fit {window} with {answer} for the answer; "
+            f"{sum(1 for t in got if t > window)} exceed {window} outright")
+
+
 def sample(out: Path, runs: list[str], n: int = 30, seed: int = 0) -> int:
     """The same questions, each model's answer under a blind letter; the key
     apart, so the reading is done before the names are known."""
@@ -972,6 +1025,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tag", default="")
     p.add_argument("--by", required=True, help="who read the pilot")
     p.add_argument("--note", required=True, help="what they found")
+    p = sub.add_parser("prompt-sizes", help="tokens of Ask's first request, by the model's template")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
+    p.add_argument("--per-lang", type=int, default=None)
+    p.add_argument("--langs", default="")
+    p.add_argument("--collections", default="")
+    p.add_argument("--search-cache", type=Path, required=True)
+    p.add_argument("--window", type=int, default=8192)
     p = sub.add_parser("score")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--works", type=Path, default=None, help="one_language_works.py's works.json: "
@@ -1005,6 +1067,16 @@ def main(argv: list[str] | None = None) -> int:
         if a.pilot:
             print(f"pilot: {pilot_report(a.out, a.name, a.tag, [q['key'] for q in queries])}")
         return code
+    if a.cmd == "prompt-sizes":
+        cols = [c for c in a.collections.split(",") if c] or None
+        langs = frozenset(l for l in a.langs.split(",") if l) or None
+        rows = prompt_sizes(a.model, read_queries(a.queries, a.per_lang, langs), collections=cols,
+                            search_cache=SearchCache(a.search_cache, data_version(cols)))
+        where = a.out / "prompt-sizes" / f"{a.model}.jsonl"
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        print(sizes_report(rows, window=a.window) + f"\n{where}")
+        return 0
     if a.cmd == "probe":
         result = sampling_probe.probe(a.model)
         where = sampling_probe.write(a.out, result, a.installed, sampling_probe.localai_version())
