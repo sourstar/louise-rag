@@ -300,7 +300,10 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     added = int(t.add_bos) + int(t.add_eos) - n_empty
     forms: list[tuple[str, Any]] = [("as Ask sends them", tools)]
     if tools:
-        forms += [("as LocalAI's Tool struct writes them", localai_tools(tools)),
+        # 2026-11-06, wire16: Qwen3-8B's engine prompt is Ask's text up to the
+        # parameters object, whose keys come sorted (a Go map), no "strict"
+        forms += [("as Ask sends them, the parameters' keys sorted", parameters_sorted(tools)),
+                  ("as LocalAI's Tool struct writes them", localai_tools(tools)),
                   ("with every key sorted", go_order(tools))]
     candidates: list[tuple[str, str]] = []
     bos_kept: list[bool] = []
@@ -337,13 +340,22 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
         reference = matched[1]
         checks.append(Check("INPUT: the prompt is the template's", True,
                             f"token for token the engine's ({p_chat} tokens): {matched[0]}"))
-    elif unlogged:
+    elif unlogged or no_reuse(tried):
+        # NO PREFIX REUSED (2026-11-06, wire16: Qwen3.5-9B re-evaluated every
+        # candidate whole, parting "at token 1"): a hybrid or recurrent model's
+        # state cannot be cut back to a prefix, so llama.cpp evaluates each
+        # prompt anew and the cache tells nothing. The count chooses, and the
+        # OUTPUT checks below decide: each request a fresh prefill, greedy
+        # answers from the same tokens are the same
         if same_count:
             reference = dict(candidates)[same_count]
+        why = ("no prompt eval line in the backend's log" if unlogged else
+               "the engine reuses no cached prefix (every candidate evaluated whole: a hybrid or "
+               "recurrent model); the greedy answers below decide")
         checks.append(Check("INPUT: the prompt is the template's", bool(same_count),
                             f"{p_chat} prompt tokens through chat; "
                             + (f"the same count: {same_count}" if same_count else "no candidate has that count")
-                            + "; token identity undecidable: no prompt eval line in the backend's log"))
+                            + f"; token identity undecidable: {why}"))
         if not same_count:
             parts = localize(count, n_empty, t, messages, tools, kwargs, post, got)
             checks[-1].detail += "; counts by part: " + ", ".join(
@@ -352,11 +364,16 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
             got["localized"] = parts
     else:
         probed = [r for r in tried if r.get("evaluated") is not None]
-        best = max(probed, key=lambda r: (p_chat or 0) - r["evaluated"], default=None)
+        # the tokens a candidate shares with the engine's prompt: its own
+        # length less what it evaluated (llama.cpp re-evaluates from the first
+        # token that differs)
+        def shared(r: dict[str, Any]) -> int:
+            return (r.get("count") or 0) - r["evaluated"]
+        best = max(probed, key=shared, default=None)
         where = ""
         if best is not None:
             i = [r["candidate"] for r in tried].index(best["candidate"])
-            part = (p_chat or 0) - (best.get("evaluated") or 0)
+            part = shared(best)
             best_ids = ids.get(f"tokenize_candidate_{i}") or []
             if best_ids and 0 <= part < len(best_ids):
                 s1, before = post(f"{chat_url}/v1/detokenize",
@@ -431,6 +448,26 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     checks.append(Check("OUTPUT: no marker left in the answer", not left,
                         "none" if not left else ", ".join(left)))
     return _result(model, question, which, t, reference, append, got, checks, greedy)
+
+
+def parameters_sorted(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tools as Ask sends them, but each function's `parameters` with
+    every key sorted: a struct whose own fields keep their order and whose
+    parameters are a Go map (Qwen3-8B's engine prompt, wire16, 2026-11-06)."""
+    out = []
+    for tool in tools:
+        f = tool.get("function")
+        if isinstance(f, dict) and "parameters" in f:
+            tool = {**tool, "function": {**f, "parameters": go_order(f["parameters"])}}
+        out.append(tool)
+    return out
+
+
+def no_reuse(tried: list[dict[str, Any]]) -> bool:
+    """Every candidate probed evaluated its whole prompt: the engine reused
+    no cached prefix, even of the template's first tokens."""
+    probed = [r for r in tried if isinstance(r.get("evaluated"), int) and isinstance(r.get("count"), int)]
+    return bool(probed) and all(r["evaluated"] >= r["count"] - 1 for r in probed)
 
 
 def localai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
