@@ -2200,4 +2200,16 @@ among the snapshot's bounds). The bounds are keyed once per snapshot and order. 
 Measured on the live manifest, 300 pending documents, both runs all "fresh": **145.6 → 7.9 ms a lookup,
 31,800 → 1 index read.**
 
-**AFTER.** (to be completed after the deploy)
+**AFTER (d2d312e6 = main fe71cd1's tree, deployed 00:10, measured 00:10:24–00:40:17).** Same profile and
+mode. Beside it: the chat_eval whole runs on the card, and from 00:24 the wikidata embedding.
+
+| | fts docs/s (wall) | chunks/s | chunks/doc | fts ms/doc (`unit costs`) | parse pool in flight |
+|---|---|---|---|---|---|
+| BEFORE (d7edb693, 23:03–23:43) | 21.9 | 44 | 2.03 | 54 | 84 % |
+| **AFTER (d2d312e6)** | **503.2** | **2,595** | 5.16 | **1.1** | 51 % |
+
+- The windows cover different parts of the corpus (2.03 vs 5.16 chunks/doc), so by the §6 rule `ms/doc`
+  is the number: 54 → 1.1 ms a document, about 49× better.
+- At ~500 docs/s, the 11.13 M unparsed documents take ~6 h, against ~5 days before.
+- The pool now has free slots (51 % in flight). The limit has moved to the commit: "indexed 3,392 documents /
+  20,004 chunks in one commit (7.8 s)". That is the next thing to read if this pace matters.
