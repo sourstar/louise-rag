@@ -13,7 +13,8 @@ from tools.measure import sampling_probe as sp
 
 
 def engine(*, file_presence: float = 0.0, last_n: int = 64, seed_applied: bool = True,
-           top_k_applied: bool = True, ctx: int = 16384, thinking: bool = False):
+           top_k_applied: bool = True, ctx: int = 16384, thinking: bool = False,
+           sure_repeats: bool = False):
     """A llama.cpp behind LocalAI, as the probe sees it: a request's penalty
     of 0 is unset and the file's (or a family's) applies; repeat_last_n 0
     disables the penalties; top_k 1, a tiny top_p or a min_p near 1 leave
@@ -27,12 +28,13 @@ def engine(*, file_presence: float = 0.0, last_n: int = 64, seed_applied: bool =
             return 400, {"error": {"message": f"request (40000 tokens) exceeds the available "
                                               f"context size ({ctx} tokens)"}}
         presence = body.get("presence_penalty") or file_presence
+        penalised = last_n > 0 and presence >= 1e-3
         greedy = (body.get("temperature") == 0 or (top_k_applied and body.get("top_k") == 1)
                   or body.get("top_p", 1) <= 1e-3 or body.get("min_p", 0) >= 0.99)
         if prompt == sp.REPEAT:
-            text = "R" if last_n == 0 or presence < 1e-3 else f"R{presence}"
+            text = f"R{presence}" if penalised and not sure_repeats else "R"
         elif greedy:
-            text = "G"
+            text = f"G{presence}" if penalised else "G"
         else:
             text = f"H{body.get('seed') if seed_applied else rng.random()}"
         n = min(body["max_tokens"], 30)
@@ -70,6 +72,19 @@ def test_penalties_disabled_by_a_zero_window_are_caught():
     """No repeat_last_n in the file: LocalAI sends 0, which disables them."""
     got = sp.probe("m", engine(last_n=0))
     assert list(_failed(got)) == ["a presence penalty reaches the engine"]
+
+
+def test_a_model_too_sure_to_move_on_a_repetition_shows_the_penalty_on_free_text():
+    """München's first probes, 2026-11-06: told to write a word 30 times,
+    Qwen3-8B was sure enough of every token that presence 2.0 moved none;
+    free text, full of near-ties, is where the penalty shows."""
+    got = sp.probe("louise-chat-qwen3-8b-q8", engine(sure_repeats=True))
+    assert got["passed"], _failed(got)
+    detail = next(c["detail"] for c in got["checks"] if c["name"] == "a presence penalty reaches the engine")
+    assert detail == "2.0 changed the answer on free text"
+    # the negative control: a file with no repeat_last_n (LocalAI sends 0) fails on both
+    live = sp.probe("louise-chat-qwen3-8b", engine(sure_repeats=True, last_n=0))
+    assert "free text or repetition" in _failed(live)["a presence penalty reaches the engine"]
 
 
 def test_a_value_that_does_not_reach_the_engine_is_named():
