@@ -1,0 +1,3770 @@
+[
+{
+"line": 1,
+"query": "Dumas novel about the diamond necklace scandal at the court of Louis XVI and Marie Antoinette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 2,
+"query": "roman de Dumas sur l'affaire du collier de diamants et la comtesse de La Motte à la cour de Marie-Antoinette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 3,
+"query": "romanzo storico sullo scandalo della collana di diamanti alla corte di Maria Antonietta e Cagliostro",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 4,
+"query": "the composer Berlioz recounts his travels in Italy, Germany and Russia in his own memoirs",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 5,
+"query": "autobiographie d'un compositeur romantique français racontant ses voyages et ses concerts en Allemagne et en Russie",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 6,
+"query": "Lebenserinnerungen des französischen Komponisten Berlioz über seine Konzertreisen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 7,
+"query": "comedy where a physician's daughter cures the king of France and is given a nobleman who refuses her",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 8,
+"query": "comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 9,
+"query": "Shakespeare-Komödie: Helena heilt den König von Frankreich und gewinnt den widerspenstigen Bertram",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 10,
+"query": "seventeenth-century French novel of a married young woman at Henry II's court who confesses her love for the Duke of Nemours to her husband",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 11,
+"query": "roman de Madame de La Fayette : l'aveu d'une épouse amoureuse du duc de Nemours à la cour d'Henri II",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 12,
+"query": "novela francesa del siglo XVII sobre una joven casada en la corte de Enrique II enamorada del duque de Nemours",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 13,
+"query": "Flaubert's satire of two copy-clerks who retire to the countryside and try every science and fail",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 14,
+"query": "deux copistes parisiens retirés à la campagne qui essaient toutes les sciences, satire inachevée de Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 15,
+"query": "Flauberts Roman über zwei Schreiber, die aufs Land ziehen und an allen Wissenschaften scheitern",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 16,
+"query": "Hamsun novel about a Norwegian settler who builds a farm in the wilderness",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 17,
+"query": "Roman von Knut Hamsun über einen Siedler, der in der Wildnis Norwegens einen Hof aufbaut",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 18,
+"query": "treatise advising a new ruler that cruelty and deceit may be needed to keep power",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 19,
+"query": "trattato di Machiavelli sul principe nuovo e su come conquistare e mantenere lo stato",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 20,
+"query": "Machiavellis Schrift über den Fürsten und die Kunst, die Macht zu erhalten",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 21,
+"query": "Bjørnson peasant tale of young love between Synnøve and Thorbjørn in rural Norway",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 22,
+"query": "Athenian general's account of the war between Athens and Sparta in the fifth century BC",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 23,
+"query": "relato de Tucídides sobre la guerra entre Atenas y Esparta",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 24,
+"query": "Plato dialogue in which Socrates and a young mathematician examine what knowledge is",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 25,
+"query": "comédie de Molière où deux jeunes provinciales sont dupées par des valets déguisés en marquis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 26,
+"query": "commedia di Molière sulle due giovani pretenziose ingannate da servi travestiti da nobili",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 27,
+"query": "Tarzan reist nach Frankreich und Algerien, kämpft gegen Rokoff und kehrt in den Dschungel zurück",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 28,
+"query": "pièce de Shakespeare : la princesse Imogène, son mari banni et un pari sur sa fidélité",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 29,
+"query": "dramma di Shakespeare sulla principessa Imogene e la scommessa sulla sua fedeltà",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 30,
+"query": "nouvelles de Conrad sur des capitaines de navire dans l'archipel malais",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 31,
+"query": "Erzählungen von Joseph Conrad über Kapitäne im Malaiischen Archipel",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 32,
+"query": "il mago Prospero esiliato su un'isola scatena una tempesta contro il fratello usurpatore",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 33,
+"query": "obra de Shakespeare sobre el mago Próspero, su hija Miranda y una isla encantada",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 34,
+"query": "l'ira di Achille e la contesa con Agamennone durante l'assedio di Troia",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 35,
+"query": "der Zorn des Achilles und sein Streit mit Agamemnon vor Troja",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 36,
+"query": "conte libertin de Diderot : un sultan et un anneau magique qui fait parler les femmes",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 37,
+"query": "Diderots libertiner Roman über einen Sultan mit einem Zauberring, der die Frauen sprechen lässt",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 38,
+"query": "roman picaresque de Lesage : les aventures de Gil Blas de Santillane chez les voleurs et ses nombreux maîtres",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 39,
+"query": "novela picaresca de un joven de Santillana que cae entre ladrones y sirve a muchos amos",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 40,
+"query": "Kindergeschichte von einem ungehorsamen Kaninchen im Garten von Herrn McGregor",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 41,
+"query": "una bambina insegue un coniglio bianco e cade in un mondo di creature strane",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 42,
+"query": "una niña sigue a un conejo blanco por una madriguera hasta un mundo absurdo",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 43,
+"query": "romanzo di Bourget su uno studente che fa un esperimento psicologico su una ragazza nobile",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 44,
+"query": "mujer puritana condenada a llevar una letra A roja por adulterio",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 45,
+"query": "romanzo di Walter Scott sulla rivolta dei covenanters in Scozia nel 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 46,
+"query": "l'eremita nel deserto tentato da visioni di demoni e di dèi, Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 47,
+"query": "comedia de Shakespeare en Mesina con Beatriz y Benedicto y la calumnia contra Hero",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 48,
+"query": "un niño criado por lobos en la selva de la India, con el oso y la pantera",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 49,
+"query": "un hombre despierta tras dos siglos en un Londres futuro y es dueño del mundo",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 50,
+"query": "diario de un niño de escuela en Turín con cuentos mensuales",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 51,
+"query": "Dumas novel diamond necklace scandal Louis XVI Marie Antoinette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 52,
+"query": "The Affair of the Diamond Necklace",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 53,
+"query": "Dumas Alexandre The Affair of the Diamond Necklace",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 54,
+"query": "The Affair of the Diamond Necklace Dumas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 55,
+"query": "romanzo storico scandalo collana diamanti Maria Antonietta Cagliostro",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 56,
+"query": "Mémoires de Hector Berlioz voyages en Italie, en Allemagne, en Russie",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 57,
+"query": "autobiographie Hector Berlioz voyages concerts Allemagne Russie",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 58,
+"query": "Mémoires de Hector Berlioz voyages Allemagne Russie",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 59,
+"query": "Hector Berlioz voyage Allemagne Russie concert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 60,
+"query": "Berlioz Konzertreisen Lebenserinnerungen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 61,
+"query": "All's Well That Ends Well",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 62,
+"query": "Bertrand",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 63,
+"query": "Gillette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 64,
+"query": "All's Well That Ends Well Helena King of France Bertram",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 65,
+"query": "Mademoiselle de Chartres Henry II court love Duke of Nemours husband",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 66,
+"query": "Madame de La Fayette l'aveu d'une épouse amoureuse du duc de Nemours à la cour d'Henri II",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 67,
+"query": "La Princesse de Clèves",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 68,
+"query": "Nemours Henri II",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 69,
+"query": "Madame de La Fayette Henri II",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 70,
+"query": "Madame de La Fayette Henri II court memoirs",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 71,
+"query": "Madame de Clèves Henri II Nemours",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 72,
+"query": "Princesse de Clèves",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 73,
+"query": "Bouvard and Pécuchet copy-clerks retire countryside science fail",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 74,
+"query": "Bouvard and Pécuchet retire countryside science fail",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 75,
+"query": "deux copistes parisiens retirés à la campagne qui essaient toutes les sciences satire inachevée Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 76,
+"query": "Bouvard et Pécuchet",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 77,
+"query": "Bouvard et Pécuchet Flaubert satire unfinished",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 78,
+"query": "Bouvard et Pécuchet Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 79,
+"query": "Bouvard et Pécuchet Flaubet",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 80,
+"query": "Bouvard und Pécuchet Flaubert Land Wissenschaft scheitern",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 81,
+"query": "Flaubert Bouvard Pécuchet Land Wissenschaft scheitern",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 82,
+"query": "Flaubert Bouvard Pécuchet Wissenschaft scheitern",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 83,
+"query": "Flaubert Bouvard Pécuchet Land Wissenschaft",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 84,
+"query": "Flaubert Bouvard Pécuchet Wissenschaft",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 85,
+"query": "Norwegian settler builds farm wilderness Hamsun novel",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 86,
+"query": "Hunger Hamsun",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 87,
+"query": "Hunger novel Hamsun",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 88,
+"query": "Hunger Hamsun novel",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 89,
+"query": "Siedler, Hof aufbauen, Wildnis Norwegen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 90,
+"query": "Hamsun, Knut, Siedler, Norwegen, Hof",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 91,
+"query": "Hamsun, Knut, Siedler, Norwegen, Hof, Wildnis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 92,
+"query": "The Prince Niccolò Machiavelli",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 93,
+"query": "The Prince Niccolò Machiavelli cruelty deceit power",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 94,
+"query": "The Prince Niccolò Machiavelli fear hatred",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 95,
+"query": "The Prince Niccolò Machiavelli fear punishment",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 96,
+"query": "trattato di Niccolò Machiavelli sul principe nuovo e su come conquistare e mantenere lo stato",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 97,
+"query": "Machiavelli Prince Kunst die Macht zu erhalten",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 98,
+"query": "The Prince",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 99,
+"query": "Machiavelli Prince",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 100,
+"query": "Bjørnson peasant tale young love Synnøve Thorbjørn rural Norway",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 101,
+"query": "Bjørnson Synnøve Thorbjørn",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 102,
+"query": "Bjørnstjerne Bjørnson peasant tale",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 103,
+"query": "Bjørnstjerne Bjørnson tale Synnøve",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 104,
+"query": "Tucídides guerra Peloponeso",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 105,
+"query": "Tucídides historia guerra Peloponeso",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 106,
+"query": "Molière valets déguisés en marquis dupées provinciales",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 107,
+"query": "Molière Étourdi",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 108,
+"query": "Molière valet marquis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 109,
+"query": "Molière La Grange marquis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 110,
+"query": "The Pretentious Young Ladies Molière",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 111,
+"query": "Tarzan",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 112,
+"query": "Rokoff",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 113,
+"query": "The Return of Tarzan",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 114,
+"query": "The Return of Tarzan Edgar Rice Burroughs",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 115,
+"query": "Cymbeline Imogène mari banni pari fidélité",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 116,
+"query": "Imogène pari fidélité",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 117,
+"query": "Imogène pari",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 118,
+"query": "Imogène wager",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 119,
+"query": "Imogène fiancé",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 120,
+"query": "Shakespeare Imogene Betrayal",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 121,
+"query": "Imogene Cymbeline",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 122,
+"query": "Imogene Iachimo",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 123,
+"query": "Imogene Iachimo bracelet",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 124,
+"query": "Iachimo Posthumus",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 125,
+"query": "Shakespeare Imogene Cymbeline betrayal",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 126,
+"query": "Joseph Conrad capitaine Malais archipel",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 127,
+"query": "Almayer Conrad",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 128,
+"query": "Vidar Conrad",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 129,
+"query": "Malays Archipelago races",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 130,
+"query": "Malays Archipelago",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 131,
+"query": "Joseph Conrad Kapitäne Malaiischen Archipel Erzählungen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 132,
+"query": "Joseph Conrad Malaiischen Archipel Erzählungen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 133,
+"query": "Joseph Conrad Kapitäne Malaiischen Archipel",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 134,
+"query": "Prospero esiliato su un'isola tempesta fratello usurpatore",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 135,
+"query": "The Tempest Prospero Miranda island",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 136,
+"query": "l'ira di Achille e la contesa con Agamemnon durante l'assedio di Troia",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 137,
+"query": "Achille e Agamemnon",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 138,
+"query": "Achilles anger Agamemnon Troy",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 139,
+"query": "Achilles anger Agamemnon",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 140,
+"query": "conte libertin de Diderot sultan anneau magique",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 141,
+"query": "Diderot sultan anneau magique",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 142,
+"query": "Diderot Sultan Zauberring Frauen sprechen",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 143,
+"query": "Diderot Les Bijoux Indiscrets Sultan",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 144,
+"query": "Diderot Sultan Zauberring",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 145,
+"query": "Diderot Les Bijoux Indiscrets",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 146,
+"query": "Les aventures de Gil Blas de Santillane chez les voleurs et ses nombreux maîtres",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 147,
+"query": "Gil Blas de Santillane",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 148,
+"query": "Les aventures de Gil Blas de Santillane",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 149,
+"query": "Gil Blas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 150,
+"query": "Gil Blas de Santillana",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 151,
+"query": "Peter Rabbit",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 152,
+"query": "Mr. McGregor garden accident pie",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 153,
+"query": "Benjamin Bunny Mr. McGregor",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 154,
+"query": "Alice White Rabbit rabbit with watch pocket",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 155,
+"query": "Alice",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 156,
+"query": "Alice's Adventures in Wonderland",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 157,
+"query": "Le Disciple Paul Bourget studente ragazza nobile",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 158,
+"query": "Le Disciple Paul Bourget studente Robert Greslou",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 159,
+"query": "Robert Greslou Paul Bourget",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 160,
+"query": "Robert Greslou",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 161,
+"query": "Le Disciple Paul Bourget",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 162,
+"query": "Le Disciple Paul Bourget Robert Greslou",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 163,
+"query": "Walter Scott Covenanters Scotland 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 164,
+"query": "Waverley Covenanters 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 165,
+"query": "Waverley 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 166,
+"query": "l'eremita nel deserto tentato da visioni di demoni e di dèi Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 167,
+"query": "l'eremita nel deserto Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 168,
+"query": "Ermite nel deserto Flaubert",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 169,
+"query": "Shakespeare Messina Beatrice Benedicto calumnia Hero",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 170,
+"query": "Much Ado about Nothing Messina Leonato Hero Beatrice Benedicto Claudio Borachio",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 171,
+"query": "Benedick Messina Claudio Borachio",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 172,
+"query": "Borachio Messina Claudio",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 173,
+"query": "Benedick Benedick Messina Claudio",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 174,
+"query": "The Jungle Book",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 175,
+"query": "Mowgli",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 176,
+"query": "Baloo",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 177,
+"query": "Bagheera",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 178,
+"query": "Shere Khan",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 179,
+"query": "Londres futuro dueño del mundo",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 180,
+"query": "War of the Worlds",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 181,
+"query": "The War of the Worlds",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 182,
+"query": "Corazón: diario de un niño",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 183,
+"query": "Hirmuhallitus",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 184,
+"query": "Dumas novel about the diamond necklace scandal at the court of Louis XVI and Marie Antoinette translation",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 185,
+"query": "Le Collier de la Reine",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 186,
+"query": "autobiographie d'un compositeur romantique français",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 187,
+"query": "autobiographie d'un compositeur romantique français racontant ses voyages et ses concerts",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 188,
+"query": "Memoires d'un artiste — Gounod, Charles (fr)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 189,
+"query": "Portraits and souvenirs — Saint-Saëns, Camille (fr)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 190,
+"query": "The World's Great Men of Music: Story-Lives of Master Musicians — Brower, Harriette (en)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 191,
+"query": "Franz Liszt — Huneker, James (en)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 192,
+"query": "Ma vie musicale — Rimsky-Korsakov, Nikolay; Halpérine-Kaminsky, E. (Ely) (translator) (fr)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 193,
+"query": "Hector Berlioz: A Romantic Tragedy — Peyser, Herbert F. (Herbert Francis) (en)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 194,
+"query": "Les musiciens et la musique — Berlioz, Hector; Hallays, André (author of introduction) (fr)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 195,
+"query": "The Standard Cantatas: Their Stories, Their Music, and Their Composers A Handbook — Upton, George P. (George Putnam) (en)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 196,
+"query": "Library of the World's Best Literature, Ancient and Modern — Volume 04 — Warner, Charles Dudley (editor); Mabie, Hamilton Wright (editor); Runkle, Lucia Gilbert (Lucia Isabella Gilbert) (editor); Warner, George H. (editor) (en)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 197,
+"query": "Shakespeare comedy Helen cures king and marries Bertrand who spurns her",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 198,
+"query": "Shakespeare All's Well That Ends Well plot",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 199,
+"query": "Shakespeare All's Well That Ends Well Helen cures king",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 200,
+"query": "Shakespeare All's Well That Ends Well Helen cures king and marries Bertrand who spurns her",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 201,
+"query": "gutenberg:50724",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 202,
+"query": "gutenberg:1430",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 203,
+"query": "La Princesse de Clèves Madame de La Fayette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 204,
+"query": "Flaubert's novel about two writers who move to the countryside and fail at all sciences",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 205,
+"query": "Bouvard et Pécuchet text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 206,
+"query": "The Prince Machiavelli",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 207,
+"query": "The Pretentious Young Ladies",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 208,
+"query": "Molière comedy about two pretentious young ladies",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 209,
+"query": "Précieuses Ridicules",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 210,
+"query": "Memoires de Hector Berlioz comprenant ses voyages en Italie, en Allemagne, en Russie et en Angleterre, 1803-1865",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 211,
+"query": "memoires of French composer Berlioz about his concert tours",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 212,
+"query": "Berlioz's memoirs about his concert tours",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 213,
+"query": "Berlioz's memoirs about his concert tours in German",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 214,
+"query": "Berlioz's memoirs about his concert tours in French",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 215,
+"query": "Berlioz's memoirs about his concert tours in English",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 216,
+"query": "Shakespeare comedy where Helen cures the king and marries Bertrand who spurns her",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 217,
+"query": "Shakespeare comedy Helena heals the King of France and wins the wayward Bertram",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 218,
+"query": "gutenberg:1791",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 219,
+"query": "Ruhtinas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 220,
+"query": "Machiavelli Prince state",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 221,
+"query": "The Pretentious Young Ladies Molière plot",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 222,
+"query": "Les Précieuses ridicules Molière plot",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 223,
+"query": "full title of Dumas novel about the diamond necklace scandal at the court of Louis XVI and Marie Antoinette",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 224,
+"query": "full title of [16] Arsène Lupin, gentleman-cambrioleur",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 225,
+"query": "Comédie de Shakespeare où Hélène guérit le roi et épouse Bertrand qui la fuit",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 226,
+"query": "Tout est bien qui finit bien",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 227,
+"query": "[1] William Shakespeare: A Critical Study — Brandes, Georg; Archer, William (translator); Morison, Mary (translator); White, Diana (translator) (en) · gutenberg:50724 · unverified\n[2] William Shakespeare — Masefield, John (en) · gutenberg:27264 · unverified\n[3] Beautiful Stories from Shakespeare — Nesbit, E. (Edith); Shakespeare, William (en) · gutenberg:1430 · unverified\n[4] Tales from Shakespeare — Lamb, Charles; Lamb, Mary; Rackham, Arthur (illustrator) (en) · gutenberg:20657 · unverified · other editions held: Tales from Shakespeare (en); Tales from Shakespeare (en)\n[5] An Introduction to Shakespeare — MacCracken, H. N. (Henry Noble); Durham, W. H. (Willard Higley); Pierce, F. E. (Frederick Erastus) (en) · gutenberg:30982 · unverified\n[6] Characteristics of Women: Moral, Poetical, and Historical — Jameson, Mrs. (Anna) (en) · gutenberg:26152 · unverified\n[7] The Circle of Knowledge: A Classified, Simplified, Visualized Book of Answers — Ruoff, Henry W. (Henry Woldmar) (editor) (en) · gutenberg:48661 · unverified\n[8] Character Sketches of Romance, Fiction and the Drama, Vol. 1 A Revised American Edition of the Reader's Handbook — Brewer, Ebenezer Cobham; Harland, Marion (editor) (en) · gutenberg:11431 · unverified\n[9] Character Sketches of Romance, Fiction, and the Drama, Vol. 2 A Revised American Edition of the Reader's Handbook — Brewer, Ebenezer Cobham; Harland, Marion (editor) (en) · gutenberg:58596 · unverified\n[10] Loppu hyvä, kaikki hyvä — Shakespeare, William; Cajander, Paavo Emil (translator) (fi) · gutenberg:44580 · unverified · other editions held: All's Well That Ends Well (en); All's Well That Ends Well (en); All's Well That Ends Well (en)\n\nSearched on its text only: gutenberg (gutenberg: the query encoder's run sha256:e040b40bd3e464b7… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on)\n",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 228,
+"query": "As a counterpart to the comedy of _Love's Labour's Lost_, Shakespeare soon after composed another, entitled _Love's Labour's Won_. This we learn from the celebrated passage in Francis Meres' _Palladis Tamia_, where he enumerates the plays which Shakespeare had written up to that date, 1598. We know, however, that no play of that name is now included among the poet's works. Since it is scarcely conceivable that a play of Shakespeare's, once acted, should have been entirely lost, the only question is, which of the extant comedies originally bore that title. But in reality there is no question at …",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 229,
+"query": "Love's Labour's Won",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 230,
+"query": "«Flauberts Roman über zwei Schreiber, die aufs Land ziehen und an allen Wissenschaften scheitern» and its translations",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 231,
+"query": "«Flauberts Roman über zwei Schreiber, die aufs Land ziehen und an allen Wissenschaften scheitern»",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 232,
+"query": "Machiavelli, Niccolò, Ruhtinas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 233,
+"query": "Niccolò Machiavelli Ruhtinas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 234,
+"query": "Machiavelli Ruhtinas",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 235,
+"query": "treatato di Machiavelli sul principe nuovo e su come conquistare e mantenere lo stato",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 236,
+"query": "Portraits littéraires, Tome II",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 237,
+"query": "Molière - Œuvres complètes, Tome 2",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 238,
+"query": "Don Garcia of Navarre; Or, the Jealous Prince. A Heroic Comedy in Five Acts.",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 239,
+"query": "Histoire Anecdotique de l'Ancien Théâtre en France, Tome Second Théâtre-Français, Opéra, Opéra-Comique, Théâtre-Italien, Vaudeville, Théâtres forains, etc...",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 240,
+"query": "An Essay on Laughter: Its Forms, Its Causes, Its Development and Its Value",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 241,
+"query": "The School for Husbands",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 242,
+"query": "Runous ja runouden muodot: Kirjoitelmia. Runoja.",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 243,
+"query": "Schattenbilder : Eine Fibel für Kulturbedürftige in Deutschland",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 244,
+"query": "Hamsun novel about a Norwegian settler who builds a farm in the wilderness translations",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 246,
+"query": "The Women at the Fountain",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 247,
+"query": "Knut Hamsun novel about a settler building a farm in the wilderness of Norway",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 248,
+"query": "The Prince Machiavelli cruelty deceit power",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 249,
+"query": "Machiavelli The Prince cruelty deceit power",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 255,
+"query": "deux jeunes provinciales dupées par des valets déguisés en marquis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 256,
+"query": "Molière comedy two young provincials duped by valets disguised as marquises",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 257,
+"query": "The Beasts of Tarzan",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 258,
+"query": "Tarzan the Untamed",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 259,
+"query": "Tarzan the Terrible",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 260,
+"query": "Imogen and the bet on her fidelity Shakespeare drama",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 261,
+"query": "Cymbeline tragedy Shakespeare",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 262,
+"query": "Shakespeare tragedy Imogen and the bet on her fidelity",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 263,
+"query": "Shakespeare tragedy Imogen and fidelity",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 264,
+"query": "Shakespeare tragedy Imogen and her fidelity",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 265,
+"query": "Erzählungen von Joseph Conrad über Kapitäne im Malaiischen Archipel translations",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 266,
+"query": "ira di Achille e la contesa con Agamennone durante l'assedio di Troia",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 267,
+"query": "Achille's anger and the dispute with Agamemnon during the siege of Troy",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 268,
+"query": "Les bijoux indiscrets",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 269,
+"query": "Diderot Les bijoux indiscrets women speak",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 270,
+"query": "Diderot Les bijoux indiscrets ring women speak",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 271,
+"query": "Kindergeschichte von einem ungehorsamen Kaninchen im Garten von Herrn McGregor translations",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 272,
+"query": "Alice insegue un coniglio bianco e cade in un mondo di creature strane",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 273,
+"query": "Walter Scott novel on the covenanters' revolt in Scotland in 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 274,
+"query": "Flaubert l'eremita nel deserto tentato da visioni di demoni e di dèi",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 275,
+"query": "El libro de las tierras vírgenes — Kipling, Rudyard; Triadó, José (illustrator); Perés, Ramón D. (Ramón Domingo) (translator) (es) · gutenberg:69552 · unverified · other editions held: The Jungle Book (en); The Jungle Book (en); Viidakkopoika (fi)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 276,
+"query": "Rudyard Kipling",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 277,
+"query": "diario de un niño de escuela en Turín con cuentos mensuales translations",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 278,
+"query": "Knut Hamsun Siedler Wildnis Norwegen Hof",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 279,
+"query": "Synnøve and Thorbjørn rural Norway",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 280,
+"query": "Synnøve and Thorbjørn love rural Norway",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 281,
+"query": "war between Athens and Sparta in the fifth century BC",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 282,
+"query": "war between Athens and Sparta in the fifth century BC Finnish",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 283,
+"query": "The Story of Mankind — Van Loon, Hendrik Willem (en) · gutenberg:754",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 284,
+"query": "The Story of Mankind — Van Loon, Hendrik Willem (en) · gutenberg:754 Finnish",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 285,
+"query": "Keskikoulun Yleinen Historia. 1. Vanha ja Keskiaika Oppi- ja Lukukirja Keski- ja Tyttökouluille Sekä Seminaareille — Mantere, Oskari; Sarva, Gunnar (fi) · gutenberg:66322",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 286,
+"query": "Molière comédie deux jeunes provinciales dupées par des valets déguisés en marquis",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 287,
+"query": "Les Précieuses Ridicules",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 288,
+"query": "Les Précieuses Ridicules résumé",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 289,
+"query": "Tarzan of the Apes",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 290,
+"query": "Tarzan ja kultaleijona: Seikkailuromaani Afrikan aarniometsistä",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 291,
+"query": "Tarzanin viidakkoseikkailuja: Seikkailuja Afrikan aarniometsissä",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 292,
+"query": "Tarzan ja Oparin aarteet: Seikkailuromaani Afrikan aarniometsistä",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 293,
+"query": "Tarzan the invincible",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 294,
+"query": "Tarzanin poika",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 295,
+"query": "Tarzan and the lost empire",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 296,
+"query": "Imogen and the wager on her fidelity Shakespeare drama",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 297,
+"query": "Cymbeline Shakespeare",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 298,
+"query": "nouvelles de Conrad",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 299,
+"query": "nouvelles de Conrad sur des capitaines de navire",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 300,
+"query": "Entre terre et mer full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 301,
+"query": "The Malay Archipelago, Volume 2 The Land of the Orang-utan and the Bird of Paradise; A Narrative of Travel, with Studies of Man and Nature full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 302,
+"query": "La Tempesta full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 303,
+"query": "The Tempest full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 304,
+"query": "Homer: The Iliad; The Odyssey",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 305,
+"query": "Iliad",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 306,
+"query": "Achilles anger Agamemnon Iliad",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 307,
+"query": "Les Bijoux Indiscrets, or, The Indiscreet Toys",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 308,
+"query": "Diderot Les Bijoux Indiscrets women speak",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 309,
+"query": "Les bijoux indiscrets women speak",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 310,
+"query": "Aventures d'Alice au pays des merveilles",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 311,
+"query": "La letra escarlata novela escrita en inglés",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 312,
+"query": "The Scarlet Letter",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 313,
+"query": "Nathaniel Hawthorne",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 314,
+"query": "Walter Scott novel on the Covenanters' revolt in Scotland in 1679",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 315,
+"query": "Les metteurs en scène",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 316,
+"query": "Les metteurs en scène full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 317,
+"query": "Hamsun / Flaubert: Zwei Reden full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 318,
+"query": "Flaubert und die Herkunft des modernen Romans full text",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 319,
+"query": "El libro de las tierras vírgenes — Kipling, Rudyard; Triadó, José (illustrator); Perés, Ramón D. (Ramón Domingo) (translator) (es)",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+},
+{
+"line": 320,
+"query": "The Jungle Book — Kipling, Rudyard",
+"legs_withheld": [
+{
+"collection": "gutenberg",
+"leg": "vector",
+"reason": "gutenberg: the query encoder's run sha256:b12481cba1aaceb2… has a kept statement the worker has not re-checked since it started: the vector leg waits for that re-check, and the text leg goes on",
+"collection_id": "sha256:6f030405f330815d6aeee241842289a7c810e9bf1f3feb8d6e48425e7f28c616"
+}
+]
+}
+]
