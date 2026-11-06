@@ -2177,3 +2177,27 @@ uid key: 11.8 s per 500 uids. The plan test had used 2 uids (scheduling.md §5, 
   pace and the time left.
 - Genesis imports: none in the 33 min. Before, they came every 1–2 h (es/042), so this is still to be
   read.
+
+## 2026-11-06 — a record lookup reads the true part first (wikipedia fts)
+
+**Scenario.** Node running (night profile, 12 cores; the quiet profile's acquire-only mode was lifted at
+23:25 by the operator). wikipedia: 11.13 M documents unparsed (`rdf_done=0`), 41.79 M done; embed off.
+gutenberg, normattiva and pubmed are caught up; a chat_eval run uses the card in its own container.
+
+**BEFORE (d7edb693, 23:03–23:43).** wikipedia fts 21.9 docs/s wall, 44 chunks/s, 2.03 chunks/doc,
+54 ms/doc in `unit costs`. py-spy (23:30): the pipeline thread waits on the parse pool 85 % of the time.
+Four children, 30 s each: ~70 % of their working time in `pack.records.read_index` (JSON decode of a part's
+index), reached from `record_source.lookup`.
+
+**Cause.** Each of wikipedia's 188 slices holds both layers (wikivec ids ~10^10, dump ids ~10^12), so one
+part per slice straddles the gap and its range claims nearly every id. 166–167 parts claimed each pending
+document, and `lookup` tried them in snapshot order. With 64 indexes cached per child, each try was a fresh
+decode: 31,800 index reads for 300 documents, 145.6 ms a lookup.
+
+**The change.** `Snapshot.lookup_order` gives the same candidates narrowest range first (width in ranks
+among the snapshot's bounds). The bounds are keyed once per snapshot and order. `record_source.lookup` and
+`ask/works.py` (both stop at the first part holding the uid) use it. Same records: a uid is in one part.
+Measured on the live manifest, 300 pending documents, both runs all "fresh": **145.6 → 7.9 ms a lookup,
+31,800 → 1 index read.**
+
+**AFTER.** (to be completed after the deploy)

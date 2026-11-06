@@ -322,3 +322,31 @@ def test_a_loaded_snapshot_reads_its_delta_only_when_asked(tmp_path):
     pretty.write_text(__import__("json").dumps(full.to_dict(), indent=1), encoding="utf-8")
     other = sn.load(pretty)
     assert not isinstance(other.delta, sn.LazyDelta) and other.hash == full.hash
+
+
+def test_a_lookup_tries_the_narrowest_range_first():
+    """wikipedia, 2026-11-06: a slice holding two id spaces has one part
+    straddling the gap, whose range claims nearly every id. 166 such parts
+    were read before the true one; the true part's range is the tight one."""
+    s = snap(shards=(shard("lang=de", 1, "1", "10", "1000000000"),          # straddles the gap
+                     shard("lang=fa", 1, "2", "9000", "9100"),               # the true part
+                     shard("lang=en", 1, "3", "50", "2000000000")),          # straddles too
+             )
+    assert [x.slice for x in s.shards_of("9050", "numeric")] == ["lang=de", "lang=fa", "lang=en"], \
+        "shards_of keeps the snapshot's order"
+    assert [(x.slice, x.n) for x in s.lookup_order("9050", "numeric")] == \
+        [("lang=fa", 1), ("lang=de", 1), ("lang=en", 1)]
+    assert sorted(map(id, s.lookup_order("9050", "numeric"))) == sorted(map(id, s.shards_of("9050", "numeric")))
+    assert s.lookup_order("x", "numeric") == [] and s.lookup_order("1", "numeric") == []
+
+
+def test_the_bounds_are_keyed_once_per_snapshot_and_order(monkeypatch):
+    from app.hold import records as rec
+    s = snap()
+    calls = []
+    real = rec.order_key
+    monkeypatch.setattr(rec, "order_key", lambda i, o: calls.append(i) or real(i, o))
+    for nid in ("150", "250", "350", "999"):
+        s.shards_of(nid, "numeric")
+    assert len(calls) == 2 * len(s.shards) + 4, "each bound keyed once, then one key per lookup"
+    assert s == snap() and s.hash == snap().hash, "the cache is not part of the snapshot"

@@ -125,7 +125,9 @@ def lookup(collection, row) -> tuple[dict | None, str]:
     want = row["txt_hash"] if "txt_hash" in row.keys() else None
     from .pack import records as pack_records
     order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
-    for shard in snap.shards_of(str(row["native_id"]), order):
+    # narrowest range first: the true part before the straddling ones
+    # (Snapshot.lookup_order — 166 index reads a wikipedia lookup before)
+    for shard in snap.lookup_order(str(row["native_id"]), order):
         path = Path(tree) / shard.path
         try:
             rec = pack_records.read_record(path, uid)

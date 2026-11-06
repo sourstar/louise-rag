@@ -302,13 +302,60 @@ class Snapshot:
         text, so in a numeric collection "1000" fell in the shard ending at
         "999", and it returned the first slice's shard whatever the record's.
         """
+        return [s for _w, _i, s in self._containing(native_id, order)]
+
+    def lookup_order(self, native_id: str, order: str = "bytes") -> list[Shard]:
+        """`shards_of`, NARROWEST RANGE FIRST: the order to LOOK for a
+        record in, by a caller that stops at the first part holding it.
+
+        A range claims an id; only the part's index says whether it holds
+        it, and reading an index is the cost. A slice whose records sit in
+        two id spaces has one part straddling the gap, and its range claims
+        nearly every id: wikipedia's layer 1 (wikivec ids, ~10^10) and
+        layer 2 (dump ids, ~10^12) give each of its 188 slices such a part,
+        so 166 parts claimed every id and the true part was tried somewhere
+        among them — 166 index decodes a document with a cache of 64
+        (measured live 2026-11-06: 166 ms a lookup; the pool's children
+        spent ~70 % of their time in `read_index`). The true part's range is
+        tight, so trying the narrowest first finds it first. The width is
+        measured in RANKS among all the snapshot's bounds, so it means the
+        same in either order (09 §9.3). Same set as `shards_of`: a uid is in
+        one part only, so the record found is the same; only the reads
+        before it change."""
+        return [s for _w, _i, s in sorted(self._containing(native_id, order))]
+
+    def _containing(self, native_id: str, order: str) -> list[tuple[int, int, Shard]]:
+        """(width, position, shard) of every shard whose range contains the
+        id, in snapshot order. The bounds are keyed once per snapshot and
+        order (26,551 parts re-keyed per document cost more than the lookup)."""
         from .records import RecordsError, order_key
+        keyed = self._keyed(order)
+        if keyed is None:
+            return []                       # a bound this order cannot place (as before: no shard)
         try:
             k = order_key(native_id, order)
-            return [s for s in self.shards
-                    if order_key(s.first_id, order) <= k <= order_key(s.last_id, order)]
         except RecordsError:
             return []                       # an id this order cannot place: no shard holds it
+        return [(w, i, s) for i, (f, l, w, s) in enumerate(keyed) if f <= k <= l]
+
+    def _keyed(self, order: str) -> list[tuple[Any, Any, int, Shard]] | None:
+        # a cache beside the fields, not one of them: the dataclass compares
+        # and serialises its declared fields only (`canonical`, `hash`)
+        cache = self.__dict__.setdefault("_keyed_cache", {})
+        if order in cache:
+            return cache[order]
+        from bisect import bisect_left
+        from .records import RecordsError, order_key
+        try:
+            bounds = [(order_key(s.first_id, order), order_key(s.last_id, order), s)
+                      for s in self.shards]
+        except RecordsError:
+            cache[order] = None
+            return None
+        points = sorted({b for f, l, _s in bounds for b in (f, l)})
+        cache[order] = [(f, l, bisect_left(points, l) - bisect_left(points, f), s)
+                        for f, l, s in bounds]
+        return cache[order]
 
     def shard_of(self, native_id: str, order: str = "bytes") -> Shard | None:
         """The ONE shard that can hold this native_id; None when none can,
