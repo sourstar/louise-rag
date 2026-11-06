@@ -400,3 +400,22 @@ def test_ask_sends_no_temperature_and_each_model_runs_its_own_file(fake_chat, mo
     text = (root / "louise-chat-qwen3-8b.yaml").read_text()
     cfg = _json.loads("\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#")))
     assert cfg["parameters"]["temperature"] == 0.2, "the live model runs as it was measured"
+
+
+def test_a_caller_s_sampling_reaches_the_request_in_both_dialects(fake_chat, monkeypatch):
+    """The chat benchmark's arms (2026-11-06): values sent over the model
+    file for this request only; a name the client does not know is refused,
+    never sent to be ignored."""
+    arm = {"temperature": 0.1, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}
+    monkeypatch.setattr(config, "CHAT_API", "openai")
+    fake_chat["answer"] = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+    llm.chat_tools([{"role": "user", "content": "q"}], None, sampling=arm)
+    assert {k: fake_chat["body"][k] for k in arm} == arm
+    llm.chat_tools([{"role": "user", "content": "q"}], None, temperature=0.4, sampling={"temperature": 0.1})
+    assert fake_chat["body"]["temperature"] == 0.1, "the arm's value wins"
+    monkeypatch.setattr(config, "CHAT_API", "ollama")
+    fake_chat["answer"] = {"message": {"role": "assistant", "content": "ok"}}
+    llm.chat_tools([{"role": "user", "content": "q"}], None, sampling=arm)
+    assert {k: fake_chat["body"]["options"][k] for k in arm} == arm
+    with pytest.raises(ValueError, match="mirostat"):
+        llm.chat_tools([{"role": "user", "content": "q"}], None, sampling={"mirostat": 2})

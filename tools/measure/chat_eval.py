@@ -93,6 +93,26 @@ and a run resumes where it stopped), the improvement deployed, and the run
 resumed with another `--tag`: `score` gives each tag its own rows, so the
 same questions before and after are read side by side. The tag is not a
 setting: one run's answers may carry several.
+
+SAMPLING ARMS (operator, 2026-11-06: "let's try to optimize the results by
+changing their parameters"; docs/notes/nemotron-embed.md, "Sampling, Q8
+first"). `run --sampling temperature=0.1,presence_penalty=1.5` sends those
+values with every request of the run, over the model file's; the run is
+the arm, its name says which (`qwen3-8b-q8.t01`), and its settings.json
+holds them, so a run never mixes two. What LocalAI does with them decides
+what can be sent (measured from its code, 2026-11-06):
+- a request's presence, frequency and repeat penalties of 0 read as UNSET
+  (plain floats, `!= 0` in the request merge): the model file's value
+  applies, silently. 0 is refused here; the bench's model files hold the
+  neutral values and an arm sends the penalty it tests;
+- llama.cpp applies the penalties over the last `repeat_last_n` tokens
+  (prompt tail included), and 0 there DISABLES them; LocalAI sends 0 when
+  the file names none. The bench's files state 64, llama.cpp's default;
+- an unset temperature, top_p or top_k gets LocalAI's generic 0.9, 0.95 and
+  40, not the card's: the files state every value.
+LOOPS are counted (`looped`): a span of words repeated back to back three
+times, the degenerate repetition near-greedy sampling can fall into (the
+35B pilot, 2026-11-03: "Rouge-Profond ? Non, …" to the token bound).
 """
 from __future__ import annotations
 
@@ -446,6 +466,68 @@ def read_queries(path: Path, per_lang: int | None = None,
     return rows
 
 
+#: penalties LocalAI cannot set to 0 from a request: 0 is its "unset", and the
+#: model file's value would apply without a word
+UNSETTABLE_ZERO = frozenset({"presence_penalty", "frequency_penalty", "repeat_penalty"})
+_INT_SAMPLING = frozenset({"top_k", "seed"})
+
+
+def parse_sampling(text: str) -> dict[str, float | int]:
+    """`temperature=0.1,top_p=0.8` as the values an arm sends; a name the
+    chat client does not send, a value that is not a number, or a penalty
+    of 0 (UNSETTABLE_ZERO) is refused with the reason."""
+    from app.llm import SAMPLING_KEYS
+    out: dict[str, float | int] = {}
+    for part in (p.strip() for p in text.split(",")):
+        if not part:
+            continue
+        key, sep, value = part.partition("=")
+        key = key.strip()
+        if not sep or key not in SAMPLING_KEYS:
+            raise SystemExit(f"--sampling: {part!r}: not one of {', '.join(sorted(SAMPLING_KEYS))}=<number>")
+        try:
+            number: float | int = int(value) if key in _INT_SAMPLING else float(value)
+        except ValueError:
+            raise SystemExit(f"--sampling: {key}={value!r} is not a number") from None
+        if key in UNSETTABLE_ZERO and number == 0:
+            raise SystemExit(f"--sampling: {key}=0 reads as unset in LocalAI (the model file's value "
+                             f"would apply); put the neutral value in the model file instead")
+        out[key] = number
+    return out
+
+
+def arm_model(sampling: dict[str, float | int] | None):
+    """Ask's model for an arm: `llm.chat_tools` sending `sampling` with every
+    round; None (the model file's own sampling) without one."""
+    if not sampling:
+        return None
+    from app import llm
+    return lambda messages, tools: llm.chat_tools(messages, tools, sampling=sampling)
+
+
+#: the shortest repeated span, in words, and how many times back to back
+LOOP_MIN_WORDS, LOOP_TIMES = 8, 3
+_LOOP_CITE = re.compile(r"\[[^\]]*\]")
+
+
+def looped(answer: str, *, max_span: int = 80) -> bool:
+    """A span of words repeated back to back LOOP_TIMES times, at least
+    LOOP_MIN_WORDS words in all, citations aside: the degenerate repetition
+    of near-greedy decoding (Holtzman et al., ICLR 2020, "The Curious Case
+    of Neural Text Degeneration"). A list whose items differ is not one."""
+    words = _LOOP_CITE.sub(" ", answer or "").lower().split()
+    for n in range(1, max_span + 1):
+        if n * LOOP_TIMES < LOOP_MIN_WORDS:
+            continue
+        for i in range(len(words) - n * LOOP_TIMES + 1):
+            if words[i + n] != words[i]:
+                continue
+            span = words[i:i + n]
+            if all(words[i + k * n:i + (k + 1) * n] == span for k in range(1, LOOP_TIMES)):
+                return True
+    return False
+
+
 def answer_language(text: str) -> str | None:
     from app import query_language
     return query_language.guess(text or "", query_language.guessable())
@@ -464,7 +546,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         ask: Callable[..., dict[str, Any]] | None = None,
         guess: Callable[[str], str | None] = answer_language,
         pid: Callable[[], int | None] | None = None, tag: str = "",
-        redo: bool = False, search_cache: SearchCache | None = None) -> int:
+        redo: bool = False, search_cache: SearchCache | None = None,
+        sampling: dict[str, float | int] | None = None) -> int:
     """WARM ANSWERS ONLY are timed (operator, 2026-11-03): the model is pinned
     for the run and warmed up first, and an answer during which its backend
     was (re)loaded — no backend before, or another pid after — is marked
@@ -474,7 +557,10 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
     one, so a configuration is measured on the same questions as the last."""
     run_dir = out / "runs" / name
     run_dir.mkdir(parents=True, exist_ok=True)
-    settings = {"model": model, "collections": collections or []}
+    settings: dict[str, Any] = {"model": model, "collections": collections or []}
+    if sampling:
+        # the arm: what every request of this run sends over the model file
+        settings["sampling"] = dict(sampling)
     stated = run_dir / "settings.json"
     if stated.exists():
         if json.loads(stated.read_text(encoding="utf-8")) != settings:
@@ -491,9 +577,9 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         from app import config, model_load, model_pins
         from app.ask import chat
         config.CHAT_MODEL = model          # this process asks the candidate only
-        ask = chat.ask
-        if search_cache is not None:
-            ask = lambda q, collections=None: chat.ask(q, collections=collections, call=search_cache)
+        arm = arm_model(sampling)
+        ask = lambda q, collections=None: chat.ask(q, collections=collections, call=search_cache,
+                                                   model=arm)
         holder = f"chat_eval pid {os.getpid()}"
         model_pins.hold(config.CHAT_URL, model, holder)
         release = lambda: model_pins.release(holder)   # its prior pin state restored
@@ -521,6 +607,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             facts = unsupported(got.get("answer") or "", q["query"], turns)
             support = citation_support(got, turns, q["query"])
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
+                   "sampling": dict(sampling or {}),
+                   "looped": looped(got.get("answer") or ""),
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
                    "tool_errors": sum(1 for t in turns if t.get("error")),
@@ -600,6 +688,8 @@ def pilot_report(out: Path, name: str, tag: str, keys: list[str]) -> Path:
                 + (f" REFUSED {c.get('error')}" if c.get("error") else "") for c in own))
         if r.get("tools_failed"):
             lines.append(f"- TOOLS FAILED, answered without them: {r['tools_failed']}")
+        if r.get("looped"):
+            lines.append("- LOOPED: a span repeated back to back")
         for u in (r.get("support") or {}).get("uncited", []):
             lines.append(f"- uncited, in no source: {', '.join(u['missing'])}")
         lines.append(f"- answer language guessed: {r.get('answer_lang')}; {r.get('seconds')} s "
@@ -654,6 +744,8 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "cold": n - len(warm),
             "failed": sum(1 for r in rows if r["error"]),
             "exhausted": sum(1 for r in rows if r["exhausted"]),
+            # None for rows asked before `looped` was recorded: unknown, not 0
+            "looped": (sum(1 for r in rows if r["looped"]) if all("looped" in r for r in rows) else None),
             "calls_per_answer": calls / n,
             "tool_errors": sum(r["tool_errors"] for r in rows),
             "lang_right": sum(1 for r in guessed if r["answer_lang"] == r["lang"]),
@@ -690,6 +782,20 @@ def _median(values: list[float]) -> str:
 
 def score(out: Path, works: Path | None = None) -> int:
     groups = _labelled(out)
+    arms = {}
+    for d in sorted((out / "runs").iterdir()):
+        stated = d / "settings.json"
+        if stated.exists():
+            sampling = json.loads(stated.read_text(encoding="utf-8")).get("sampling")
+            if sampling:
+                arms[d.name] = sampling
+    if arms:
+        print("SAMPLING ARMS: what every request of the run sent over its model file\n")
+        print("| run | sampling |")
+        print("|---|---|")
+        for name, sampling in arms.items():
+            print(f"| {name} | " + ", ".join(f"{k}={v}" for k, v in sorted(sampling.items())) + " |")
+        print()
     if works is not None:
         wk = load_works(works)
         print("THE OPERATOR'S THREE: conveys the query, summarises the results, cites them\n")
@@ -734,11 +840,11 @@ def score(out: Path, works: Path | None = None) -> int:
                   f"{c['quotes_found'] / c['quotes'] if c['quotes'] else 1.0:.2f} | "
                   f"**{c['answers_misattributing']}** | **{c['answers_claiming_uncited']}** |")
     print()
-    print("| model | languages | answers | failed | bound hit | calls/answer | tool errors "
+    print("| model | languages | answers | failed | bound hit | looped | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
           "| of which results had come back | results slimmed to fit |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
                   "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
@@ -749,6 +855,7 @@ def score(out: Path, works: Path | None = None) -> int:
                 continue
             share = s["lang_right"] / s["lang_guessed"] if s["lang_guessed"] else 0.0
             print(f"| {name} | {label} | {s['n']} | {s['failed']} | {s['exhausted']} | "
+                  f"{'-' if s['looped'] is None else s['looped']} | "
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
                   f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "
@@ -825,6 +932,9 @@ def main(argv: list[str] | None = None) -> int:
                    "replayed for every model (SearchCache); run --direct with it first")
     p.add_argument("--pilot", type=int, default=None, help="only the first N questions of every "
                    "language, written for a reader (measuring.md §12); a whole run needs one read")
+    p.add_argument("--sampling", default="", help="the arm: values every request sends over the "
+                   "model file, e.g. temperature=0.1,presence_penalty=1.5 (a penalty of 0 is refused: "
+                   "LocalAI reads it as unset)")
     p = sub.add_parser("pilot-ok")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--name", required=True)
@@ -841,6 +951,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--n", type=int, default=30)
     a = ap.parse_args(argv)
     if a.cmd == "run":
+        if a.sampling and a.direct:
+            raise SystemExit("--sampling with --direct: no model answers a direct run")
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
         queries = read_queries(a.queries, a.per_lang, langs)
@@ -853,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
         cache = SearchCache(a.search_cache, data_version(cols)) if a.search_cache else None
         code = run(a.out, a.name, model=a.model, queries=queries,
                    collections=cols, tag=a.tag, redo=a.redo, search_cache=cache,
+                   sampling=parse_sampling(a.sampling) or None,
                    **({"ask": ask_direct(cols, call=cache), "pid": lambda: 0} if a.direct else {}))
         if a.pilot:
             print(f"pilot: {pilot_report(a.out, a.name, a.tag, [q['key'] for q in queries])}")

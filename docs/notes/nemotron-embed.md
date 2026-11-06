@@ -970,3 +970,99 @@ sources contain ("traduit par Maquet", "Isla … 1922", an invented Diderot
 title). Its columns stay in chat_eval as counts, but they decide nothing.
 What decides is the blind read, and next a trained checker
 (LettuceDetect, which has it/de/fr/es models).
+
+### Sampling, Q8 first (operator, 2026-11-06)
+
+**The operator's decision:** "Chat model for rag retrieval: qwen3 8b,
+qwen3.5 9b and command r7b are the only candidates, qwen3.6 35b is too big
+and will be user evaluated for wiki-gutenberg summaries. For the chat
+models benchmarking and optimizations start with the Q8 quantization,
+let's try to optimize the results by changing their parameters." The
+operator's table, found online for Qwen3.5-9B: temperature 0.1, top_p
+0.8, top_k 20, min_p 0, repetition 1.0, presence 0, frequency 0, context
+16,384, output 2,048, parallel 1, thinking off, KV cache Q8_0.
+
+**What the makers say** (read 2026-11-06):
+
+| model | source | values |
+|---|---|---|
+| Qwen3-8B | card, non-thinking | temperature 0.7, top_p 0.8, top_k 20, min_p 0; presence 0–2 "to reduce endless repetitions", which "may occasionally result in language mixing" |
+| Qwen3.5-9B | card, instruct mode, general tasks | 0.7, 0.8, 20, 0, presence 1.5, repetition 1.0 (reasoning tasks: 1.0, 1.0, 40, 0, presence 2.0) |
+| Command R7B | Cohere's chat API defaults (known; docs.cohere.com unreachable from here, the card is gated) | temperature 0.3, p 0.75, k 0 (off) |
+
+No source sets a temperature for answers grounded in given documents.
+The one controlled study found (TempPerturb-Eval, arXiv 2512.01183, LREC
+2026) measured that higher temperatures make answers more sensitive to
+noisy retrieved passages. It does not name a best value. The operator's
+0.1 is that direction taken almost to greedy, and Qwen warns that greedy
+decoding brings "endless repetitions". The 35B looped at 0.2. So 0.1 is
+measured as an arm, with loops counted, not adopted on faith.
+
+**What LocalAI does with the values** (its code read 2026-11-06 at master:
+core/http/middleware/request.go, core/backend/options.go,
+backend/cpp/llama-cpp/grpc-server.cpp, core/config/generic_defaults.go,
+inference_defaults.json):
+- **An unset value is not the card's.** It takes the generic default:
+  temperature 0.9, top_p 0.95, top_k 40, min_p 0. Name-matched families
+  take theirs: `qwen3` gets 0.6/0.95/20, Qwen3's THINKING values;
+  `qwen3.5` gets the card's instruct values; there is no Cohere entry.
+- **A request's penalty of 0 means "unset".** Presence, frequency and
+  repeat penalties are plain floats merged on `!= 0`. An arm that sends 0
+  silently runs the model file's value.
+- **No `repeat_last_n` in the file means no penalty at all.** LocalAI sends
+  the file's `repeat_last_n` as given, 0 when absent. In llama.cpp,
+  `repeat_last_n` 0 disables every penalty ("0 = disabled"). So the
+  presence_penalty 1.5 in the 9B's and the 35B's files most likely never
+  applied. The probe below checks this on the node's own version.
+- **The penalty window is not the card's.** vLLM, where Qwen measured
+  1.5, counts the tokens generated so far. llama.cpp counts the last
+  `repeat_last_n` tokens, the prompt's tail included. At 64, a citation
+  "[2]" repeated within a sentence or two is penalised too.
+
+**What changes**, in the three Q8 files and the benchmark:
+- every sampling value is stated in each file (the card's), with neutral
+  penalties and `repeat_last_n` 64;
+- `louise-chat-qwen3-8b-q8` is staged: Qwen's own Q8_0 (Qwen/Qwen3-8B-GGUF).
+  The live file is Q4_K_M (Ollama's qwen3:8b);
+- `chat_eval run --sampling k=v,…` sends an arm's values with every
+  request. The run is the arm: its name and settings.json say which, and
+  a penalty of 0 is refused;
+- loops are counted: a span repeated back to back three times.
+
+Already as the operator's table: 16k context, parallel 1, thinking off.
+Ask's answer cap stays at 1,500 tokens rather than 2,048, so a loop
+costs less. The KV cache: F16 for the sweep, one Q8_0 arm on each
+winner, unless the operator chooses Q8_0 from the start (put to the
+operator, 2026-11-06).
+
+**The order:**
+0. **On the node: what reaches the engine.**
+   - Install the Q8 and record its VRAM beside the search models (the 35B
+     evicted them).
+   - At temperature 0, a prompt that repeats a word: send presence 2.0
+     to `louise-chat-qwen3-8b` (no `repeat_last_n`) and to the Q8 file
+     (64). Identical answers then differing answers confirm the pitfall.
+1. **The arms**, all at Q8 with a KV cache of F16, seed 0, on the 50
+   recorded searches (en it de fr es × 10). Each arm starts with a pilot
+   that is read.
+
+   | model | arms |
+   |---|---|
+   | qwen3-8b-q8 | t07 (the file = the card), t04, t01 (the operator's) |
+   | qwen3.5-9b-q8 | t07p15 (the card exactly), t07, t04, t01 |
+   | command-r7b-q8 | t03 (the file = Cohere's), t01, t07, after the patched engine |
+
+   An arm at 0.4 or above also runs with seeds 1 and 2, so that a
+   difference smaller than one seed's spread is not read as a result.
+2. **The read.** The table first: cites the work, left out, supported,
+   uncited claims, language, looped, time. Then per model the blind read
+   of its arms on the same 30 questions. Then the three winners blind
+   against each other.
+3. **Q4 last.** Each winner's Q4 at its winning sampling is kept only if
+   the blind read finds no loss.
+
+**Not built, written down:** DRY ("Don't Repeat Yourself", llama.cpp's
+n-gram repetition sampler) is the standard answer to loops. It does not
+penalise a single token repeated, such as a citation. LocalAI's request
+schema has no DRY field. It is worth adding only if the low-temperature
+arms loop and presence 1.5 costs quality.
