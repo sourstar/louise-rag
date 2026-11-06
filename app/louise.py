@@ -563,6 +563,147 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    embed=embed)
 
 
+def cmd_collection_new(a) -> int:
+    """`hold collection new <plugin> --recipe FILE --encoder URL --api A
+    --embed-model M --cpu-model T [--name N]`: A NEW COLLECTION, ONE
+    WORKFLOW (operator, 2026-11-06: "A mess up in a collection embedding is
+    the most severe flaw we can have, this is not acceptable. I expected that
+    a clear workflow for the creation of a new collection had been
+    implemented"). Wikidata's Nemotron collection was made by ten commands
+    chained by hand, each given its own copy of what the recipe states; the
+    calibration was measured on inputs cut by characters while the space
+    cuts by tokens, and its CPU reference failed the gate at 0.974831.
+
+    Here every input comes from the recipe, nothing is typed twice, and each
+    step is held to the one before it:
+      1. CALIBRATE: the recipe's encoder (`--encoder`, `--embed-model`)
+         against its CPU twin (`--cpu-model`, which must state a CPU run of
+         the same weights), at the recipe's ctx, cut, document instruction
+         and calibration set: the inputs the gate sends. The CPU lane is kept
+         in the node's store, keyed on all of them.
+      2. THE TOLERANCE: the recipe's `space.tolerance` must be the one just
+         measured. A recipe that states none takes it; one that states
+         another is refused, since a tolerance is measured, never chosen.
+      3. CREATE (07 §7.3). A collection of that name already made is held to
+         the recipe's inputs and the measured tolerance instead, and refused
+         when it differs.
+      4. THE CPU REFERENCE, written from the store entry step 1 made (no
+         second CPU pass), replacing any copy the collection held.
+      5. THE GATE (`hold embedder check`).
+    The measurement is kept as `<collection>/state/calibration.json`.
+    Embedding is not turned on: the collection file says embed = "off"
+    until the operator turns it on, after a pass. Exit 0 when the gate
+    passes, 1 when it fails, 2 for a refusal, 3 when an endpoint cannot be
+    reached. Run again after a stop: the CPU lane resumes from the store's
+    journal, and a step already done is checked, not redone."""
+    import argparse
+    import decimal
+
+    from app import collections as collections_mod, run_check
+    from app.hold import calibrate as calib, codex as cx
+    say = (lambda line: print(line, file=sys.stderr))
+    recipe = _recipe(a.recipe)
+    space = recipe.get("space") or {}
+    ctx = int(space.get("ctx") or 0)
+    cut = space.get("cut") or "characters"
+    instruction = (space.get("document") or {}).get("instruction")
+    set_id = (space.get("calibration") or {}).get("set")
+    enc = space.get("encoder") or {}
+    if ctx <= 0 or not set_id or not enc.get("weights") or not isinstance(enc.get("engine"), dict):
+        raise CodexError(f"{a.recipe}: the space states ctx, calibration.set, encoder.weights and "
+                         f"encoder.engine; `new` measures with those and nothing else")
+    q_weights = ((space.get("query") or {}).get("encoder") or {}).get("weights")
+    if q_weights and q_weights != enc["weights"]:
+        raise CodexError(f"{a.recipe}: an asymmetric space (a query encoder of its own weights): "
+                         f"`new` makes a space whose documents and questions share one encoder")
+    if not a.cpu_model:
+        raise CodexError("--cpu-model names the encoder's CPU twin (gpu_layers 0, the device "
+                         "hidden): the tolerance and the CPU reference are measured against it")
+    api = check_api(a.api)
+    model = model_keys(a.encoder, embed_model=a.embed_model)[0]
+    set_id, texts = calib.load_set(set_id)
+    say(f"recipe   ctx {ctx}, cut {cut}, document instruction {instruction!r}, set {set_id[:23]}…")
+
+    # 1. calibrate, on the inputs the gate sends
+    reference = calib.Endpoint(file=f"{a.recipe} (space.encoder)", url=a.encoder, api=api, model=model,
+                               weights=enc["weights"],
+                               engine=cx.engine_from_dict(enc["engine"], "space.encoder.engine"))
+    twin_recipe = collections_mod.EmbedRecipe(url=a.encoder, api=api, model=a.cpu_model, dtype="f32",
+                                              ctx=ctx, document_instruction=instruction, cut=cut)
+    stated = run_check.stated_run(twin_recipe, probe_item=run_check.PROBE)
+    if stated.driver != "cpu":
+        raise CodexError(f"--cpu-model {a.cpu_model} states a run on {stated.driver!r}, not the CPU")
+    if stated.weights != enc["weights"]:
+        raise CodexError(f"--cpu-model {a.cpu_model} runs weights {stated.weights[:23]}…, the "
+                         f"recipe's are {enc['weights'][:23]}…: a twin is the same weights")
+    twin = calib.Endpoint(file=f"the CPU twin {a.cpu_model}", url=a.encoder, api=api, model=a.cpu_model,
+                          weights=stated.weights, engine=cx.engine_from_dict(stated.engine, "the twin's run"))
+    say(f"1/5 calibrate  {model} against {a.cpu_model} (the CPU lane from the node's store when kept)")
+    measured = calib.measure(reference, [twin], set_id=set_id, texts=texts,
+                             embed=calib.http_embed(ctx, document_instruction=instruction,
+                                                    set_id=set_id, cut=cut))
+    measured.update(ctx=ctx, cut=cut, instruction=instruction, cpu_model=a.cpu_model)
+    tolerance = measured["tolerance"]
+
+    # 2. the tolerance is the measured one
+    said = space.get("tolerance")
+    if said is None:
+        space["tolerance"] = tolerance
+        say(f"2/5 tolerance  {tolerance} (measured; the recipe stated none)")
+    elif decimal.Decimal(str(said)) != decimal.Decimal(tolerance):
+        raise CodexError(f"{a.recipe}: space.tolerance is {said}, and {tolerance} was measured on "
+                         f"the space's own inputs: write {tolerance} (a tolerance is measured, "
+                         f"never chosen)")
+    else:
+        say(f"2/5 tolerance  {tolerance} (the recipe's, measured)")
+
+    # 3. create, or hold the collection already made to the recipe
+    existing = None
+    if a.name:
+        try:
+            existing = col.resolve(a.root, a.name)
+        except CodexError:
+            existing = None
+    if existing is not None:
+        name, codex = existing
+        sp = codex.space
+        differs = [k for k, got, want in (
+            ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
+            ("document instruction", sp.document_instruction, instruction),
+            ("calibration set", sp.calibration.set, set_id),
+            ("encoder weights", cx.encoder_field(codex)[1], enc["weights"]),
+            ("tolerance", decimal.Decimal(str(sp.tolerance)), decimal.Decimal(tolerance)))
+            if got != want]
+        if differs:
+            raise CodexError(f"{name} exists and its space differs from the recipe's in "
+                             f"{', '.join(differs)}: a collection is not changed in place; forget it "
+                             f"and run `new` again (RULE 1 for one nothing was published from)")
+        say(f"3/5 create     {name} exists, its space the recipe's: kept")
+    else:
+        codex, held = create_from(a.root, a.plugin, recipe, platform_image=a.platform_image,
+                                  encoder=a.encoder, name=a.name, api=api, embed_model=a.embed_model)
+        name = col.name_of(a.root, codex.collection_id)
+        say(f"3/5 create     {name}  {codex.collection_id}  (held: {held})")
+    state = a.root / name / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "calibration.json").write_text(json.dumps(measured, indent=1, sort_keys=True), encoding="utf-8")
+
+    # 4. the CPU reference, from the store entry step 1 made
+    say("4/5 cpu-reference  from the node's store")
+    rc = cmd_embedder_cpu_reference(argparse.Namespace(root=a.root, collection=name, model=a.cpu_model,
+                                                       query_model=None, again=False, refresh=True))
+    if rc != 0:
+        say(f"stopped at 4/5: cpu-reference exited {rc}")
+        return rc
+
+    # 5. the gate
+    say("5/5 gate")
+    rc = cmd_embedder_check(argparse.Namespace(root=a.root, collection=name, accept=False,
+                                               model=None, query_model=None))
+    say(f"{name}: {'the gate PASSED; embedding stays off until the operator turns it on' if rc == 0 else f'the gate exited {rc}: nothing may be embedded'}")
+    return rc
+
+
 def _encoder_key_args(p) -> None:
     """The rest of the collection file's `[encoder]`, beside `--encoder`
     (07 §7.8, amended 2026-10-09)."""
@@ -4035,7 +4176,9 @@ def cmd_embedder_cpu_reference(a) -> int:
                 if getattr(a, "again", False):
                     cpu_ref.discard_journal(a.root, name, role, run_id=stated.run_id,
                                             set_id=set_id)
-                done = (None if getattr(a, "again", False) else
+                # `refresh` (`hold collection new`): the collection's copy is
+                # written again from the node's store, never trusted as it is
+                done = (None if getattr(a, "again", False) or getattr(a, "refresh", False) else
                         cpu_ref.kept(a.root, name, role, run_id=stated.run_id,
                                      set_id=set_id, count=len(items)))
                 if done is not None:
@@ -4846,6 +4989,19 @@ def build_parser() -> argparse.ArgumentParser:
                                          "pointer (03 §3.7; 09 §9.11)")
     root_arg(p); p.add_argument("collection"); p.add_argument("snapshot")
     p.set_defaults(fn=cmd_collection_certify)
+    p = verbs.add_parser("new", help="a new collection, one workflow: calibrate, tolerance, create, CPU "
+                                     "reference, gate, every input from the recipe (embedding stays off)")
+    root_arg(p)
+    p.add_argument("plugin")
+    p.add_argument("--recipe", required=True, metavar="FILE")
+    p.add_argument("--name", default=None)
+    p.add_argument("--encoder", required=True, metavar="URL", help="the endpoint of the recipe's encoder")
+    p.add_argument("--cpu-model", required=True, metavar="NAME",
+                   help="its CPU twin (gpu_layers 0): the tolerance and the CPU reference")
+    p.add_argument("--platform-image", default=None)
+    _encoder_key_args(p)
+    p.set_defaults(fn=cmd_collection_new)
+
     p = verbs.add_parser("create", help="write a Codex from a plugin and a recipe; print its id")
     root_arg(p)
     p.add_argument("plugin", nargs="?", default=None,

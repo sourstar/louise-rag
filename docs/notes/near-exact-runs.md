@@ -164,3 +164,32 @@ is EXACT and faster, so no near-exact opt-in is in use:
 medcpt-query stays FA off: exact either way, not faster (43.3 ms against
 47.6 ms a query, median). Why oneDNN's SDPA gives a NaN is not studied
 further: it is switched off.
+
+
+## 2026-11-06: wikidata's gate failed on its stored CPU reference; one workflow
+
+Nemotron's wikidata collection failed its gate (stage 11): its card run scored
+0.974831 at worst against the stored CPU reference. 54 items fell below 0.999,
+all of them long.
+
+- **Cause:** `hold embedder calibrate` built its recipe with no `cut`, so both
+  of its lanes cut the long texts by characters, while the space cuts by tokens
+  (VeGa, at exactly `ctx`). The lanes agreed at 0.999996 on inputs the gate
+  never sends.
+- **How it reached the collection:** the node's store keyed an entry on
+  weights, set, ctx, instruction and role, without the cut. So
+  `cpu-reference` took those vectors for the token space.
+- **What it cost:** the gate stopped it before any vector was embedded, and
+  nothing was published. The calibration and the CPU reference had to be
+  made again.
+
+Fixes:
+- `calibrate --cut` is now required.
+- The store's key names the cut (#327).
+- The defect behind it was the workflow itself. The collection was made by
+  about ten commands chained by hand, each given its own copy of what the
+  recipe states. `hold collection new` (07 §7.3) replaces that chain:
+  - every input comes from the recipe;
+  - the steps run in order, each held to the one before;
+  - the CPU reference is written from the store entry the calibration made;
+  - the gate runs last, and embedding stays off.

@@ -62,7 +62,16 @@ one.
 
 ```
 louise hold
-  collection  create <plugin> --recipe FILE --encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]
+  collection  new <plugin> --recipe FILE --encoder URL --cpu-model T [--api A] [--embed-model M] [--name N]
+                                                                       A NEW COLLECTION, ONE WORKFLOW (operator, 2026-11-06), every input from the recipe:
+                                                                       1 calibrate the recipe's encoder against its CPU twin at the recipe's ctx, cut,
+                                                                       document instruction and set (the inputs the gate sends; the CPU lane kept in the
+                                                                       node's store); 2 the recipe's space.tolerance must be the measured one (taken when
+                                                                       absent, refused when another); 3 create, or hold the collection already made to the
+                                                                       recipe; 4 the CPU reference written from the store; 5 the gate. Exit 0 only on a
+                                                                       pass; embedding stays off. The measurement is kept in <collection>/state/calibration.json.
+                                                                       A symmetric space (asymmetric and pair spaces: the steps below by hand)
+              create <plugin> --recipe FILE --encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]
               [--space-from CODEX] [--calibration-set FILE]
                                                                        the model flags: required where a URL names no model (§7.8, amended 2026-10-09)
                                                                        write a Codex; print its id. A pair space (09 §9.3) names its calibration set's file,
@@ -167,7 +176,7 @@ louise hold
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
   embedder    tree-diff <before> <after>                               what differs between two backend trees, path by path: digests read from VEGA_URL or JSON files (vega.md §12); exit 1 when they differ
               benchmark <collection>                                   tokens per second on the calibration set
-              cpu-reference <collection> --model M [--query-model Q]   the calibration set as the encoder's CPU twin embeds it, kept for every later gate to compare
+              cpu-reference <collection> --model M [--query-model Q] [--again]   the calibration set as the encoder's CPU twin embeds it, kept for every later gate to compare
                                                                        its run with (near-exact-runs.md §2); refused unless the twin states a CPU run and gives
                                                                        back its own bytes; writes (added 2026-10-31)
   rage-settings show <collection> [--card D:V:P]                       every signer's recommended RAGE settings in the SHARD (09 §9.19), the entry this node's
@@ -175,7 +184,7 @@ louise hold
               record <collection> [--batch N] [--concurrency M] [--busy F] [--chunks-per-s F] [--window-s S] [--card D:V:P]
                                                                        sign this node's measured settings for its card type into `<SHARD>/rage-settings/`,
                                                                        replacing its own entry for that card; only under a run validated here; writes (added 2026-11-01)
-              calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
+              calibrate --encoder-weights D --engine FILE --against FILE … --ctx N --cut characters|tokens [--document-instruction TEXT] [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`

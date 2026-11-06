@@ -385,10 +385,10 @@ def _pass(monkeypatch, tmp_path, n, ask):
         def __exit__(self, *a): return False
     monkeypatch.setattr(encoder_use, "held", lambda *a, **k: Held())
 
-    def run(again=False):
+    def run(again=False, refresh=False):
         return louise.cmd_embedder_cpu_reference(SimpleNamespace(
             root=tmp_path, collection="gutenberg", model="vega-q-cpu", query_model=None,
-            again=again))
+            again=again, refresh=refresh))
     return run, stated
 
 
@@ -606,3 +606,23 @@ def test_a_token_space_never_takes_a_characters_reference():
     assert cpu_ref.node_key(**k, cut="tokens")["cut"] == "tokens"
     assert cpu_ref.node_directory(cpu_ref.node_key(**k, cut="tokens")) != \
         cpu_ref.node_directory(cpu_ref.node_key(**k))
+
+
+def test_refresh_writes_the_collections_copy_from_the_store_without_a_second_pass(monkeypatch, tmp_path,
+                                                                                capsys):
+    """`hold collection new` (2026-11-06): the collection's copy is written
+    again from the node's store, never trusted as it is (wikidata's held the
+    characters-cut vectors) and never computed twice."""
+    asked = []
+
+    def ask(texts):
+        asked.extend(texts)
+        return [_vec(t) for t in texts]
+    run, _ = _pass(monkeypatch, tmp_path, 12, ask)
+    assert run() == 0 and len(asked) == 12
+    capsys.readouterr()
+    assert run() == 0 and "kept already" in capsys.readouterr().out
+    assert run(refresh=True) == 0
+    out = capsys.readouterr().out
+    assert "kept already" not in out and "(stored;" in out and len(asked) == 12, \
+        "rewritten from the store, nothing asked again"
