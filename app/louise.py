@@ -624,6 +624,31 @@ def cmd_collection_new(a) -> int:
     set_id, texts = calib.load_set(set_id)
     say(f"recipe   ctx {ctx}, cut {cut}, document instruction {instruction!r}, set {set_id[:23]}…")
 
+    # BEFORE ANY MEASUREMENT (the workflow's own review, 2026-11-06): what can
+    # refuse without measuring refuses first, so a refusal costs no card lane.
+    # The platform image create pins, and a collection of that name already
+    # made, held to the recipe in everything but the tolerance (which step 2
+    # measures)
+    a.platform_image = preflight_create(recipe, a.platform_image)
+    existing = None
+    try:
+        existing = col.resolve(a.root, a.name)
+    except CodexError:
+        existing = None
+    if existing is not None:
+        sp = existing[1].space
+        differs = [k for k, got, want in (
+            ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
+            ("document instruction", sp.document_instruction, instruction),
+            ("calibration set", sp.calibration.set, set_id),
+            # the WEIGHTS (`cx.encoder_field` names the engine, not them)
+            ("encoder weights", getattr(sp.encoder, "weights", None), enc["weights"]))
+            if got != want]
+        if differs:
+            raise CodexError(f"{existing[0]} exists and its space differs from the recipe's in "
+                             f"{', '.join(differs)}: a collection is not changed in place; forget it "
+                             f"and run `new` again (RULE 1 for one nothing was published from)")
+
     # 1. calibrate, on the inputs the gate sends
     reference = calib.Endpoint(file=f"{a.recipe} (space.encoder)", url=a.encoder, api=api, model=model,
                                weights=enc["weights"],
@@ -658,27 +683,12 @@ def cmd_collection_new(a) -> int:
         say(f"2/5 tolerance  {tolerance} (the recipe's, measured)")
 
     # 3. create, or hold the collection already made to the recipe
-    existing = None
-    if a.name:
-        try:
-            existing = col.resolve(a.root, a.name)
-        except CodexError:
-            existing = None
     if existing is not None:
         name, codex = existing
-        sp = codex.space
-        differs = [k for k, got, want in (
-            ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
-            ("document instruction", sp.document_instruction, instruction),
-            ("calibration set", sp.calibration.set, set_id),
-            # the WEIGHTS (`cx.encoder_field` names the engine, not them)
-            ("encoder weights", getattr(sp.encoder, "weights", None), enc["weights"]),
-            ("tolerance", decimal.Decimal(str(sp.tolerance)), decimal.Decimal(tolerance)))
-            if got != want]
-        if differs:
-            raise CodexError(f"{name} exists and its space differs from the recipe's in "
-                             f"{', '.join(differs)}: a collection is not changed in place; forget it "
-                             f"and run `new` again (RULE 1 for one nothing was published from)")
+        if decimal.Decimal(str(codex.space.tolerance)) != decimal.Decimal(tolerance):
+            raise CodexError(f"{name} exists with tolerance {codex.space.tolerance}, and {tolerance} was "
+                             f"measured on its own inputs: a collection is not changed in place; forget "
+                             f"it and run `new` again (RULE 1 for one nothing was published from)")
         say(f"3/5 create     {name} exists, its space the recipe's: kept")
     else:
         codex, held = create_from(a.root, a.plugin, recipe, platform_image=a.platform_image,
@@ -4995,7 +5005,8 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p)
     p.add_argument("plugin")
     p.add_argument("--recipe", required=True, metavar="FILE")
-    p.add_argument("--name", default=None)
+    p.add_argument("--name", required=True, help="the collection's local name: the one thing only the "
+                                                  "operator knows (RULE 2)")
     p.add_argument("--encoder", required=True, metavar="URL", help="the endpoint of the recipe's encoder")
     p.add_argument("--cpu-model", required=True, metavar="NAME",
                    help="its CPU twin (gpu_layers 0): the tolerance and the CPU reference")
