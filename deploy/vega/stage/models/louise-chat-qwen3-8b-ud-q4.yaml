@@ -1,0 +1,52 @@
+# Qwen3-8B at unsloth's Dynamic 4-bit, UD-Q4_K_XL (unsloth/Qwen3-8B-GGUF, 5.14 GB): the 4-bit
+# quantization unsloth recommends (its Qwen3.5 guide, read by the operator 2026-11-06: "All uploads
+# use Unsloth Dynamic 2.0 ... 4-bit has important layers upcasted to 8 or 16-bit"). Beside Qwen's
+# own Q4_K_M (louise-chat-qwen3-8b-q4) in the winner's Q4 step: independent tests found the uploaders
+# within a few percent at one quant type, bartowski's Q4_K_M closer than unsloth's for Qwen3.5 4B/9B
+# (quantdiff.com), and unsloth's UD quants ahead at low bits; so it is measured, not assumed.
+# The file pinned to the Hub's commit and its sha256 at the install. Sampling: the Q8 file's.
+{
+  "name": "louise-chat-qwen3-8b-ud-q4",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512",
+    "use_jinja:true"
+  ],
+  "parameters": {
+    "model": "llama-cpp/models/Qwen3-8B-UD-Q4_K_XL.gguf",
+    "batch": 2048,
+    "seed": 0,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "repeat_penalty": 1,
+    "repeat_last_n": 64
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}
