@@ -70,6 +70,10 @@ def test_louise_searches_the_question_first_and_the_answer_cites_by_number(chat_
     system = first[0]["content"]
     assert first[0]["role"] == "system" and "[2][5]" in system and "gutenberg" in system
     assert "never supply it from memory" in system, "the walk: a title the sources lack became the answer"
+    # the chat contest of 2026-11-06 (operator's A): Qwen3.5-9B gave titles translated from
+    # memory ("The Doctor in Spite of Himself") and cited ranges ("[3] a [10]")
+    assert "Quote a work's title exactly as its source gives it; never translate it" in system
+    assert "Cite each source on its own, e.g. [3][4][5]: never a range ([3]-[5])" in system
     assert [m["role"] for m in first[1:]] == ["user", "assistant", "user"], "history kept, a tool message not replayed"
     asked = first[-1]["content"]
     assert asked.startswith("Sources:") and asked.endswith("Question: who hunts the whale?")
