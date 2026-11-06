@@ -273,3 +273,27 @@ Each was visible in the first few answers.
   (RULE 1).
 - **A defect in the pilot is fixed before the whole run**, never "noted
   for the results".
+
+## 13. Added 2026-11-06 — a measurement of a search is of every leg
+
+The chat contest's recorded searches: 314 of 320 were text only. The node
+was paused, and its worker had been restarted by each deploy. The worker
+re-checks a run's kept statement only while the node's mode embeds
+(app/worker.py, the search settle), so every search said "Searched on its
+text only" and the vector leg waited. Every model was measured on the text
+leg. Nobody read the sources block's last line, though it said so in every
+answer.
+
+- **A search that withheld a leg or its reranker is never recorded.**
+  chat_eval's `SearchCache` raises `SearchWithheld`. The run stops at that
+  question, with no row written and exit 3, and resumes there.
+- **A file that holds such a search is refused whole:** record a new one.
+- **Each `run` and `wire` settles the vector leg in its own process
+  first.** It makes the worker's own check, `run_check.embed_allowed`, for
+  the collections it searches, and says what it settled.
+- **A whole run runs its pilot's code.** `settings.json` keeps the digest of
+  app/ask/ (`ask_code`), and a resume on other code is refused. That day,
+  four pilots answered at 13:38 and their whole runs at 18:19, on another
+  image.
+- **The general rule:** the pilot's reading includes what the tool said
+  about itself, the sources block's own warnings first.
