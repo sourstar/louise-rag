@@ -39,7 +39,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import auth, cancel, collections as collections_mod, query_service, web
 from . import config, db, discovery, retrieval, llm, summarize, embeddings, fts, spaces
-from . import node_state
+from . import node_state, speech
 
 STATIC = Path(__file__).parent / "static"
 
@@ -1098,6 +1098,21 @@ async def chat_completions(body: ChatBody, request: Request):
     return await run_in_threadpool(_chat_answer, body, query, result, t0)
 
 
+@app.post("/v1/audio/speech")
+async def audio_speech(request: Request):
+    """OpenAI's speech endpoint, relayed to the node's model server without
+    the citations, in a voice that speaks the text's language, the model
+    kept loaded while sentences come (app/speech.py)."""
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "the body is not JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "the body is not a JSON object")
+    status, content, ctype = await run_in_threadpool(speech.synthesize, body)
+    return Response(content=content, status_code=status, media_type=ctype)
+
+
 def source_entries(hits: list[dict]) -> list[dict]:
     """The answer's [n], in order: what a client shows as its sources —
     the passage, where it is (a path of this node's reader), the work's
@@ -1135,7 +1150,9 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
     rid = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     if not body.stream:
-        answer = llm.chat(messages, temperature=body.temperature)
+        # "[3] [4]", not "[3][4]": a client's markdown cleaning reads a pair
+        # as a reference link and speaks a number (app/speech.py)
+        answer = speech.spaced_citations(llm.chat(messages, temperature=body.temperature))
         result["timings"]["llm"] = round((time.time() - t0) * 1000 - result["timings"]["total"], 1)
         result["timings"]["total"] = round((time.time() - t0) * 1000, 1)
         db.log_query(con, "chat", query, "hybrid", body.limit, result["timings"],
@@ -1161,6 +1178,7 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
         # the OpenAI framing of `answer_parts`, which the Ask page's relay
         # reads too (app/relay.py): one path from the model to every reader
         parts = answer_parts(body, query, result, t0, messages=messages, con=con)
+        tail = ""        # the text so far, for a citation pair split across two deltas
         try:
             for kind, value in parts:
                 if kind == "sources":
@@ -1172,6 +1190,8 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
                 elif kind == "keepalive":
                     yield ": keepalive\n\n"
                 elif kind == "delta":
+                    value = speech.spaced_citations(value, tail)
+                    tail = (tail + value)[-8:]
                     yield chunk(value)
                 elif kind == "cut":
                     yield chunk(f"\n[answer cut: {value}]")

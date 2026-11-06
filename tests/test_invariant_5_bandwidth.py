@@ -47,6 +47,7 @@ EXEMPT: dict[str, str] = {
     "app/gpu_models.py": f"{MODEL_CALLS} — the models the runner lists",
     "app/api.py": f"{MODEL_CALLS} — `GET /v1/models` of the node's model container",
     "app/web.py": f"{MODEL_CALLS} — the System page's health pings of the model endpoints",
+    "app/speech.py": f"{MODEL_CALLS} — the speech model and its voice profiles",
 }
 
 _NET_BINARIES = {"git", "rsync", "curl", "wget", "ssh", "scp", "sftp", "aria2c"}
