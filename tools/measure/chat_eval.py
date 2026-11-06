@@ -534,6 +534,22 @@ def looped(answer: str, *, max_span: int = 80) -> bool:
     return False
 
 
+#: AN ANSWER THAT THINKS ALOUD (the Q8 pilots, 2026-11-06): with thinking off,
+#: Qwen3.5-9B at 0.4 and 0.7 wrote its reasoning into the answer — "titled *La
+#: Dame de Monsoreau*? No, that's incorrect … *La Reine Margot*? No, again
+#: incorrect" — so the reader saw invented titles, retracted. A retraction is
+#: a question mark followed by a no, or the phrases that start one.
+_SELF_TALK = re.compile(
+    r"\?\s*(?:\*\*|_|\*)?\s*(?:No|Non|Nein|Nee|Não)\b[,.;]"
+    r"|\b(?:No, (?:that|this|again|wait)|Actually, (?:it|the|that)|Wait, |Let me (?:check|re))",
+    re.IGNORECASE)
+
+
+def self_talk(answer: str) -> bool:
+    """The answer retracts something it has just said (`_SELF_TALK`)."""
+    return bool(_SELF_TALK.search(answer or ""))
+
+
 def answer_language(text: str) -> str | None:
     from app import query_language
     return query_language.guess(text or "", query_language.guessable())
@@ -696,6 +712,8 @@ def pilot_report(out: Path, name: str, tag: str, keys: list[str]) -> Path:
             lines.append(f"- TOOLS FAILED, answered without them: {r['tools_failed']}")
         if r.get("looped"):
             lines.append("- LOOPED: a span repeated back to back")
+        if self_talk(r.get("answer") or ""):
+            lines.append("- THINKS ALOUD: the answer retracts what it has just said")
         for u in (r.get("support") or {}).get("uncited", []):
             lines.append(f"- uncited, in no source: {', '.join(u['missing'])}")
         lines.append(f"- answer language guessed: {r.get('answer_lang')}; {r.get('seconds')} s "
@@ -752,6 +770,8 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "exhausted": sum(1 for r in rows if r["exhausted"]),
             # None for rows asked before `looped` was recorded: unknown, not 0
             "looped": (sum(1 for r in rows if r["looped"]) if all("looped" in r for r in rows) else None),
+            # read off the answer itself, so rows of any age count
+            "self_talk": sum(1 for r in rows if self_talk(r.get("answer") or "")),
             "calls_per_answer": calls / n,
             "tool_errors": sum(r["tool_errors"] for r in rows),
             "lang_right": sum(1 for r in guessed if r["answer_lang"] == r["lang"]),
@@ -846,11 +866,11 @@ def score(out: Path, works: Path | None = None) -> int:
                   f"{c['quotes_found'] / c['quotes'] if c['quotes'] else 1.0:.2f} | "
                   f"**{c['answers_misattributing']}** | **{c['answers_claiming_uncited']}** |")
     print()
-    print("| model | languages | answers | failed | bound hit | looped | calls/answer | tool errors "
+    print("| model | languages | answers | failed | bound hit | looped | thinks aloud | calls/answer | tool errors "
           "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
           "| of which results had come back | results slimmed to fit |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, rows in groups:
         parts = {"all": rows,
                   "the operator's five": [r for r in rows if r["lang"] in OPERATOR_LANGS],
@@ -861,7 +881,7 @@ def score(out: Path, works: Path | None = None) -> int:
                 continue
             share = s["lang_right"] / s["lang_guessed"] if s["lang_guessed"] else 0.0
             print(f"| {name} | {label} | {s['n']} | {s['failed']} | {s['exhausted']} | "
-                  f"{'-' if s['looped'] is None else s['looped']} | "
+                  f"{'-' if s['looped'] is None else s['looped']} | {s['self_talk']} | "
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
                   f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "

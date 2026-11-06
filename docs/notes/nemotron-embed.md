@@ -1095,3 +1095,16 @@ n-gram repetition sampler) is the standard answer to loops. It does not
 penalise a single token repeated, such as a citation. LocalAI's request
 schema has no DRY field. It is worth adding only if the low-temperature
 arms loop and presence 1.5 costs quality.
+
+**The Q8 pilots, read** (2026-11-06, 15 questions each, en/it/de/fr/es × 3, timed beside the CPU twin so their seconds are not used; branch measure/chat-pilots-q8-sampling, 221d4fdd):
+- **Mechanically clean, all seven:** no request failed, no loop, no tool failure, every answer in the reader's language, every citation grounded.
+- **Qwen3-8B at 0.1, 0.4 and 0.7:** the same answers in substance, and the same errors at every temperature:
+  - *Le médecin malgré lui* named for *All's Well*;
+  - invented details: "Athens' invasion of Corcyra" at 0.1, "nine years after Salamis" at 0.4, "Caliban, Prospero's illegitimate son" at 0.1;
+  - at 0.7, a raw `gutenberg:` id written into two answers.
+- **Qwen3.5-9B copy (presence 0.0001):**
+  - Answers are twice as long as the 8B's.
+  - It is better when the work is not found: at every temperature, #7 says "the collections do not show…" and names the closest source, as the system prompt asks.
+  - **It thinks aloud at 0.4 and 0.7, with or without presence 1.5, but not at 0.1.** On #1 it named invented titles and retracted them in place: "*La Dame de Monsoreau*? No, that's incorrect… *La Reine Margot*? No, again incorrect". The reader sees invented titles, and that answer ran to 4.5–5.7 k characters and 32–40 s.
+  - `chat_eval` now counts this as "thinks aloud". The column is read from the stored answer, so it covers rows of any age; on the pilots it flags exactly these three answers.
+- **Decision:** a pilot-ok for all seven. The whole runs go on.
