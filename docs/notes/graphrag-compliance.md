@@ -34,9 +34,11 @@ session's sandbox; what could not be read is marked UNVERIFIED.*
    at query time — fits Louise's invariants better than the plan does
    (§5). That is the one thing this note asks the operator to weigh.
 
-One spec-versus-code finding came out on the way (§6): the code adds an
+One spec-versus-code finding came out on the way (§6): the code added an
 entity BOOST to the fused score (`retrieval.ENTITY_BOOST`) where 05 §5.2
-says "a filter restricts; nothing boosts".
+said "a filter restricts; nothing boosts". Resolved on main since: the
+boost removed (2026-10-25) and the rule amended (2026-10-31) — a weight
+may reorder under five conditions, §6.1.
 
 ## 1. GraphRAG, as it stands (v3.3.0, 2026-10-08)
 
@@ -306,6 +308,15 @@ nothing public for the query half).
    The campaign set has no identifier queries, so the effect on measured
    quality is unknown — measure before removing, as every fusion change
    has been.
+   **Resolved on main** (recorded 2026-11-06): `ENTITY_BOOST` was removed
+   on 2026-10-25, and on 2026-10-31 the operator replaced "nothing boosts"
+   in invariant 4 and 05 §5.2 by "a filter restricts; a weight reorders,
+   under five rules" — a named, attributed source; every moved result says
+   what moved it and by how much (`moved_by`); the reader's choice, or a
+   default measured on the judged set and approved; reorders, never
+   removes; the same inputs give the same order. The catalogue-first rule
+   of 05 §5.6 is such an approved default. The fault, in the operator's
+   words, "was a weight nobody could see or measure, not weighting".
 2. **`ClaimIndex.graph` is dead code until step 3** — by design, recorded
    (wiki-gutenberg-amendments.md). A community's `state_of` is `unknown`
    and pins nothing, which is right for the specified shape but means a
