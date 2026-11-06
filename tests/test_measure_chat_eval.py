@@ -504,3 +504,32 @@ def test_an_answer_that_thinks_aloud_is_counted(tmp_path):
     ev.run(tmp_path, "m", model="m", queries=qs, ask=lambda q, collections=None: answers[q],
            guess=lambda t: "en")
     assert ev.summary(ev._rows(tmp_path, "m"))["self_talk"] == 1
+
+
+def test_the_size_of_asks_request_is_counted_by_the_models_own_template(tmp_path, monkeypatch):
+    """2026-11-06: Command R7B serves 8,192 tokens. Does Ask's first request
+    fit? The body Ask sends, max_tokens 1; usage read, or a refusal's count."""
+    from app import config
+    monkeypatch.setattr(config, "CHAT_API", "openai")
+    monkeypatch.setattr(config, "CHAT_URL", "http://chat")
+    sizes = {"short": 3000, "long": 21673}
+    bodies = []
+
+    def post(url, body):
+        bodies.append(body)
+        n = sizes[body["messages"][-1]["content"]]
+        if n > 8192:
+            return 400, {"error": {"message": f"request ({n} tokens) exceeds the available "
+                                              f"context size (8192 tokens)"}}
+        return 200, {"usage": {"prompt_tokens": n}, "choices": [{"message": {"content": "x"}}]}
+
+    def ask(q, collections=None, call=None, model=None):
+        content, calls, _ = model([{"role": "user", "content": q}], [{"type": "function"}])
+        assert calls == [] and content
+        return {"answer": content}
+    qs = [{"key": "a:en", "lang": "en", "query": "short"}, {"key": "b:it", "lang": "it", "query": "long"}]
+    rows = ev.prompt_sizes("m", qs, post=post, ask=ask)
+    assert [r["tokens"] for r in rows] == [3000, 21673] and rows[1]["refused"] == 400
+    assert all(b["max_tokens"] == 1 and b["tools"] for b in bodies), "nothing generated, tools declared"
+    report = ev.sizes_report(rows, window=8192)
+    assert "1 of 2 fit 8192 with 1500 for the answer" in report and "1 exceed 8192" in report
