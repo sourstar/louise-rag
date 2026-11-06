@@ -129,13 +129,16 @@ def test_a_failed_step_stops_the_workflow_and_the_gate_decides_the_exit(tmp_path
 
 def test_a_collection_already_made_is_held_to_the_recipe(tmp_path, steps, monkeypatch):
     sp = SimpleNamespace(ctx=8191, cut="characters", document_instruction="passage: ",
-                         calibration=SimpleNamespace(set=SET), tolerance="0.999995")
+                         calibration=SimpleNamespace(set=SET), tolerance="0.999995",
+                         encoder=SimpleNamespace(weights=WEIGHTS, engine=ENGINE))
     codex = SimpleNamespace(space=sp)
     monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", codex))
-    monkeypatch.setattr(louise.cx, "encoder_field", lambda c: ("weights", WEIGHTS))
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2
     assert "create" not in steps["order"] and "cpu-reference" not in steps["order"]
     sp.cut = "tokens"
     steps["order"].clear()
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 0
     assert steps["order"] == ["calibrate", "cpu-reference", "gate"], "kept, not created again"
+    sp.encoder = SimpleNamespace(weights="sha256:" + "ef" * 32, engine=ENGINE)
+    steps["order"].clear()
+    assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2, "another encoder's collection: refused"
