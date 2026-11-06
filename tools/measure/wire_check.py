@@ -270,6 +270,11 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
                for text in [line[1]] if _PROMPT_EVAL.search(text)]
         if answer is not None:
             got[label]["prompt_evaluated"] = int(_PROMPT_EVAL.search(new[-1]).group(1)) if new else None
+            # EVERY evaluation the request caused (wire18, 2026-11-06: one
+            # question of qwen3-8b-q8 reused no prefix even after a fresh
+            # prime): more than one says the server asked the engine more than
+            # once for one request, the last one with another prompt
+            got[label]["prompt_evaluations"] = [int(_PROMPT_EVAL.search(t).group(1)) for t in new]
         return answer
 
     # the engine's prompt count, from a one-token chat request; it also
@@ -422,6 +427,13 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     content = msg.get("content") or ""
     thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
     calls = [c.get("function") or {} for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
+
+    several = {k: v["prompt_evaluations"] for k, v in got.items()
+               if isinstance(v, dict) and len(v.get("prompt_evaluations") or []) > 1}
+    checks.append(Check("one engine evaluation per request", not several,
+                        "each request evaluated once" if not several else
+                        "; ".join(f"{k}: {v}" for k, v in several.items())
+                        + " (the server asked the engine again: another prompt is likely)", decides=False))
 
     # OUTPUT. A greedy answer does not always repeat itself on this engine
     # (qwen3-8b-q8, 2026-11-06: two raw runs parted after 596 characters, a
