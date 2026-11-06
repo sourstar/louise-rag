@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -620,3 +621,77 @@ def test_rescore_rewrites_a_run_from_its_recorded_searches(tmp_path, capsys):
     assert not (run / "answers.checker-2.jsonl").exists()
     assert [json.loads(x)["support"] for x in (run / "answers.checker-1.jsonl").read_text(
         encoding="utf-8").splitlines()] == [old, old], "the rows as checker 1 left them"
+
+
+_TEXT_ONLY = {"lists": [{"hits": [{"uid": "gutenberg:1"}]}],
+              "legs_withheld": [{"collection": "gutenberg", "leg": "dense",
+                                 "reason": "the query encoder's run sha256:e040b40b… has a kept statement the "
+                                           "worker has not re-checked since it started"}]}
+
+
+def test_a_search_that_withheld_a_leg_is_never_kept_nor_a_row(tmp_path):
+    """2026-11-06: 314 of the contest's 320 recorded searches were text
+    only (the node paused, its worker restarted by each deploy, so the
+    vector leg waited for a re-check nobody made). Such a search is not
+    kept and answers nothing: the run stops at that question and resumes
+    there; a file holding one is refused whole."""
+    qs = ev.read_queries(_queries(tmp_path))[:2]
+    replies = iter([{"lists": [{"hits": [{"uid": "gutenberg:5"}]}]}, _TEXT_ONLY])
+    path = tmp_path / "s.jsonl"
+    cache = ev.SearchCache(path, {"g": "1"}, live=lambda n, a: next(replies))
+    with pytest.raises(ev.SearchWithheld, match="withheld gutenberg"):
+        ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "en", pid=lambda: 0,
+               ask=ev.ask_direct(None, call=cache), search_cache=cache)
+    assert [r["key"] for r in ev._rows(tmp_path, "m")] == [qs[0]["key"]], "no row for the deferred question"
+    assert path.read_text(encoding="utf-8").count("\n") == 2, "the header and the whole search only"
+    with path.open("a", encoding="utf-8") as fh:            # a file recorded before this rule
+        fh.write(json.dumps({"key": json.dumps({"query": "old"}), "result": _TEXT_ONLY, "seconds": 1}) + "\n")
+    with pytest.raises(SystemExit, match="1 of 2 recorded searches withheld a leg"):
+        ev.SearchCache(path, {"g": "1"}, live=lambda n, a: None)
+    assert ev.withheld_legs({"rerank_withheld": [{"collection": "g", "reason": "away"}]}) == \
+        ["g (rerank_withheld): away"]
+
+
+def test_a_run_resumed_on_other_code_is_refused(tmp_path, monkeypatch):
+    """2026-11-06: four pilots answered at 13:38 and their whole runs at
+    18:19 on another image. A whole run resumes its pilot's answers, so it
+    runs its pilot's code (app/ask/)."""
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    ask = _fake_ask({"Dumas novel about the necklace": {"answer": "x", "turns": []}})
+    ev.run(tmp_path, "m", model="a", queries=qs, ask=ask, guess=lambda t: "en")
+    stated = json.loads((tmp_path / "runs" / "m" / "settings.json").read_text())
+    assert stated["code"] == ev.ask_code() and stated["code"].startswith("sha256:")
+    monkeypatch.setattr(ev, "ask_code", lambda: "sha256:other")
+    with pytest.raises(SystemExit, match="its pilot ran other code"):
+        ev.run(tmp_path, "m", model="a", queries=qs, ask=ask, guess=lambda t: "en")
+    # a run begun before the code was stated resumes as it did
+    (tmp_path / "runs" / "m" / "settings.json").write_text(json.dumps({"model": "a", "collections": []}))
+    ev.run(tmp_path, "m", model="a", queries=qs, ask=ask, guess=lambda t: "en")
+
+
+def test_a_run_settles_the_vector_leg_in_its_own_process_first(tmp_path, monkeypatch, capsys):
+    """The worker's own check (`run_check.embed_allowed`), made by the
+    measuring process for the collections it searches; a search that still
+    withholds a leg then stops the run with exit 3."""
+    from app import collections as collections_mod
+    from app import db, run_check
+    held = [SimpleNamespace(name="gutenberg"), SimpleNamespace(name="pubmed")]
+    asked = []
+    monkeypatch.setattr(collections_mod, "load_all", lambda: held)
+    monkeypatch.setattr(run_check, "applies", lambda c: True)
+    monkeypatch.setattr(db, "connect", lambda c: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(run_check, "embed_allowed", lambda con, c: asked.append(c.name) or True)
+    assert ev.settle(["gutenberg"]) == {"gutenberg": True} and asked == ["gutenberg"]
+    monkeypatch.setattr(ev, "data_version", lambda cols: {"gutenberg": "1"})
+    monkeypatch.setattr(ev, "ask_direct", lambda cols, call: lambda q, collections=None: call(
+        "louise_search", {"query": q}) and {})
+    real = ev.SearchCache
+    monkeypatch.setattr(ev, "SearchCache", lambda path, version: real(path, version, live=lambda n, a: _TEXT_ONLY))
+    (tmp_path / "runs" / "m").mkdir(parents=True)
+    (tmp_path / "runs" / "m" / "pilot-ok-untagged.json").write_text("{}")
+    rc = ev.main(["run", "--out", str(tmp_path), "--name", "m", "--model", "m", "--direct",
+                  "--queries", str(_queries(tmp_path)), "--collections", "gutenberg",
+                  "--search-cache", str(tmp_path / "s.jsonl")])
+    out = capsys.readouterr()
+    assert rc == 3 and "settle: gutenberg: the vector leg is settled" in out.out
+    assert "stopped: the search" in out.err and "withheld gutenberg (dense)" in out.err

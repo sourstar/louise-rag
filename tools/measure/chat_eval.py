@@ -399,6 +399,53 @@ def faithfulness(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return out
 
 
+class SearchWithheld(RuntimeError):
+    """A search that withheld a leg or its reranker: not the search a reader
+    of a settled node gets. Never recorded, never a row: the run stops, and
+    resumes at that question once the leg is back (CLAUDE.md, "Deferral is
+    not failure")."""
+
+
+def withheld_legs(result: Any) -> list[str]:
+    """`collection (what): reason` for each leg or reranker a search
+    withheld (05 §5.3's `legs_withheld`, `rerank_withheld`)."""
+    out: list[str] = []
+    if isinstance(result, dict):
+        for k in ("legs_withheld", "rerank_withheld"):
+            for w in result.get(k) or []:
+                if isinstance(w, dict):
+                    out.append(f"{w.get('collection') or w.get('collection_id')} "
+                               f"({w.get('leg') or k}): {w.get('reason')}")
+                else:
+                    out.append(f"{k}: {w}")
+    return out
+
+
+def settle(collections: list[str] | None) -> dict[str, bool]:
+    """THE VECTOR LEG, SETTLED IN THIS PROCESS before a run (2026-11-06: 314
+    of the contest's 320 recorded searches were text only). The worker
+    re-checks a run's kept statement only while the node's mode embeds
+    (app/worker.py, the search settle: paused or seed-only, the encoder is
+    not loaded for it), and every deploy restarts it; a search answered
+    meanwhile says "Searched on its text only". The very check the worker
+    makes, `run_check.embed_allowed` (sixteen texts re-embedded, a whole set
+    for a run new to this peer), made here: the searches of this process are
+    then answered with every leg. {collection: settled}."""
+    from app import collections as collections_mod
+    from app import db, run_check
+    wanted = set(collections) if collections else None
+    out: dict[str, bool] = {}
+    for c in collections_mod.load_all():
+        if (wanted is not None and c.name not in wanted) or not run_check.applies(c):
+            continue
+        con = db.connect(c)
+        try:
+            out[c.name] = bool(run_check.embed_allowed(con, c))
+        finally:
+            con.close()
+    return out
+
+
 class SearchCache:
     """THE QUESTION'S OWN SEARCH, ONCE (operator, 2026-11-03: "Do we need the
     reranker for this kind of test?"). Since #290 Ask searches the question
@@ -411,7 +458,12 @@ class SearchCache:
 
     The file's first line names the data it was read from (`data_version`:
     the snapshot of every collection searched); another snapshot refuses it.
-    A change to the search code is not seen: record a new file after one."""
+    A change to the search code is not seen: record a new file after one.
+
+    A SEARCH THAT WITHHELD A LEG IS NEVER KEPT (2026-11-06: 314 of 320 kept
+    searches were text only, the node paused and its worker restarted by
+    each deploy, so the whole contest measured the text leg): it raises
+    `SearchWithheld`, and a file holding one is refused whole."""
 
     def __init__(self, path: Path, version: dict[str, Any],
                  live: Callable[[str, dict[str, Any]], Any] | None = None) -> None:
@@ -424,9 +476,17 @@ class SearchCache:
             if head.get("data") != version:
                 raise SystemExit(f"{path}: recorded on {head.get('data')}, the node holds {version}: "
                                  f"record a new file")
+            withheld = []
             for line in lines[1:]:
                 row = json.loads(line)
                 self._kept[row["key"]] = (row["result"], float(row.get("seconds") or 0.0))
+                if withheld_legs(row["result"]):
+                    withheld.append(json.loads(row["key"]).get("query"))
+            if withheld:
+                raise SystemExit(f"{path}: {len(withheld)} of {len(lines) - 1} recorded searches withheld a "
+                                 f"leg (first: {withheld[0]!r}), and a run replaying them measures a search no "
+                                 f"settled node gives: record a new file (each run settles the vector leg "
+                                 f"first)")
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"data": version}, sort_keys=True) + "\n", encoding="utf-8")
@@ -447,6 +507,10 @@ class SearchCache:
         t0 = time.monotonic()
         result = live(name, args)
         seconds = round(time.monotonic() - t0, 3)
+        legs = withheld_legs(result)
+        if legs:
+            raise SearchWithheld(f"the search {args.get('query')!r} withheld {'; '.join(legs)}: not kept, "
+                                 f"and this question is not answered; run again once the leg is back")
         kept = json.loads(json.dumps(result, ensure_ascii=False, default=str))
         self._kept[key] = (kept, seconds)
         with self.path.open("a", encoding="utf-8") as fh:
@@ -637,6 +701,17 @@ def failure(e: BaseException) -> str:
     return said[:1500]
 
 
+def ask_code() -> str:
+    """The code a run's answers come from: app/ask/'s files (Ask's prompt,
+    its tool loop, how sources are shown), one digest. 2026-11-06: four
+    pilots ran at 13:38 and their whole runs at 18:19 on another image."""
+    import hashlib
+    h = hashlib.sha256()
+    for f in sorted((Path(__file__).resolve().parents[2] / "app" / "ask").glob("*.py")):
+        h.update(f.name.encode() + b"\0" + f.read_bytes() + b"\0")
+    return "sha256:" + h.hexdigest()
+
+
 def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
         collections: list[str] | None = None,
         ask: Callable[..., dict[str, Any]] | None = None,
@@ -653,14 +728,20 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
     one, so a configuration is measured on the same questions as the last."""
     run_dir = out / "runs" / name
     run_dir.mkdir(parents=True, exist_ok=True)
-    settings: dict[str, Any] = {"model": model, "collections": collections or []}
+    settings: dict[str, Any] = {"model": model, "collections": collections or [], "code": ask_code()}
     if sampling:
         # the arm: what every request of this run sends over the model file
         settings["sampling"] = dict(sampling)
     stated = run_dir / "settings.json"
     if stated.exists():
-        if json.loads(stated.read_text(encoding="utf-8")) != settings:
-            raise SystemExit(f"{name}: settings differ from this run's first ones ({stated})")
+        first = json.loads(stated.read_text(encoding="utf-8"))
+        if "code" not in first:
+            settings.pop("code")        # a run begun before the code was stated
+        if first != settings:
+            what = ("its pilot ran other code (app/ask/): a whole run resumes its pilot's answers, "
+                    "so it runs its pilot's code; pilot again under a new --tag or --name"
+                    if first.get("code") != settings.get("code") else "settings differ")
+            raise SystemExit(f"{name}: {what} ({stated})")
     else:
         stated.write_text(json.dumps(settings, indent=1, sort_keys=True), encoding="utf-8")
     answers = run_dir / "answers.jsonl"
@@ -691,6 +772,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             error = None
             try:
                 got = ask(q["query"], collections=collections)
+            except SearchWithheld:
+                raise                # deferral, not failure: no row, the run stops here
             except Exception as e:   # noqa: BLE001 — a failed answer is a row, not the end of the run
                 got, error = {"answer": "", "turns": [], "rounds": 0, "exhausted": False}, failure(e)
             seconds = round(time.monotonic() - t0, 2)
@@ -1215,10 +1298,16 @@ def main(argv: list[str] | None = None) -> int:
                              f"run --pilot 3, read runs/{a.name}/pilot-{a.tag or 'untagged'}.md, "
                              f"then `chat_eval pilot-ok`")
         cache = SearchCache(a.search_cache, data_version(cols)) if a.search_cache else None
-        code = run(a.out, a.name, model=a.model, queries=queries,
-                   collections=cols, tag=a.tag, redo=a.redo, search_cache=cache,
-                   sampling=parse_sampling(a.sampling) or None,
-                   **({"ask": ask_direct(cols, call=cache), "pid": lambda: 0} if a.direct else {}))
+        for c, ok in settle(cols).items():
+            print(f"settle: {c}: {'the vector leg is settled' if ok else 'NOT settled (its run-check log says why)'}")
+        try:
+            code = run(a.out, a.name, model=a.model, queries=queries,
+                       collections=cols, tag=a.tag, redo=a.redo, search_cache=cache,
+                       sampling=parse_sampling(a.sampling) or None,
+                       **({"ask": ask_direct(cols, call=cache), "pid": lambda: 0} if a.direct else {}))
+        except SearchWithheld as e:
+            print(f"{a.name}: stopped: {e}", file=sys.stderr)
+            return 3
         if a.pilot:
             print(f"pilot: {pilot_report(a.out, a.name, a.tag, [q['key'] for q in queries])}")
         return code
@@ -1244,10 +1333,16 @@ def main(argv: list[str] | None = None) -> int:
         extra = parse_sampling(a.sampling)
         templates = wire_check.read_gguf(a.gguf)
         cache = SearchCache(a.search_cache, data_version(cols))
-        results = [wire_check.check(a.model, by_key[k], templates, collections=cols, search_cache=cache,
-                                    post=sampling_probe.http_post, chat_url=config.CHAT_URL,
-                                    max_tokens=a.max_tokens, append=a.append,
-                                    sampling=extra) for k in wanted]
+        for c, ok in settle(cols).items():
+            print(f"settle: {c}: {'the vector leg is settled' if ok else 'NOT settled (its run-check log says why)'}")
+        try:
+            results = [wire_check.check(a.model, by_key[k], templates, collections=cols, search_cache=cache,
+                                        post=sampling_probe.http_post, chat_url=config.CHAT_URL,
+                                        max_tokens=a.max_tokens, append=a.append,
+                                        sampling=extra) for k in wanted]
+        except SearchWithheld as e:
+            print(f"wire {a.model}: stopped: {e}", file=sys.stderr)
+            return 3
         arm = a.sampling.replace("=", "").replace(",", "-")
         where = wire_check.write(a.out, results, arm)
         print(wire_check.table(results) + f"\n{where}")
