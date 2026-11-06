@@ -62,16 +62,16 @@ one.
 
 ```
 louise hold
-  collection  new <plugin> --recipe FILE --encoder URL --cpu-model T [--api A] [--embed-model M] [--name N]
-                                                                       A NEW COLLECTION, ONE WORKFLOW (operator, 2026-11-06), every input from the recipe:
-                                                                       1 calibrate the recipe's encoder against its CPU twin at the recipe's ctx, cut,
-                                                                       document instruction and set (the inputs the gate sends; the CPU lane kept in the
-                                                                       node's store); 2 the recipe's space.tolerance must be the measured one (taken when
-                                                                       absent, refused when another); 3 create, or hold the collection already made to the
-                                                                       recipe; 4 the CPU reference written from the store; 5 the gate. Exit 0 only on a
-                                                                       pass; embedding stays off. The measurement is kept in <collection>/state/calibration.json.
-                                                                       A symmetric space for now: every case, its steps and its plan in
-                                                                       docs/notes/new-collection.md (asymmetric and pair spaces: the steps below by hand until built)
+  collection  new <plugin> --recipe FILE --name N --encoder URL --cpu-model T [--api A] [--embed-model M]
+                                                                       A NEW COLLECTION, ONE WORKFLOW (operator, 2026-11-06): case A of docs/notes/new-collection.md,
+                                                                       its steps declared in app/hold/workflow.py, every input from the recipe: resolve (the recipe's
+                                                                       ctx, cut, instruction, set, weights, engine; the CPU twin must state a CPU run of the weights);
+                                                                       check (an existing collection of that name held to the recipe by space_id, engine and set,
+                                                                       before anything is measured); calibrate against the twin (the CPU lane kept in the node's
+                                                                       store); tolerance (the recipe's must be the measured one); make; cpu-reference from the store;
+                                                                       gate. Exit 0 only on a pass; embedding stays off. Kept: <collection>/state/calibration.json and
+                                                                       the run's progress, <LOUISE_ROOT>/state/new/<name>.json (run again: a done step is checked, not
+                                                                       redone). A space.query.encoder is case B, refused until phase 3; the other cases: the note
               create <plugin> --recipe FILE --encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]
               [--space-from CODEX] [--calibration-set FILE]
                                                                        the model flags: required where a URL names no model (§7.8, amended 2026-10-09)

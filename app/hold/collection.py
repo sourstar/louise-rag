@@ -594,13 +594,29 @@ def _dry_build(plugin: str, recipe: dict[str, Any], *, platform_image: str, cred
     from its own bytes — every refusal the real build would make, before
     an encoder is called. Returns nothing: the dry Codex names no reference
     and is not a collection."""
+    dry_codex(plugin, recipe, platform_image=platform_image, credits=credits,
+              space_version=space_version, needs_query=needs_query)
+
+
+def dry_codex(plugin: str, recipe: dict[str, Any], *, platform_image: str, credits: tuple = (),
+              space_version: int | None = None, needs_query: bool | None = None) -> Codex:
+    """The Codex the recipe WOULD make, its calibration hashes placeholders,
+    validated and read back from its own bytes: what its `space_id` and its
+    engine are before anything is measured or made (`hold collection new`
+    holds a collection already made to the recipe by them, the workflow's
+    step 2, docs/notes/new-collection.md). Not a collection: it names no
+    reference, and nothing writes it. `needs_query` defaults to what the
+    recipe's space says (a `space.query.encoder`)."""
     from . import template
+    if needs_query is None:
+        query = (recipe.get("space") or {}).get("query")
+        needs_query = bool(isinstance(query, dict) and query.get("encoder"))
     dry = template.from_recipe(plugin, recipe, platform_image=platform_image,
                                calibration=(_PLACEHOLDER, _PLACEHOLDER,
                                             _PLACEHOLDER if needs_query else None),
                                credits=credits, space_version=space_version)
     cx.validate(dry)
-    cx.from_dict(json.loads(dry.canonical()))
+    return cx.from_dict(json.loads(dry.canonical()))
 
 
 def _form_of_recipe(plugin: str, recipe: dict[str, Any]) -> str:

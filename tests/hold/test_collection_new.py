@@ -17,6 +17,7 @@ import pytest
 from app import louise, run_check
 from app.hold import calibrate as calib
 from app.hold import collection as col
+from app.hold import workflow as wf
 
 WEIGHTS = "sha256:" + "ab" * 32
 SET = "sha256:" + "5e" * 32
@@ -39,14 +40,20 @@ def steps(monkeypatch, tmp_path):
     seen: dict = {"order": []}
 
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "9a" * 32)
+    monkeypatch.setenv("LOUISE_ROOT", str(tmp_path / "louise"))
+    monkeypatch.setattr(col, "dry_codex", lambda plugin, recipe, **kw: _codex(**recipe["space"]))
     monkeypatch.setattr(calib, "load_set", lambda set_id: (set_id, ["t1", "t2"]))
     monkeypatch.setattr(louise.cx, "engine_from_dict", lambda d, where: SimpleNamespace(engine_id="e", **d)
                         if isinstance(d, dict) else d)
 
     def stated_run(recipe, probe_item=None):
-        seen["twin"] = recipe
-        return SimpleNamespace(driver=seen.get("driver", "cpu"), weights=seen.get("twin_weights", WEIGHTS),
-                               engine=dict(ENGINE), run_id="sha256:run-twin")
+        if recipe.model.endswith("-cpu"):
+            seen["twin"] = recipe
+            return SimpleNamespace(driver=seen.get("driver", "cpu"), weights=seen.get("twin_weights", WEIGHTS),
+                                   engine=dict(ENGINE), run_id="sha256:run-twin")
+        seen["card"] = recipe
+        return SimpleNamespace(driver="sycl", weights=WEIGHTS, engine=dict(ENGINE),
+                               run_id=seen.get("card_run", "sha256:run-card"))
     monkeypatch.setattr(run_check, "stated_run", stated_run)
 
     def http_embed(ctx, *, document_instruction=None, set_id=None, cut="characters"):
@@ -57,7 +64,8 @@ def steps(monkeypatch, tmp_path):
     def measure(reference, against, *, set_id, texts, embed):
         seen["order"].append("calibrate")
         seen["endpoints"] = (reference, against)
-        return {"tolerance": seen.get("measured", "0.999995"), "set": set_id}
+        return {"tolerance": seen.get("measured", "0.999995"), "set": set_id,
+                "reference": {"runs": [seen.get("card_run", "sha256:run-card")]}}
     monkeypatch.setattr(calib, "measure", measure)
 
     def create_from(root, plugin, recipe, **kw):
@@ -79,6 +87,19 @@ def steps(monkeypatch, tmp_path):
         return seen.get("gate_rc", 0)
     monkeypatch.setattr(louise, "cmd_embedder_check", gate)
     return seen
+
+
+def _codex(*, encoder=None, ctx=8191, cut="characters", document=None, calibration=None, tolerance=None,
+           layers="one", **_):
+    """A Codex as `new` reads it: its space, and a `space_id` that moves with
+    what is inside it (02 §2.4) and not with the tolerance or calibration."""
+    encoder = encoder or {"weights": WEIGHTS, "engine": ENGINE}
+    engine = SimpleNamespace(engine_id="engine:" + json.dumps(encoder["engine"], sort_keys=True))
+    sp = SimpleNamespace(ctx=ctx, cut=cut, document_instruction=(document or {}).get("instruction"),
+                         calibration=SimpleNamespace(set=(calibration or {}).get("set", SET)),
+                         tolerance=tolerance, encoder=SimpleNamespace(weights=encoder["weights"], engine=engine))
+    sid = "sha256:" + json.dumps([encoder["weights"], ctx, cut, sp.document_instruction, layers])
+    return SimpleNamespace(space=sp, space_id=sid, collection_id="sha256:" + "dd" * 32)
 
 
 def _new(tmp_path, recipe, *extra):
@@ -129,31 +150,93 @@ def test_a_failed_step_stops_the_workflow_and_the_gate_decides_the_exit(tmp_path
     assert _new(tmp_path, _recipe(tmp_path)) == 1
 
 
-def test_a_collection_already_made_is_held_to_the_recipe(tmp_path, steps, monkeypatch):
-    sp = SimpleNamespace(ctx=8191, cut="characters", document_instruction="passage: ",
-                         calibration=SimpleNamespace(set=SET), tolerance="0.999995",
-                         encoder=SimpleNamespace(weights=WEIGHTS, engine=ENGINE))
-    codex = SimpleNamespace(space=sp)
-    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", codex))
+def test_a_collection_already_made_is_held_to_the_recipe_by_space_id(tmp_path, steps, monkeypatch, capsys):
+    """By `space_id`, its engine and its calibration set — not five fields
+    (the review of 2026-11-06: engine, dim, dtype, pooling and the layers
+    went unchecked)."""
+    held = {"document": {"instruction": "passage: "}, "tolerance": "0.999995"}
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", _codex(cut="characters", **held)))
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2
-    assert steps["order"] == [], "refused before any measurement: the cut differs"
-    sp.cut = "tokens"
-    steps["order"].clear()
+    assert steps["order"] == [], "refused before any measurement"
+    assert "cut 'characters', the recipe's 'tokens'" in capsys.readouterr().err
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", _codex(cut="tokens", **held)))
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 0
     assert steps["order"] == ["calibrate", "cpu-reference", "gate"], "kept, not created again"
-    sp.encoder = SimpleNamespace(weights="sha256:" + "ef" * 32, engine=ENGINE)
-    steps["order"].clear()
-    assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2, "another encoder's collection: refused"
+    for other, says in (({"encoder": {"weights": "sha256:" + "ef" * 32, "engine": ENGINE}}, "encoder weights"),
+                        ({"encoder": {"weights": WEIGHTS, "engine": {**ENGINE, "image": "sha256:" + "22" * 32}}},
+                         "engine"),
+                        ({"layers": "two"}, "its layers or cleaning"),
+                        ({"calibration": {"set": "sha256:" + "77" * 32}}, "calibration set")):
+        monkeypatch.setattr(col, "resolve", lambda root, name, other=other: ("wd", _codex(cut="tokens", **held, **other)))
+        steps["order"].clear()
+        assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2, other
+        assert steps["order"] == [] and says in capsys.readouterr().err, other
 
 
 def test_an_existing_collection_of_another_tolerance_is_refused_after_the_measurement(tmp_path, steps,
                                                                                      monkeypatch):
-    sp = SimpleNamespace(ctx=8191, cut="tokens", document_instruction="passage: ",
-                         calibration=SimpleNamespace(set=SET), tolerance="0.99999",
-                         encoder=SimpleNamespace(weights=WEIGHTS, engine=ENGINE))
-    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", SimpleNamespace(space=sp)))
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", _codex(
+        cut="tokens", document={"instruction": "passage: "}, tolerance="0.99999")))
     assert _new(tmp_path, _recipe(tmp_path)) == 2
     assert steps["order"] == ["calibrate"], "measured, then refused: not changed in place"
+
+
+def test_a_question_encoder_is_case_b_and_refused_before_anything_is_asked(tmp_path, steps, capsys):
+    """Any `space.query.encoder`, its weights the document side's or not:
+    `create` would need the question side's reference, after the card had
+    measured (the review of 2026-11-06). Case B is phase 3."""
+    for weights in (WEIGHTS, "sha256:" + "ef" * 32):
+        recipe = _recipe(tmp_path, query={"instruction": "query: ", "encoder": {"weights": weights}})
+        assert _new(tmp_path, recipe) == 2
+        assert "case B" in capsys.readouterr().err
+    assert steps["order"] == [] and "twin" not in steps, "not even the twin was asked"
+
+
+def test_a_stopped_run_resumes_and_a_done_calibration_is_checked_not_redone(tmp_path, steps):
+    steps["cpu_rc"] = 1
+    assert _new(tmp_path, _recipe(tmp_path)) == 1
+    kept = json.loads(wf.progress_path("wd").read_text())
+    assert kept["case"] == "A" and set(kept["steps"]) == {"calibrate", "tolerance", "make"}, \
+        "kept after each step's own effect; cpu-reference failed, not kept"
+    steps["order"].clear()
+    steps["cpu_rc"] = 0
+    assert _new(tmp_path, _recipe(tmp_path)) == 0
+    assert steps["order"] == ["create", "cpu-reference", "gate"], "the card states the calibrated run: kept"
+    assert steps["card"].model == "vega-nemo" and steps["card"].cut == "tokens"
+    steps["order"].clear()
+    steps["card_run"] = "sha256:another-run"
+    assert _new(tmp_path, _recipe(tmp_path)) == 0
+    assert steps["order"][0] == "calibrate", "another run on the card: measured again"
+
+
+def test_another_request_under_the_same_name_starts_afresh(tmp_path, steps, capsys):
+    steps["cpu_rc"] = 1
+    assert _new(tmp_path, _recipe(tmp_path)) == 1
+    steps["order"].clear()
+    assert _new(tmp_path, _recipe(tmp_path, ctx=4096)) == 1
+    assert steps["order"][0] == "calibrate" and "started afresh" in capsys.readouterr().err
+
+
+def test_the_steps_are_the_workflows_numbered_in_case_as_order(tmp_path, steps, capsys):
+    assert _new(tmp_path, _recipe(tmp_path)) == 0
+    said = [line.split()[1] for line in capsys.readouterr().err.splitlines() if line[:2] in
+            {f"{i}/" for i in range(1, 10)}]
+    assert said == list(wf.ordered(wf.case("A")))
+
+
+def test_the_dry_codex_is_the_space_create_makes(tmp_path):
+    """`col.dry_codex`, which `new` holds an existing collection to, gives
+    the `space_id` and the engine `create` writes."""
+    from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed, fake_query_embed
+    from tests.hold.test_template import recipe
+    root = tmp_path / "collections"
+    root.mkdir()
+    made = col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM, embed=fake_embed,
+                                  embed_query=fake_query_embed, name="g", key=KEY, now=NOW)
+    dry = col.dry_codex("gutenberg", recipe(), platform_image=PLATFORM)
+    assert dry.space_id == made.space_id
+    assert dry.space.encoder.engine.engine_id == made.space.encoder.engine.engine_id
+    assert louise._differs_from(made, dry) == []
 
 
 def test_the_name_is_the_operators_and_is_asked_for(tmp_path, steps):
