@@ -1134,6 +1134,7 @@ arms loop and presence 1.5 costs quality.
 - **The automatic "sentences supported" column ranked the 8B's 0.1 first.** The blind reading did not. The column stays a count, as before.
 - **Next, on the winner:**
   - the KV cache at Q8_0 (`louise-chat-qwen3-8b-q8-kvq8`, the operator's "Go for the first");
-  - Qwen's own Q4_K_M (`louise-chat-qwen3-8b-q4`, the operator's "lower the quantization");
+  - unsloth's UD-Q4_K_XL (`louise-chat-qwen3-8b-ud-q4`; the operator's "lower the quantization",
+    then "Use the unsloth recommend model for 4 bits"; Qwen's own Q4_K_M was withdrawn);
   - each probed, run whole at 0.7, read blind against the Q8 at 0.7, and timed on an unloaded node;
   - two more seeds for the Q8 at 0.7.
