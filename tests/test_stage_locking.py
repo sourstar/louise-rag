@@ -74,7 +74,7 @@ def _pending(con, where):
 
 @pytest.mark.parametrize("stage, pool_call, ready", [
     ("rdf", "metadata_for_rows", "rdf_done=0"),
-    ("fts", "chunks_for_rows", "rdf_done=1 AND fts_done=0"),
+    ("fts", "fts_for_rows", "rdf_done=1 AND fts_done=0"),
 ])
 def test_the_parse_runs_outside_the_manifest_write_lock(tmp_path, isolated_config,
                                                         monkeypatch, stage,
@@ -89,10 +89,10 @@ def test_the_parse_runs_outside_the_manifest_write_lock(tmp_path, isolated_confi
     seen: dict = {}
     real = getattr(parallel, pool_call)
 
-    def watched(collection, rows):
+    def watched(collection, rows, **kw):
         seen["in_transaction"] = con.in_transaction
         seen["peer"], seen["why"] = _another_writer_can_commit(collection)
-        return real(collection, rows)
+        return real(collection, rows, **kw)
 
     monkeypatch.setattr(parallel, pool_call, watched)
     assert worker._execute_step(con, c, stage, row) is True

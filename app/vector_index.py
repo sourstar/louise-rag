@@ -36,12 +36,19 @@ which orders exactly like cosine — the same metric the flat scan used.
 import math
 import threading
 import time
+from pathlib import Path
 from datetime import timedelta
 
 from . import config, db, embeddings
 
 VECTOR_COLUMN = "vector"
 BOOK_COLUMN = "book_id"
+#: the column a reader's language filter prefilters on (`lang IN (…)`).
+#: Without an index Lance evaluates it over every row before the search:
+#: wikipedia, 146 M rows, 2,107 ms median against 86 ms unfiltered (München,
+#: 2026-10-31). A BITMAP — Lance's own index for a column of few values —
+#: answers it from the index (3 M rows here: 178 ms → 15 ms, built in 0.6 s)
+LANG_COLUMN = "lang"
 
 _state_lock = threading.Lock()
 _has_index: dict[str, tuple[float, bool]] = {}     # lance dir -> (checked_at, has index)
@@ -102,19 +109,33 @@ class RewriteInProgress(RuntimeError):
     what the worker already takes for a deferral, never a document error."""
 
 
+#: how long a write waits for a compaction to end before it defers: a
+#: light compaction takes seconds (gutenberg 3 s, pubmed 6 s, 2026-10-30),
+#: and a write refused at once cost wikipedia's embed "40 document(s)
+#: deferred" and a genesis pass its 10-minute backoff for it
+REWRITE_WAIT_S = 60.0
+
+
 class writing:
     """`with writing(collection):` around one commit to the vector table:
-    refused while a compaction rewrites it, counted while in flight so the
-    compaction can wait for it (embeddings._write_lock)."""
+    held off while a compaction rewrites it — waited for up to
+    REWRITE_WAIT_S, then refused as a retryable commit conflict — and
+    counted while in flight so the compaction can wait for it
+    (embeddings._write_lock)."""
 
-    def __init__(self, collection):
+    def __init__(self, collection, *, wait_s: float | None = None):
         self.key = str(collection.lance_dir)
+        self.wait_s = REWRITE_WAIT_S if wait_s is None else wait_s
 
     def __enter__(self):
+        deadline = time.monotonic() + self.wait_s
         with _state_lock:
-            if self.key in _rewriting:
-                raise RewriteInProgress(f"retryable commit conflict: {self.key} is being compacted; "
-                                        f"this write waits for the next turn")
+            while self.key in _rewriting:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise RewriteInProgress(f"retryable commit conflict: {self.key} is being compacted; "
+                                            f"this write waits for the next turn")
+                _writers_changed.wait(left)
             _writers[self.key] = _writers.get(self.key, 0) + 1
         return self
 
@@ -213,6 +234,23 @@ def refresh_due(st: dict | None) -> bool:
     return unindexed >= need
 
 
+def _parts(collection):
+    """A split collection's parts (app/vector_parts.py), each a collection
+    of its own; None for a single table, or for a part itself."""
+    from . import vector_parts
+    if vector_parts.is_split(collection):
+        return vector_parts.views(collection)
+    return None
+
+
+def _lang_part(collection) -> bool:
+    """A part of a collection split by `lang`: every row has the part's
+    language, so its `lang` BITMAP would answer nothing (no search filters
+    the column there)."""
+    return (getattr(collection, "vector_part", None) is not None
+            and Path(collection.lance_dir).name.startswith("lang="))
+
+
 def _table(collection):
     conn = embeddings._conn(collection)
     if embeddings.TABLE not in conn.table_names():
@@ -252,6 +290,9 @@ def purge_deleted(collection, lock_con=None) -> dict:
     table would pay this per document."""
     import datetime
 
+    parts = _parts(collection)
+    if parts is not None:
+        return {"purged": True, "parts": {p.vector_part: purge_deleted(p, lock_con) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"purged": False, "reason": "no vector table"}
@@ -294,6 +335,47 @@ def _scalar_indices(tbl) -> list:
         return []
 
 
+def _lang_indices(tbl) -> list:
+    try:
+        return [ix for ix in tbl.list_indices()
+                if LANG_COLUMN in (getattr(ix, "columns", None) or [])]
+    except Exception:   # noqa: BLE001
+        return []
+
+
+def lang_indexed(tbl) -> bool | None:
+    """Whether the `lang` column has its BITMAP; None for a table without
+    the column (nothing to index)."""
+    schema = getattr(tbl, "schema", None)
+    if schema is None or LANG_COLUMN not in schema.names:
+        return None
+    return bool(_lang_indices(tbl))
+
+
+def build_lang_table(tbl, *, log=None) -> dict:
+    """A BITMAP index on `lang` (LANG_COLUMN explains the cost it removes)."""
+    from lancedb.index import Bitmap
+    rows = tbl.count_rows()
+    t0 = time.monotonic()
+    tbl.create_index(LANG_COLUMN, config=Bitmap(), replace=True)
+    dt = time.monotonic() - t0
+    if log:
+        log(f"lang index built over {rows} rows in {dt:.0f}s")
+    return {"built": True, "kind": "bitmap", "column": LANG_COLUMN, "rows": rows,
+            "seconds": round(dt, 1)}
+
+
+def build_lang(collection, *, log=None) -> dict:
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build_lang(p, log=log) for p in parts
+                                         if not _lang_part(p)}}
+    tbl = _table(collection)
+    if tbl is None:
+        return {"built": False, "reason": "no vector table"}
+    return build_lang_table(tbl, log=log)
+
+
 def build_scalar(collection, *, log=None) -> dict:
     """A BTREE index on `book_id` — the column EVERY write filters on.
 
@@ -304,9 +386,17 @@ def build_scalar(collection, *, log=None) -> dict:
     a fifth of an archive pass, paid again by every local embed and by
     every reader lookup. Minutes to build, then those predicates are index
     probes."""
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build_scalar(p, log=log) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
+    return build_scalar_table(tbl, log=log)
+
+
+def build_scalar_table(tbl, *, log=None) -> dict:
+    """`build_scalar` on a table by handle (`build_table`'s twin)."""
     rows = tbl.count_rows()
     t0 = time.monotonic()
     tbl.create_scalar_index(BOOK_COLUMN, index_type="BTREE", replace=True)
@@ -319,7 +409,12 @@ def build_scalar(collection, *, log=None) -> dict:
 
 
 def has_index(collection) -> bool:
-    """Cached per Lance dir for a minute: the query path asks per query."""
+    """Cached per Lance dir for a minute: the query path asks per query.
+    A split collection: whether any of its parts has one (each part's
+    query asks its own)."""
+    parts = _parts(collection)
+    if parts is not None:
+        return any(has_index(p) for p in parts)
     key = str(collection.lance_dir)
     now = time.monotonic()
     with _state_lock:
@@ -346,11 +441,27 @@ def partitions_for(rows: int) -> int:
 def build(collection, *, index_type: str | None = None, partitions: int | None = None,
           log=None) -> dict:
     """Train and build the index now (CLI, or ensure()). Replaces an
-    existing one. Returns what was built."""
-    from lancedb.index import IvfFlat, IvfPq
+    existing one. Returns what was built. A split collection: each part,
+    its partitions by its own rows (`partitions_for`)."""
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build(p, index_type=index_type,
+                                                              partitions=partitions, log=log)
+                                         for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
+    out = build_table(tbl, index_type=index_type, partitions=partitions, log=log)
+    forget(collection)
+    return out
+
+
+def build_table(tbl, *, index_type: str | None = None, partitions: int | None = None,
+                log=None) -> dict:
+    """`build` on a table by handle: the same index, by the same rule, on a
+    table that is not (yet) the collection's — `vector_rewrite` builds the
+    rewritten copy's before it swaps it in, so searches never scan."""
+    from lancedb.index import IvfFlat, IvfPq
     rows = tbl.count_rows()
     if rows == 0:
         return {"built": False, "reason": "empty table"}
@@ -368,7 +479,6 @@ def build(collection, *, index_type: str | None = None, partitions: int | None =
             sub -= 1
         cfg = IvfPq(distance_type="l2", num_partitions=k, num_sub_vectors=sub)
     tbl.create_index(VECTOR_COLUMN, config=cfg, replace=True)
-    forget(collection)
     dt = time.monotonic() - t0
     out = {"built": True, "type": kind, "partitions": k, "rows": rows, "seconds": round(dt, 1)}
     if log:
@@ -377,12 +487,16 @@ def build(collection, *, index_type: str | None = None, partitions: int | None =
 
 
 def stats(collection) -> dict | None:
+    parts = _parts(collection)
+    if parts is not None:
+        return _stats_of_parts({p.vector_part: stats(p) for p in parts})
     tbl = _table(collection)
     if tbl is None:
         return None
     rows = tbl.count_rows()
     indices = _vector_indices(tbl)
     book_id_indexed = bool(_scalar_indices(tbl))
+    lang = None if _lang_part(collection) else lang_indexed(tbl)
     # fragments decide whether a COMPACTION is worth its cost (compact_due)
     fragments = small_fragments = None
     try:
@@ -392,6 +506,7 @@ def stats(collection) -> dict | None:
         pass
     if not indices:
         return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed,
+                "lang_indexed": lang,
                 "fragments": fragments, "small_fragments": small_fragments}
     name = getattr(indices[0], "name", None)
     unindexed = n_indices = None
@@ -405,8 +520,32 @@ def stats(collection) -> dict | None:
     return {"rows": rows, "indexed": True, "name": name,
             "type": str(getattr(indices[0], "index_type", "")),
             "unindexed_rows": unindexed, "indices": n_indices,
-            "book_id_indexed": book_id_indexed,
+            "book_id_indexed": book_id_indexed, "lang_indexed": lang,
             "fragments": fragments, "small_fragments": small_fragments}
+
+
+def _stats_of_parts(per: dict) -> dict | None:
+    """A split collection's stats: the parts' summed, each part's under
+    `parts`. Unindexed rows count a part with no index whole."""
+    have = {v: s for v, s in per.items() if s}
+    if not have:
+        return None
+
+    def total(field):
+        vals = [s.get(field) for s in have.values()]
+        return None if any(v is None for v in vals) else sum(vals)
+    unindexed = [s.get("unindexed_rows") if s.get("indexed") else s.get("rows") for s in have.values()]
+    langs = [s.get("lang_indexed") for s in have.values() if s.get("lang_indexed") is not None]
+    first = next((s for s in have.values() if s.get("indexed")), {})
+    return {"rows": sum(s["rows"] for s in have.values()),
+            "indexed": all(s.get("indexed") for s in have.values()),
+            "name": first.get("name"), "type": first.get("type"),
+            "unindexed_rows": None if any(u is None for u in unindexed) else sum(unindexed),
+            "indices": max((s.get("indices") or 0 for s in have.values()), default=0) or None,
+            "book_id_indexed": all(s.get("book_id_indexed") for s in have.values()),
+            "lang_indexed": all(langs) if langs else None,
+            "fragments": total("fragments"), "small_fragments": total("small_fragments"),
+            "parts": have}
 
 
 def prune(collection, con=None, *, log=None) -> dict:
@@ -452,6 +591,9 @@ def prune(collection, con=None, *, log=None) -> dict:
     trigger. Without the Lance package this falls back to the welded call,
     and only that path needs headroom.
     """
+    parts = _parts(collection)
+    if parts is not None:
+        return {"parts": {p.vector_part: prune(p, con, log=log) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"pruned": False, "reason": "no table"}
@@ -612,8 +754,59 @@ def compact_due(st: dict | None) -> bool:
     return small is not None and small >= config.VECTOR_INDEX_COMPACT_FRAGMENTS
 
 
-def compact(collection, con=None, *, log=None) -> dict:
+def light_compact_due(st: dict | None) -> bool:
+    """Small fragments enough for the LIGHT compaction (`compact(light=True)`)
+    — the full one due or not: it runs first (`ensure`), and the full pass
+    is then due only if small fragments remain."""
+    if not st:
+        return False
+    small = st.get("small_fragments")
+    return small is not None and small >= config.VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS
+
+
+def small_fragments(collection) -> int | None:
+    """The table's small fragments, and nothing else `stats` asks (the row
+    count, the index statistics): the light compaction's one question, put
+    every VECTOR_INDEX_LIGHT_CHECK_S. None when there is no table or it does
+    not say."""
+    tbl = _table(collection)
+    if tbl is None:
+        return None
+    try:
+        return dict(tbl.stats())["fragment_stats"].get("num_small_fragments")
+    except Exception:   # noqa: BLE001 — an older table simply does not say
+        return None
+
+
+def light(collection, con=None, *, log=None) -> dict | None:
+    """THE LIGHT COMPACTION ON ITS OWN CADENCE (2026-10-30): when the small
+    fragments reach VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS and nothing else
+    holds the table, `compact(light=True)`; None when not due. The index
+    maintainer asks it every VECTOR_INDEX_LIGHT_CHECK_S, between the index's
+    own passes (`ensure`, every VECTOR_INDEX_REFRESH_S), which run it first
+    too. Once a pass, it let wikipedia's table drift from 206 small fragments
+    to 2,101 in half an hour and held_chunks of 128 from 0.43 s to 2.45 s
+    (München, #107's AFTER)."""
+    parts = _parts(collection)
+    if parts is not None:
+        did = {p.vector_part: out for p in parts if (out := light(p, con, log=log))}
+        return ({"compacted": any(o.get("compacted") for o in did.values()), "parts": did}
+                if did else None)
+    if busy(collection) or rewriting(collection):
+        return None
+    if not light_compact_due({"small_fragments": small_fragments(collection)}):
+        return None
+    return compact(collection, con, log=log, light=True)
+
+
+def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
     """Merge the small fragments a stream of small writes leaves behind.
+
+    LIGHT (2026-10-30): the small fragments alone, `materialize_deletions`
+    off, so no large fragment is rewritten — seconds, not the full pass's
+    40–51 minutes — and then the book_id index's new rows folded in as a
+    delta (`_refresh_scalar`). Lance's own two calls; the full compaction is
+    unchanged.
 
     IT TAKES THE TABLE EXCLUSIVELY (`rewrite`), which `prune` never did
     and a refresh deliberately does not. A compaction rewrites fragments,
@@ -640,23 +833,31 @@ def compact(collection, con=None, *, log=None) -> dict:
             log(msg)
         return {"compacted": False, "reason": "low disk"}
     before = stats(collection) or {}
-    _started(con, log, f"compaction started: {before.get('small_fragments')} small fragment(s) "
+    what = "light compaction" if light else "compaction"
+    _started(con, log, f"{what} started: {before.get('small_fragments')} small fragment(s) "
                        f"of {before.get('fragments')}, {before.get('rows')} rows; this "
                        f"collection's vector writes wait until it ends")
     ds = _dataset(tbl)
     t0 = time.monotonic()
     try:
         with rewrite(collection):
-            if ds is not None:
+            if ds is not None and light:
+                ds.optimize.compact_files(
+                    target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS,
+                    materialize_deletions=False)
+                _refresh_scalar(_dataset(_table(collection)))
+            elif ds is not None:
                 ds.optimize.compact_files(
                     target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS)
+            elif light:
+                return {"compacted": False, "reason": "no lance dataset"}
             else:
                 tbl.optimize(cleanup_older_than=timedelta(
                     hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
     except Exception as e:                              # noqa: BLE001
         # A compaction that loses its commit is not the caller's failure:
         # the table is intact and merely more fragmented than it could be.
-        msg = f"compaction skipped: {type(e).__name__}: {e}"
+        msg = f"{what} skipped: {type(e).__name__}: {e}"
         if con is not None:
             db.log_event(con, "warn", "index", msg)
         elif log:
@@ -665,13 +866,35 @@ def compact(collection, con=None, *, log=None) -> dict:
     forget(collection)
     dt = time.monotonic() - t0
     after = stats(collection) or {}
-    msg = (f"compacted {before.get('small_fragments')} small fragment(s) of "
-           f"{before.get('fragments')} into {after.get('fragments')} ({dt:.0f}s)")
+    msg = (f"{'light-' if light else ''}compacted {before.get('small_fragments')} small fragment(s) of "
+           f"{before.get('fragments')} into {after.get('fragments')} ({dt:.0f}s)"
+           + ("; the book_id index's new rows indexed" if light else ""))
     if con is not None:
         db.log_event(con, "info", "index", msg)
     elif log:
         log(msg)
     return {"compacted": True, "seconds": round(dt, 1), "before": before, "after": after}
+
+
+def _refresh_scalar(ds) -> None:
+    """The book_id index's new rows folded in as a DELTA (Lance's
+    `optimize_indices` for that index alone), its deltas merged into one
+    past VECTOR_INDEX_MAX_INDICES. Cheap (0.2 s for 100k rows on the bench),
+    and what keeps every `book_id IN (...)` an index probe."""
+    if ds is None:
+        return
+    # one entry per delta segment: the names, once each
+    names = sorted({ix.get("name") for ix in ds.list_indices()
+                    if BOOK_COLUMN in (ix.get("fields") or []) and ix.get("name")})
+    if not names:
+        return
+    ds.optimize.optimize_indices(index_names=names, num_indices_to_merge=0)
+    try:
+        n = ds.stats.index_stats(names[0]).get("num_indices")
+    except Exception:   # noqa: BLE001 — an older dataset simply does not say
+        n = None
+    if n is not None and n > config.VECTOR_INDEX_MAX_INDICES:
+        ds.optimize.optimize_indices(index_names=names, num_indices_to_merge=n - 1)
 
 
 def prune_due(collection) -> bool:
@@ -699,12 +922,35 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     index work. Each is a Lance call of minutes that cannot be interrupted
     once started, so a pause is honoured BETWEEN them; the worker passes
     its `_maintenance_allowed`. Absent, every step runs (the CLI)."""
+    parts = _parts(collection)
+    if parts is not None:
+        # each part on its own, the pause asked between them as between steps
+        did = {}
+        for p in parts:
+            if may_continue is not None and not may_continue():
+                break
+            out = ensure(p, con, log=log, may_continue=may_continue)
+            if out:
+                did[p.vector_part] = out
+        return {"parts": did} if did else None
     go = may_continue or (lambda: True)
     if not go():
         return None
     st = stats(collection)
     if st is None:
         return None
+    # THE LIGHT COMPACTION BEFORE EVERYTHING (2026-10-30): seconds, and every
+    # read and write pays for each small fragment it leaves. Queued behind a
+    # 253 s prune and a 305 s refresh, it let wikipedia's table sit at ~2,000
+    # small fragments for part of half an hour (München: they come back at
+    # 70–80 a minute; held_chunks of 128 0.08–0.25 s just after a pass,
+    # 0.40–0.71 s at 339 small ones)
+    lighted = None
+    if light_compact_due(st):
+        lighted = compact(collection, con, log=log, light=True)
+        if not go():
+            return lighted
+        st = stats(collection) or st
     # BEFORE any of the index work, and independent of all of it: drop
     # superseded versions. This is what keeps the table from growing
     # without bound, it costs no disk headroom, and it must not be
@@ -722,10 +968,23 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     if st["rows"] >= config.VECTOR_INDEX_MIN_ROWS and not st.get("book_id_indexed", False):
         with maintenance(collection):
             out = build_scalar(collection, log=log)
+            # the lang BITMAP in the same step: as cheap (LANG_COLUMN)
+            if out.get("built") and st.get("lang_indexed") is False:
+                out["lang"] = build_lang(collection, log=log)
         if con is not None and out.get("built"):
             db.log_event(con, "info", "index",
                          f"book_id index built ({out['rows']} rows, {out['seconds']}s) — "
                          f"delete-then-insert writes probe instead of scanning")
+        return out
+    # a table indexed on book_id before the lang BITMAP existed gets it
+    # here (LANG_COLUMN). `is False`: a table without the column has none
+    if st["rows"] >= config.VECTOR_INDEX_MIN_ROWS and st.get("lang_indexed") is False:
+        with maintenance(collection):
+            out = build_lang(collection, log=log)
+        if con is not None and out.get("built"):
+            db.log_event(con, "info", "index",
+                         f"lang index built ({out['rows']} rows, {out['seconds']}s) — "
+                         f"a language filter reads the index instead of every row")
         return out
     if not st["indexed"]:
         if st["rows"] < config.VECTOR_INDEX_MIN_ROWS:
@@ -763,6 +1022,13 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
         if not go():
             return did
         st = stats(collection) or st
+    # (the light compaction ran first, above — even where the full pass is
+    # due: wikipedia's 8,246 small fragments sent it to the full one, 4.5
+    # minutes of ~10 cores lost to a writer, while the light one merged 9,232
+    # in 33 s. The full pass is due only if small fragments remain.)
+    if lighted is not None:
+        # one compaction a pass: the next pass reads the fragments again
+        return {"refresh": did, "compact": lighted} if did is not None else lighted
     if compact_due(st):
         out = compact(collection, con, log=log)
         return {"refresh": did, "compact": out} if did is not None else out

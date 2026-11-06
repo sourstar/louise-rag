@@ -364,3 +364,24 @@ def test_a_book_summary_holds_the_chat_model_across_its_chapters(runner, monkeyp
     summarize.summarize_book(Con(), 1)
     assert seen == [True, True, True, True], "pinned at every chapter and at the reduce"
     assert runner.pinned["qwen3-8b"] is False, "and its state before restored after"
+
+
+def test_the_exit_release_writes_the_record_the_hold_was_written_to(tmp_path, monkeypatch):
+    """The exit hook runs after the environment may have changed (a test's
+    root gone, the node's real one back): it releases in the record the hold
+    was taken in, never in whatever LOUISE_ROOT names at exit (2026-10-27)."""
+    import atexit
+    from app import model_pins
+    first, second = tmp_path / "first", tmp_path / "second"
+    registered = []
+    monkeypatch.setattr(atexit, "register", lambda fn, *a: registered.append((fn, a)))
+    monkeypatch.setattr(model_pins, "_process_holders", set())
+    monkeypatch.setattr(model_pins, "hold", lambda *a, **k: True)
+    monkeypatch.setenv("LOUISE_ROOT", str(first))
+    model_pins.hold_for_process("http://e", "m", "embed")
+    fn, args = registered[0]
+    assert args[1] == first / "state" / "model-pins.json"
+    monkeypatch.setenv("LOUISE_ROOT", str(second))
+    fn(*args)
+    assert (first / "state" / ".model-pins.lock").exists()
+    assert not (second / "state").exists()

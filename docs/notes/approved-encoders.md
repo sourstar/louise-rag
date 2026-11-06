@@ -107,10 +107,27 @@ cannot be a cross-peer property.
 |---|---|---|---|
 | NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` — atomics disallowed by default, nothing to set for llama.cpp (`parallel:1`); torch adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. The run states the card and the hashed CUDA libraries (docs/notes/nvidia-support.md); NOT YET MEASURED — no peer has a card |
 | AMD rocBLAS | yes | identical GFX target ISA, single HIP stream, same ROCm version | `ROCBLAS_DEFAULT_ATOMICS_MODE=0` |
-| Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var |
+| Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var. In llama.cpp SYCL it is OFF by two switches: `GGML_SYCL_ENABLE_DNN=0` for the matmuls and `GGML_SYCL_FA_ONEDNN=0` for flash attention's fused SDPA (both in the wrapper's contract since 2026-10-31: the second was missed, and FA on gave flips, a NaN and a wrong vector) |
 | Intel oneMKL | CNR | fixed thread count; GPU since 2024.1, BLAS-3 under OpenMP offload | `MKL_CBWR` |
 | CPU (llama.cpp) | none offered | — | — |
 | torch (`louise-python`: XPU today, CUDA elsewhere) | by calls, not a vendor env var | the same device and torch build. **MEASURED 2026-10-20, jina-v3 on the B70 (torch 2.14.0+xpu, tree -20261020b), torch's DEFAULTS: 204 of 512 calibration texts bit-identical over 2 fresh loads × 2 shuffled passes (2,048 vectors, 2,952 s); the 308 that differ form blocks by text (0–241, 448–511, 257, 273), so it is the input, not chance — NOT reproducible unset.** **With `LOUISE_TORCH_DETERMINISTIC=1` (tree -20261020c, window 1,024, node paused): the DOCUMENT model 512 of 512 bit-identical over 2 fresh loads × 2 shuffled passes (2,048 vectors, 974 s) — REPRODUCIBLE; the query model's run follows.** The texts that differed unset were the SHORT ones (0–241 average 48 tokens, 448–511 average 35; the long block 242–447, average 5,967 tokens, was identical but for two): small shapes reach kernels whose reduction order is not fixed by default. DAR-legal-it, the same stack: 1/4 bit-identical against itself on 2026-10-17 (max abs 8.2e-8), and its calibration fingerprint moved across three byte-identical trees (6d2c61d9…, 193d1cc8…, 6283455f…) while MedCPT's (OpenVINO) stayed 0eb32880… across four — the same switch is in its task now (deploy/dar-legal-it/server.py) and MEASURED next (operator, 2026-10-20). To notify upstream: upstream-bugs.md V1 | `torch.use_deterministic_algorithms(True)` + `torch.backends.mkldnn.deterministic` (oneDNN's `set_deterministic`), switched on by the MODEL's env `LOUISE_TORCH_DETERMINISTIC=1` (deploy/jina-embeddings-v3/server.py) so the stated run carries it; CUDA adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Measured first with it unset, then set — louise-python-rebuild.md §4 |
+| OpenVINO GPU plugin (`louise-python`: MedCPT's article side and its reranker) | none offered | measured per tree and per INPUT SHAPE. **2026-10-30, run 39578bfb (Arc B70, tree -20261021b, measured bit-exact on 32 pairs): 7 of 160 pubmed pairs differed in each of 4 passes, all of 65–73 tokens, max abs 1.4–3.0e-4; the other 153 were bit-identical. On the CPU at the same dynamic shapes, 0 of 160. On the GPU padded to 512, one static shape, 0 of 160, and 640 inferences in 4.0 s against 11.9 s (München).** The same class as torch's short shapes: some shapes reach a kernel whose order is not fixed | ONE STATIC SHAPE on the GPU: every input padded to the context size (`medcpt.make_encoder(fixed=True)`, chosen 2026-10-30 over buckets of 64/128/256/512 (more shapes to measure, gain unmeasured) and the CPU (deterministic, but 5.7x slower and on the pipeline's cores)). A tree is measured with `tools/vega_repro_check.py --sweep`: prefixes of every length up to the window, because a measurement on a few inputs misses a band. **The reranker, the same day:** reproducible per request over 3 fresh loads, but 56 of 256 scores moved when the same documents were cut into requests in reverse order, the same 56 every load (max abs 6.6e-8): a batch padded to its own longest pair made a document's score depend on its batch-mates. Controlled the same way: the encoder fixed, and every inference a full batch (`medcpt.Reranker(fixed=True)`, a short batch filled with copies of its first pair, their scores dropped); to be measured forward against reverse, with its latency |
+
+**One measured set of engine settings for the node's own models (operator,
+2026-11-03, choice C).** Every llama.cpp model the node runs for itself — chat,
+rerank, translate — runs its vendor's measured settings (on SYCL the exact mode
+and flash attention on, every other switch at the engine's default) or an
+exception named, with where it was measured, in
+`tests/vega/test_engine_settings.py`, which fails on drift. Not an encoder: its
+settings are its collection's — the engine frozen in the Codex
+(`space.encoder.engine`), the signed recommended settings (09 §9.19) — and a
+peer may recommend others for its own collection ("A global rule file
+conflicts with any peer wanting for whatever reason recommend a different
+setting for its own made collection"); the gate validates any run. The chat models
+dropped `GGML_SYCL_ENABLE_OPT=0` the same day: it bought them only the same bytes
+over fresh loads (the 2026-10-21 rows below), which a chat model is not checked
+for (measuring.md §11); the reorder of quantized weights it turned off is the
+decode path. Bolt had copied it from Qwen3-8B unmeasured.
 
 **2026-10-20, night: ANY backend, fail-closed (operator).** "A backend that
 does not produce bit exact results upon reprocessing the same data cannot be
@@ -128,7 +145,7 @@ fresh loads, two orders, compared as exact float reprs or text bytes):
 | louise-chat-qwen3-8b (stock SYCL) | DNN=0, `parallel:1`, `cache_ram:0`, greedy (`top_k:1`, temperature 0) | NOT bit-exact: the first answer after a load differs from the later ones (from token ~25), and the later ones agree. `cache_prompt:false` in the request changes nothing |
 | index-translate-9b | DNN=0, `parallel:1`, `cache_ram:0` | bit-exact over 3 loads × 2 (an empty answer to a chat probe; the real path still to measure) |
 
-**2026-10-21, behind VeGa's fail-closed wrapper** (determinism-switch.sh, then
+**2026-10-21, behind VeGa's fail-closed wrapper** (determinism-switch.sh@c572c3b, then
 one LocalAI restart per batch of YAMLs). Each row: 3 fresh loads, shuffled or
 reversed orders, every score or token compared as bytes.
 
@@ -138,22 +155,110 @@ reversed orders, every score or token compared as bytes.
 | the same, `vega-llama-cpp-gen` (no probe) | the same | NOT bit-exact |
 | the same | + `GGML_SYCL_ENABLE_OPT/GRAPH/FUSION=0`, flash attention off | BIT-EXACT, 3 runs of 3 × 2; 13–17 s for 50 candidates, 5.3 GB at ctx 16,384 (kept as `louise-rerank-bge-strict`, ctx 2,560) |
 | **louise-rerank-bge, ctx 2,560, batch/ubatch 2,560** | DNN=0, `parallel:1`, flash attention ON, OPT/GRAPH/FUSION default | **BIT-EXACT**: 20 × 3 × 2, and 50 real gutenberg candidates × 3 loads × 2 shuffled orders on two queries; 1.8–2.2 s for 50, 0.9–1.2 GB. The oversized context was what did not reproduce. In production since 2026-10-21 with the platform's window cut (05 §5.6, 2,048 tokens) |
+| **louise-rerank-bge, live since 2026-10-31 14:06** (rollout-rerank-fa-20261031.sh@c572c3b; until then the strict settings: FA off, OPT/GRAPH/FUSION=0, since NaN scores came in batches of 40–72 with the row above's) | DNN=0, **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`**, OPT/GRAPH/FUSION default, ctx 2,560 | **BIT-EXACT, no NaN, faster.** Study on gutenberg's real candidates (3 queries, the first 40, 56 and 72 of 113–140), 5 fresh loads × 3 passes: 0 NaN in 135 requests, every score identical across loads and orders. Median latency 2.80 / 3.55 / 4.46 s at 40 / 56 / 72, against the strict reranker's 3.87 / 5.32 / 7.00 at the same hour (−28 to −36 %). 50 documents warm: 5.22 → 4.39 s. **Against the strict reranker** on 377 candidates: top-10 shared 10/10 and the same top 1 on each query, max \|diff\| 0.023–0.031 (logits), 5 close pairs reordered per query. After the move the live reranker gave the candidate's scores, 377/377 identical. The 10-21 NaN was oneDNN's SDPA (FA_ONEDNN, the qwen3 rows) |
+| louise-rerank-lamar (LAMAR-600m), live since 2026-10-31 14:29 (rollout-rerank-fa, MODEL=louise-rerank-lamar; no collection uses it) | DNN=0, **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`**, OPT/GRAPH/FUSION default, ctx 2,560 | **BIT-EXACT, no NaN, faster**: the same study as louise-rerank-bge (5 fresh loads x 3 passes at 40/56/72): 0 NaN in 135 requests, every score identical. Median 3.40 / 4.54 / 5.72 s; 50 documents warm 5.98 -> 5.09 s (2.72-2.93 s live after the move). Against the strict copy on 377 candidates: top-10 10/10, the same top 1, max \|diff\| 0.031-0.047, 2-3 pairs reordered per query; live after the move = the candidate, 377/377 |
 | louise-chat-qwen3-8b, `vega-llama-cpp-gen` | DNN=0, `parallel:1`, `cache_ram:0`, greedy | NOT bit-exact (as before: the answers after the first differ) |
-| the same | + `GGML_SYCL_ENABLE_OPT=0` | **BIT-EXACT**, 3 runs of 3 loads × 3 answers. Every switch off (OPT/GRAPH/FUSION=0, flash attention off) is NOT, 3 of 3 runs |
+| the same | + `GGML_SYCL_ENABLE_OPT=0` | **BIT-EXACT**, 3 runs of 3 loads × 3 answers. Every switch off (OPT/GRAPH/FUSION=0, flash attention off) is NOT, 3 of 3 runs. *(The old engine, c0fd786 + P2, before `GGML_SYCL_FA_ONEDNN=0`; see the next row)* |
+| **louise-chat-qwen3-8b on 16acc89** (`vega-louise-llama-cpp`, llama.cpp ddf48f8; 2026-11-03, the chat benchmark, node paused) | DNN=0, `GGML_SYCL_FA_ONEDNN=0`, `parallel:1`, `cache_ram:0`, flash attention ON, **OPT and GRAPH at their defaults** (#270), greedy (temperature 0, top_k 1, seed 42) | **BIT-EXACT, the first answer after a load included**: 3 fresh loads with NO warm-up, 3 prompts (a 1,915-token summary, an Italian and an English question), each asked twice per load with the first prompt rotated from load to load (p1 p2 p3 p1 p2 p3; p2 p3 p1 …): 1 distinct text per prompt over its 6 answers (chat_repro3.py). The first-answer drift of the rows above does not reproduce on this engine, and `GGML_SYCL_ENABLE_OPT=0` is not needed for chat: bit-exact at the default speed. The greedy answers at OPT=0 and OPT default are the same text |
 | index-translate-9b, `vega-llama-cpp-gen` | DNN=0, `parallel:1` | BIT-EXACT, 3 loads × 3 greedy answers (a real translation) |
+| **louise-translate-madlad** (MADLAD-400-3B f16 GGUF, `vega-llama-cpp-t5` = series f8b4acdcdcb8, f32 KV cache, `parallel:7`, waves; live since 2026-10-28) | DNN=0, `cache_type_k/v: f32` | reproducible PER WAVE COMPOSITION: the same question group twice 625/626 (the one row differs when the group splits into different waves under load); a lone translation gives P3's F16-cache bytes 372/379 (the cache type moves 7 last bits); in-wave vs alone 614/626. Measured with the gates of tools/measure/t5waves.py (localai-bugs.md P4) |
 | vega-dar-legal-it, louise-python-20261021a | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 32 of normattiva's texts (24 spread + the 8 longest) × 3 fresh loads × 2 shuffled passes, 192 vectors; 20 of 20 re-embedded vectors equal to a fresh encode (float16) |
+| vega-jina-v3 and vega-jina-v3-query, louise-python-20261021a (2026-10-27, before wikidata's re-creation; `tools/vega_repro_check.py --n 64 --loads 3 --repeats 2 --window 1024`) | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 64 of the platform's calibration texts × 3 fresh loads × 2 shuffled passes, 384 vectors, each side |
 | vega-medcpt-article-ov, louise-python-20261021b (OpenVINO) | `LOUISE_BITEXACT_MEASURED=louise-python-20261021b` | **BIT-EXACT**: 32 PubMed (title, abstract) pairs × 3 fresh loads × 2 shuffled passes, 192 vectors |
 | louise-rerank-medcpt, the same tree | the same | **BIT-EXACT**, 20 × 3 × 2 |
+| **louise-rerank-medcpt, louise-python-20261030** (#112: one static shape on xpu; live 2026-10-31 05:07, rollout-112-rerank-20261031.sh@c572c3b) | `LOUISE_BITEXACT_MEASURED=louise-python-20261030` | **BIT-EXACT with batch-mates**: 3 pubmed queries × 256 documents (160 live items + 96 prefixes), requests of 50, 3 fresh loads × fwd/rev: 0 of 256 differ. 20261021b on the same set: 55–56 of 256 (its 20 × 3 × 2 above never changed batch-mates). Agrees with 20261021b: max abs 2.8e-4, the same top 10 and top 1, no pair reordered. One 50-document rerank, warm: 99 ms (54 ms before) |
+| **vega-medcpt-article-ov-cpu (pubmed's CPU twin), louise-python-20261030, `device:cpu`** (2026-11-02; until then on 20261020c, never measured, so VeGa stated no run and the CPU reference could not load) | `LOUISE_BITEXACT_MEASURED=louise-python-20261030` | **BIT-EXACT on the CPU**: `tools/vega_repro_check.py`, 32 calibration pairs + 512 swept prefixes, 3 fresh loads × 2 shuffled passes (544/544, 3,264 vectors), then 160 pubmed pairs × 3 × 2 (160/160, 960 vectors); a throwaway model file carried the flag for the measurement only (medcpt-cpu-repro.sh) |
+| **vega-medcpt-query, `vega-llama-cpp` (2026-10-30/31, München)** | DNN=0, `parallel:1`, ctx 513, batch/ubatch 512, **flash attention ON** | **NOT bit-exact across fresh loads, intermittently, on long inputs**. The gate's sixteen query texts, 3 fresh loads × 2 shuffled passes: a flip in 3 of 8 runs (1 vector of 6 each time, max abs 6.5e-6–3.5e-5, cosine ≥ 0.99999988, always among the texts cut at 512 tokens), none within one load or in one order. Window 511: 2 of 4 runs; ctx 1,024 with batch/ubatch 1,024: 4 of 4; ctx 1,024 with batch/ubatch 512: 0 of 4, then a flip in the next run. Lanes 1 against 4 (the gate's `contribute`): identical, not the cause. The gate's batch verdict on this run was therefore chance (False at 23:38, True at 23:45, different fingerprints) |
+| the same | **flash attention OFF** | **BIT-EXACT**: 0 of 12 runs (72 fresh-load passes), and the sweep (16 + 512 prefixes, window 512, 2 × 2) 528/528 over 2,112 vectors; faster (~26.5 s against ~33 s a run). Stated 2026-10-31 as run 71d129c3 (gate PASS; 3 of 512 below the tolerance 0.999914, worst 0.999649, never enough to fail the quorum of 12 of 16 and the median). Live |
+| **vega-bge-m3, `vega-llama-cpp` (2026-10-31, München; wikipedia paused for it)** | DNN=0, `parallel:1`, ctx/batch/ubatch 8,192, **flash attention ON** | **BIT-EXACT**: 8 runs of 3 fresh loads × 2 shuffled passes, 16 spread calibration texts + 512 prefixes up to 1,024 words (wikipedia's window), 528/528 every run, 25,344 vectors, 0 flips. FA stays on |
+| **vega-qwen3-embedding-4b, `vega-llama-cpp` (2026-10-31, München; gutenberg paused for it)** | Q4_K_M, DNN=0, `parallel:1`, ctx/batch/ubatch 8,192, **flash attention ON** (on since before the 2026-10-18 determinism switch) | **NOT bit-exact across fresh loads**: 8 runs of 3 × 2, 16 spread + 32 prefixes up to 8,191 words (8,192 is refused: llama.cpp embeds at most context − 1). Flips in 4 of 8 runs: [18, 22], [22, 23], [17, 18, 35], [1]. Each flip is one vector of six, max abs 3.3e-5–1.3e-4, cosine ≥ 0.999999. A spread text (1) flipped too, not only the long prefixes. Written with FA on: gutenberg's whole table, 10,476,298 rows (79,703 documents, 10,476,253 chunks, 7,822,854,298 tokens; ~35 card-days to re-embed at ~2,600 tokens/s), valid at tolerance. **KEPT (operator, 2026-10-31):** every check a peer runs compares at tolerance and passes; what is lost is bit-for-bit reproduction of these vectors, recorded here; a re-embed stays possible at any later re-creation |
+| the same | **flash attention OFF** (measured on vega-qwen3-embedding-4b-next, 2026-10-31) | **BIT-EXACT AND WRONG**: 8 of 8 runs (48 texts, 3 × 2) and the 512-prefix sweep to 2,048 words (2 × 2) bit-identical, 4,416 vectors. But the gate FAILED both sides (run c73e2a75): cosine to the reference median 0.126 (document) and 0.085 (query), 0 of 16 sampled passed, 512 of 512 below 0.995; the failures are kept as statements. It was also 2.0–2.4× slower on gutenberg's chunks (2.0–2.3 chunks/s against 4.0–5.4 with FA on). Backed out after 25 minutes, nothing written. The wrong bytes are the shared engine's bug (localai-bugs.md P5); the next row is the configuration that is both bit-exact and correct |
+| **the same, `vega-llama-cpp-p5`** (the P1–P5 engine MADLAD runs, louise-sycl-f16-llama-cpp-p5; stage-p5-embedder-20261031.sh@c572c3b; measured on vega-qwen3-embedding-4b-p5) | **flash attention OFF**, F16 KV cache | **BIT-EXACT AND CORRECT**: 8 of 8 runs (48 texts, 3 × 2, 956–1,007 s each) and the 512-prefix sweep to 2,048 words (2 × 2, 1,719 s), 4,416 vectors, every exit 0. Cosine to FA on: min 0.999737, median 1.000000 on 48 texts. Gate PASS both sides, run ac7d01ea: document 16 of 16, worst 0.999770, whole set worst 0.999737, 0 of 512 below 0.995; query 16 of 16, worst 0.999999, whole set worst 0.999964. Speed: 1,115 / 1,089 tokens/s (gate benchmark, document / query), 1.99–2.06 chunks/s on 150 gutenberg chunks against 3.9–5.4 with FA on (~2× slower; candidate (i), f32 KV on the shared engine, 1.69–1.81). **Live 2026-10-31 08:42** (rollout-qwen-p5-20261031.sh@c572c3b; the live run checked equal to the gated one, both sides); gutenberg resumed. Its FA-on vectors stay (operator, 2026-10-31) |
+| the same, `vega-llama-cpp-p5` (measured on vega-qwen3-embedding-4b-p5fa, 2026-10-31 09:01–09:57) | **flash attention ON**, F16 KV cache (the live YAML but for FA) | **NOT bit-exact, and WRONG answers among the flips**: 4 of 8 runs (48 texts, 3 × 2) varied across fresh loads. Run 3: text [14], max \|diff\| 6.27e-05. Run 5: texts [19, 22], a **NaN** in a vector. Run 6: [14], 3.71e-05. Run 8: [16, 22], **0.0865**. The texts are the long sweep prefixes, and 22 is in three of the four. 381–447 s a run, against 956–1,007 with FA off. The sweep was not run. P5 does not touch the FA kernel. The NaN and the 0.0865 are wrong vectors, not a variation within a bound, so FA on stays OUT for gutenberg (architecture session, near-exact-runs.md). Probable cause: oneDNN's fused SDPA, which `GGML_SYCL_ENABLE_DNN=0` does not cover (`GGML_SYCL_FA_ONEDNN`, the row above it) |
+| the same, `vega-llama-cpp-p5` (measured on vega-qwen3-embedding-4b-fa1, 2026-10-31 09:59–11:30; /root/measure/repro_nan.py, var-vega-qwen3-embedding-4b-fa1.log) | **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`** (DNN=0, F16 KV cache) | **BIT-EXACT, no NaN**: 8 of 8 runs (48 texts, 3 fresh loads × 2 shuffled passes), every text one byte string, a NaN/inf scan of every vector clean, every exit 0. 539–773 s a run, against 956–1,007 with FA off (−23 to −45 %; production embedding ran beside it, and two deploys restarted the worker during runs 1–3). The same engine and model with oneDNN's SDPA (the row above) varied in 4 of 8 runs with a NaN and a 0.0865 wrong vector: the cause, by measurement. The 2,048 sweep and the multi-load gate come before gutenberg moves (architecture session) |
+| **vega-qwen3-embedding-4b, `vega-llama-cpp-p5`: gutenberg's encoder since 2026-10-31 13:41** (rollout-qwen-fa-20261031.sh@c572c3b, pre-approved by the architecture session) | **flash attention ON + `GGML_SYCL_FA_ONEDNN=0`**, DNN=0, F16 KV cache | **BIT-EXACT AND CORRECT, live as run 0a80405f.** The sweep: 528/528 texts (16 spread + 512 prefixes to 2,048 words, 2 fresh loads × 2) one byte string, no NaN, 1,470 s against FA off's 1,719. The multi-load gate (#120) on the candidate name: PASS both sides, exact over 3 fresh loads, version-5 statements with load_variation 1. Document whole set worst 0.999994, query 0.999908, 0 of 512 below 0.995. Gate benchmark 1,500 / 1,453 tokens/s, against 1,294 / 1,311 for FA off's run b36c5912 (+16 %). **On real gutenberg chunks (150, ~3,240 characters each) the speed is about the same:** FA off 2.33 / 2.32 chunks/s, FA on 2.23 / 2.48, in alternating passes. FA gains on long inputs (the repro runs' prefixes to 8,191 words: −23 to −45 % a run), little at gutenberg's chunk length. The live run was checked equal to the gated one, and gutenberg resumed |
 
-Generative llama.cpp models (chat, translate) and rerankers need the
+Generative llama.cpp models (chat, translate) and rerankers needed the
 `vega-llama-cpp-gen` package (`cuts: context_size`): the tokenizer probe of
 `vega-llama-cpp` embeds a text at load, and that killed a chat model's child
-(exit 1, LocalAI "connection refused").
+(exit 1, LocalAI "connection refused"). Since 2026-11-02 (operator: "Why don't
+have just one vega-llama-cpp?") the wrapper probes only an EMBEDDER's load —
+LocalAI's ModelOptions `Embeddings` on and `Reranking` off
+(`vega_wrapper.loads_an_embedder`) — and passes a generation model or a
+reranker through, so ONE package, `vega-llama-cpp`, serves every llama.cpp
+model on the one engine that loads with `parallel:1`. MADLAD is the exception:
+it decodes 7 slots in waves, and the wrapper refuses any llama.cpp load
+without `parallel:1` (`determinism_lacks`), so it loads the engine
+(`louise-sycl-f16-llama-cpp-16acc89`) directly, as it did its own tar. The
+`-gen`, `-p5`, `-up` and `-t5` installs and the engines under them are
+removed once the gates on LocalAI `16acc89` pass (operator, 2026-11-02).
+The louise-python packages are renamed by what they run, `vega-louise-openvino`
+(was `-20261030`) and `vega-pytorch` (was `-20261021a`); their inner trees
+keep their names, so no run changes; `vega-llama-cpp-cpu` stays the CPU build.
+
+**Names (operator, 2026-11-03).** Our backends begin with `vega-louise-` when VeGa
+wraps them and with `louise-` when it does not.
+- The wrappers are `vega-louise-llama-cpp`, `vega-louise-llama-cpp-cpu`,
+  `vega-louise-openvino` and `vega-louise-pytorch` (they were `vega-llama-cpp`,
+  `vega-llama-cpp-cpu` and `vega-pytorch`).
+- A wrapper's directory name enters no run: the run's engine is the backend it
+  wraps.
+- The engines under them already carry `louise-` and keep their names:
+  `louise-sycl-f16-llama-cpp-16acc89`, `louise-cpu-llama-cpp-16acc89`,
+  `louise-python-20261030` and `louise-python-20261021a`.
+  - An engine's directory name is its run's `engine.name`, so renaming it
+    changes every run id, and every space would be gated again for the same
+    bytes (RULE 1).
+  - The wrapper reads the vendor from that name (`sycl`, `cpu`, in
+    `determinism_lacks`). A plain `louise-llama-cpp` would be refused as naming
+    no known vendor.
+- Upstream backends keep upstream's names.
+- A test holds the rule for every staged model
+  (`test_every_staged_model_runs_on_one_of_our_backends_named_by_the_rule`).
+
+**Every live space passes on `16acc89` (München, 2026-11-03 00:32–03:16).**
+- Repro (`vega_repro_check`, 3 loads × 2): bge-m3, qwen3-embedding-4b and
+  medcpt-query each 528/528 texts bit-identical over 3,168 vectors.
+- Gates, all exact over 3 fresh loads, 0 of 512 below 0.995:
+  - on the new engine (f5258daa…): wikipedia, gutenberg (both sides),
+    wikidata, pubmed's query side;
+  - pubmed's document side and normattiva: on the renamed python packages,
+    with their runs unchanged (39f34b49…, 4f534ba3…), so the renames needed no
+    re-gate.
+- MADLAD on the engine directly: T4 379/379 and T3 626/626 identical to the
+  old engine (P3's slot), in-wave equal to alone 616/626, the P5 tar's counts.
+- **The long-text batch fault was the OLD engine's** (c0fd786 + P5). gut-diag
+  had found it: batch 16 answered gutenberg's five longest texts (7,885–8,929
+  tokens, cut at 8,191) at cosine 0.93–0.98 to the member, while each one
+  alone was right. On `16acc89` (louise-batchfault, 03:07–03:16), the set's 16
+  longest texts in one request, forward and reversed, with and without
+  `prompt_cache_all`, are byte-equal to one at a time: 0/16 for
+  qwen3-embedding-4b and 0/16 for nemotron ("passage: ").
+  - So it is neither slot reuse nor the prompt cache. Upstream fixed it
+    between c0fd786 and ddf48f8.
+  - Stored vectors were never at risk: production chunks are about 1,000
+    tokens (gutenberg p99 1,170), and below the longest five the batch was
+    byte-equal to one at a time (507/512).
+  - The gate's batch check keeps the 16 longest texts (`LONG_PROBE`), so a
+    return of the fault is caught per run.
+- The old installs (-p5, -up, -gen, -t5 and their engines, and the two old
+  python package names) are moved out of LocalAI's backends/ into
+  backends-retired-20261102. They are not deleted; the bytes go on the
+  operator's own yes, with the size.
 
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
-  card run naming no known vendor, is refused;
+  card run naming no known vendor, is refused. Since 2026-11-02 (the
+  operator: "Align VeGa to the amended specs"), ONE setting of that mode may
+  be relaxed once it is measured near-exact and faster on that very backend
+  (invariant 12 as amended 2026-11-01). The model's env declares it,
+  `LOUISE_NEAR_EXACT_MEASURED="<backend name> <SETTING>"`. Refused: another
+  backend's name, a setting not in the mode, two at once, or a CPU run. The
+  declaration is part of the stated run, so the exact mode stays a separate
+  run under its own model. The gate's multi-load verdict holds the relaxed
+  one to 0.99999 and the CPU reference, and only an `exactness = "near"`
+  collection admits it (near-exact-runs.md §3);
 - louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1` (on an
   NVIDIA card also `CUBLAS_WORKSPACE_CONFIG=:4096:8`, 2026-10-21); its
   OpenVINO tasks are refused;
@@ -161,7 +266,7 @@ applies on ANY device:
 
 louise-python's dispatcher refuses the same for a model the wrapper is not
 in front of. Every model Louise uses goes behind the wrapper
-(deploy/16f/determinism-switch.sh). OpenVINO stays refused until it is
+(deploy/16f/determinism-switch.sh@c572c3b). OpenVINO stays refused until it is
 measured bit-exact over loads and orders. MedCPT's fingerprint did stay
 0eb32880… across four trees, which says it may pass.
 
@@ -211,7 +316,7 @@ Notes:
   dropped it. Invariant 12 makes that a refused run. Fixed by the P2
   rollout the same evening (every llama.cpp `vega-` model sets it).
 
-**Cross-device bar: the CPU is the reference, 0.995 the review line**
+**Cross-device bar: the CPU is the reference, 0.995 the review line for full precision; each quantization level its own line, measured (operator 2026-11-01; near-exact-runs.md §2)**
 *(operator, 2026-10-18).* An engine on a card is compared, text by text,
 with a CPU twin of the same build and options (`gpu_layers: 0`,
 `no_op_offload:true`, the device hidden — `gpu_layers: 0` alone still
@@ -312,6 +417,60 @@ Sources: [cuBLAS](https://docs.nvidia.com/cuda/cublas/) ·
 [oneMKL CNR](https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2023-0/set-env-var-for-cond-numerical-reproducibility.html) ·
 [Defeating Nondeterminism in LLM Inference](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) ·
 [Bit-Exact AI Inference Verification](https://arxiv.org/abs/2606.00279)
+
+## Known limits of the Arc Pro B70 (2026-10-28)
+
+What the card, its driver (`libze-intel-gpu1 26.05.37020.3` in the LocalAI
+image, 26.18.38308.1 in the model pool's) and our stacks are known NOT to do right:
+our own measurements first, then upstream's reports (checked 2026-10-28;
+the curated list is github.com/riceharvest/awesome-b70). Each row: what
+fails, what it touches here, the workaround, where it is recorded.
+
+| limit | symptom | exposure here | workaround | record |
+|---|---|---|---|---|
+| oneDNN gemm heuristic (llama.cpp SYCL) | the same input gives different bytes run to run | every llama.cpp model | `GGML_SYCL_ENABLE_DNN=0` in the model's env, measured | invariant 12; "Bitwise reproducibility" above |
+| torch fp32 softmax at row lengths 513–768, 1025–1280, 1537–1792 | finite, normalised, UNRELATED vectors, the same every run | jina-v3's eager attention (replaced by SDPA); any torch model with an eager fp32 softmax over such lengths | SDPA, or a half softmax | gpu-silent-wrong-vectors.md; upstream-bugs.md V2; intel/compute-runtime #966 names the same bands (torch-xpu-ops #4772) |
+| torch's defaults on short inputs | 308 of 512 calibration texts not reproducible across loads | louise-python models | `LOUISE_TORCH_DETERMINISTIC=1` | upstream-bugs.md V1 |
+| **F16 KV cache, flash attention off, two or more decoder tokens in one batch (llama.cpp SYCL)** | the decoded text is WRONG (first tokens right, then divergence, following the slot); alone right; the CPU right; deterministic. **Reproduced by `test-backend-ops` 2026-10-28:** upstream's own F16×F32 MUL_MAT suite fails 32 cases on this card, and the KQ shapes fail at every `n ≥ 2` — the `gemm_batch` path with a non-contiguous `a` (upstream-bugs.md S1) | MADLAD waves (P4). No live model reaches it: every cached model runs flash attention ON (chat, index-translate, the Qwen3 embedder; München's survey of the node's YAMLs), the BERT-family models have no decoder cache | `cache_type_k`/`cache_type_v: f32` in the model YAML (R0, correct; its price measured paused: 29.2 against 16.3 ms per token, +79 %; still 1.12 s per question in waves against torch's 3.2 s; 2× cache memory); the op is NAMED: the KQ product (upstream-bugs.md S1) | localai-bugs.md P4 "Measured on the card"; nothing upstream yet |
+| an oversized context (reranker ctx 16,384) | 1 of 20 scores differs on the first pass after a load | the reranker | ctx 2,560, the platform's window | the "by vendor" table above |
+| the chat model's first answer after a load | differs from the later ones from token ~25 | louise-chat-qwen3-8b on the OLD engine (c0fd786 + P2); not reproduced on 16acc89 (2026-11-03: bit-exact over 3 fresh loads, first answers included, OPT default) | none needed on 16acc89 | the same table |
+| a non-finite vector, occasionally | NaN | embeddings | `embeddings._numeric_failure` retries | gpu-silent-wrong-vectors.md §1 |
+| LocalAI's memory reclaimer | memory held by another process evicts every model, one per 500 ms | the shared card | pinned off | localai-bugs.md B4 |
+| **upstream, not seen here** | reorder/OPT corruption of quantized models (llama.cpp #21893; `GGML_SYCL_ENABLE_OPT=0`); fused XMX dequant-GEMM NaNs since #29107 for K- and IQ-quants (#30892, fixed by #30604; else `GGML_SYCL_XMX_GATHER_TYPES=0`) — F16 weights never enter that path; flash-attention corruption (#19276 on an Xe2 iGPU; #30624 sparse FA at long context) — T5 cannot use FA; device-lost and reset storms under sustained load (compute-runtime #966; `SYCL_UR_USE_LEVEL_ZERO_V2=0`, PCIe Gen4, a 1,000 W PSU); compute-runtime 26.27 with a level-zero loader before 1.32 segfaults llama.cpp (#972); hybrid models' gibberish (#24168); no scaling with parallel slots (a speed limit: Jonathan Mann's B70 benchmarks) | our models are F16 and never quantized; our driver is 26.05 | pin the driver to a measured version; keep `parallel:1` where bit-exactness is required | this row |
+
+## Bugs against arithmetic order (2026-10-28)
+
+*Operator, 2026-10-28: "Note the implementations to avoid future mistakes."
+A difference between two runs is one of two things, and only one of them
+is a defect. The test is: is the answer WRONG, or only different in the
+last bits? Wrong = finite values unrelated to the right ones (NMSE far
+above the tolerance), a softmax outside [0, 1], a NaN, text that is not a
+translation. Order = valid values that differ in the last bits because the
+arithmetic was summed in another order. The first is reported upstream and
+sidestepped; the second is controlled by invariant 12's modes and never
+filed as a bug.*
+
+**Actual bugs met in this project, and their upstream status (checked
+2026-10-28):**
+
+| bug | layer | upstream | what we do |
+|---|---|---|---|
+| F16×F32 batched matmul wrong when `a` is not contiguous across its batch dims (the KQ product over the F16 K cache for two or more decoder tokens; upstream's own `test-backend-ops` suite fails 32 cases on the B70) | **ggml-sycl itself** (attributed 2026-10-28): `ggml_sycl_mul_mat_batched_sycl` in a oneDNN build flat-copies src1 for oneDNN and then, when oneMKL runs (`GGML_SYCL_ENABLE_DNN=0`, invariant 12's mode), reads it as contiguous — every non-contiguous src1 wrong (localai-bugs.md P5) | **not reported.** Nearest: ggml-org/llama.cpp #27771 (bf16, `bs=[1,3]`, permuted operand, Arc 140T: an oneDNN 2-byte alignment fault, f16 passed there; closed stale 2026-10-16), #28384 (other ops failing `test-backend-ops` on bmg-g31) | f32 KV cache; upstream-bugs.md S1 for the operator to file. **Which driver it ran on:** the SYCL backend tars bundle their own Level Zero GPU driver (`lib/libze_intel_gpu.so.1.15.39122` = the 26.27 series, vega.md §10 finding 4), so the fault is NOT the 26.05 runtime's and the step that cured the torch softmax bug does not touch it; **the attribution test (2026-10-28 11:03): the same binary under runtime 26.35.39758.17 (IGC 2.41.15, loader 1.32) fails the IDENTICAL case sets** — not the runtime's, not IGC's; oneMKL's pointer-array `gemm_batch` or ggml-sycl's setup, or the xe kernel driver, remain; ROOT CAUSE in ggml-sycl, fix P5 (localai-bugs.md); the F16 cache GATED GREEN on the P5 tar, engine c68167b65cb0 (test-backend-ops 0 FAIL; MADLAD 379/379 = P3, 616/626 in-wave, retrieval paired-equal, 16.3 ms per token); the shared engine `louise-sycl-f16-llama-cpp` carries the wrong path too — no live model takes it (FA on; the rerankers have no cache) — and takes P5 at its next rebuild, not alone (every space re-gated) |
+| fp32 softmax wrong at row lengths 513–768, 1025–1280, 1537–1792 (torch) | reported against torch-xpu-ops; **gone after a driver update** | intel/torch-xpu-ops #4772: opened 2026-08-02 by a B70 owner on driver 26.05.37020.3 (ours), Intel could not reproduce on a nightly, a second B70 on PPA driver **26.27.39122.14** saw no error; **closed completed 2026-08-25 with no code change identified** | SDPA in jina-v3 (upstream-bugs.md V2). The torch backends (louise-python) run on the LocalAI app image's runtime 26.05.37020.3, the affected one; a louise-python image with a newer runtime (the kobuk-team PPA recipe of deploy/dnabert2-xpu/Dockerfile@c572c3b) is the candidate fix, to be MEASURED with our reproducer and re-gated (a new run) before anything trusts it |
+| reduced-precision GEMM wrong on Battlemage in torch (fp16 zeros, bf16 NaN; `nn.Linear`) | torch's GEMM path on Xe2; no root cause | intel/torch-xpu-ops #5220 (B580, Windows): not reproducible on a newer build, closed completed 2026-10-26 | not met here (our torch models run fp32/bf16 through SDPA); listed because it is the same family |
+| the gutenberg batching incident (several texts in one request corrupted long sequences; `EMBED_BATCH=1` since) | unknown; today's batched-matmul reproducer is the first lead | **not reported** | one text per request; re-test with the reproducer binary when the embedder's attention path is known |
+| a non-finite vector, occasionally | unknown | **not reported** | `embeddings._numeric_failure` retries |
+
+**Arithmetic order, not bugs — do not file, do control:**
+
+| behaviour | the mechanism | the control |
+|---|---|---|
+| oneDNN gemm bytes differ run to run | kernels chosen by heuristic | `GGML_SYCL_ENABLE_DNN=0` (invariant 12) |
+| torch's defaults differ on short inputs | atomics and reduction order | `LOUISE_TORCH_DETERMINISTIC=1` |
+| a question's languages in different waves give a last-bit flip (1 in 626) | batch shape changes the summation order; any backend, CUDA included | one wave per question: `LLAMA_ENC_DEC_WAVE_MS` long enough, or accept per-wave reproducibility |
+| the chat model's first answer after a load; the reranker at an oversized context | the same class | `parallel:1`, the window as context |
+| an encoder's vector of a LONG input differs across fresh loads, now and then, with flash attention on (llama.cpp SYCL; vega-medcpt-query, 2026-10-30) | the flash-attention kernel's summation order is not fixed across loads; nothing within a load or an order moves it. **Probable cause, read in the code (2026-10-31):** in the node's llama.cpp base (LocalAI v4.12.1, c0fd786), `ggml_sycl_get_best_fattn_kernel` sends every input of 32+ query tokens with F16 K/V to oneDNN's fused SDPA, gated by `GGML_SYCL_FA_ONEDNN` (default 1), which `GGML_SYCL_ENABLE_DNN=0` does NOT switch off: the heuristic kernel family the Intel mode exists to avoid. Next in line, the MKL FA path (`GGML_SYCL_ENABLE_MKL_FA`, default 1; GQA ≥ 2, KV ≥ 1024, oneMKL GEMMs). It fits short texts never moving, flips only on long ones and across loads, and the NaNs where rows are heavily masked (causal qwen3 on P5, the reranker's packed sequences). To measure: `GGML_SYCL_FA_ONEDNN=0` (and `GGML_SYCL_ENABLE_MKL_FA=0`) with FA on | `flash_attention: "off"` in the model YAML, measured over a length sweep and many fresh loads (`tools/vega_repro_check.py --sweep`, 3 × 2 eight times): one clean run proves little at a ~40 % flip rate per run |
+| the f32 cache's 29 against 16 ms per token | the fallback path's cost | a price, not a fault; the F16 kernels return with the upstream fix |
 
 ## Adding a device class
 

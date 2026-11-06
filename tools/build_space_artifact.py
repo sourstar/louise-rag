@@ -56,12 +56,14 @@ def _batches(collection, columns):
     """Stream the vector table in Arrow batches without materializing it.
     (query-builder path: table.to_lance() needs the pylance package, which
     lancedb does not pull in; to_batches on a full-scan query does not.)"""
-    conn = embeddings._conn(collection)
-    if embeddings.TABLE not in conn.table_names():
+    from app import vector_parts
+    tables = [embeddings._committed_table(embeddings._conn(p)) for p in vector_parts.views(collection)]
+    tables = [t for t in tables if t is not None]
+    if not tables:
         raise SystemExit("this collection has no vector table to calibrate from")
-    table = conn.open_table(embeddings.TABLE)
-    query = table.search().select(columns).limit(max(1, table.count_rows()))
-    yield from query.to_batches(8192)
+    for table in tables:             # a split collection's parts, one after another
+        query = table.search().select(columns).limit(max(1, table.count_rows()))
+        yield from query.to_batches(8192)
 
 
 def _sample_documents(collection, rng) -> tuple[set, int, int]:

@@ -467,26 +467,51 @@ def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_p
     monkeypatch.setattr(vector_index, "prune_due", lambda coll: False)
     monkeypatch.setattr(vector_index, "refresh", lambda coll, con=None, log=None:
                         steps.append("refresh") or {"refreshed": True})
-    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
-                        steps.append("compact") or {"compacted": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "compact") or {"compacted": True})
     vector_index.ensure(c)
-    assert steps == ["refresh", "compact"], \
+    assert steps == ["light", "refresh"], \
         "the index first, and the fragments in the same pass: a refresh due every pass " \
         "starved the compaction (normattiva, 2026-10-14: 33,701 fragments)"
 
     steps.clear()
-    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
-                        steps.append("compact") or {"compacted": True})
-    told = iter([True, False])                  # asked before the prune/index, then between
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "compact") or {"compacted": True})
+    told = iter([True, False])                  # asked before anything, then after the light pass
     vector_index.ensure(c, may_continue=lambda: next(told))
-    assert steps == ["refresh"], "a pause between the two is honoured"
+    assert steps == ["light"], "a pause after the light pass is honoured"
 
     steps.clear()
     monkeypatch.setattr(vector_index, "stats", lambda coll: {
         "rows": 10_000_000, "indexed": True, "book_id_indexed": True,
         "unindexed_rows": 0, "small_fragments": 9_000})
     vector_index.ensure(c)
-    assert steps == ["compact"], "with the index current, the fragments get their turn"
+    assert steps == ["light"], "with the index current, the fragments get their turn"
+
+
+
+
+def test_the_light_compaction_goes_first_even_where_the_full_one_is_due(isolated_config, tmp_path, monkeypatch):
+    """München, 2026-10-30: wikipedia's 8,246 small fragments were past the
+    full threshold, so the light pass was not due and the full one ran — and
+    lost its commit to a writer after 4.5 minutes of ~10 cores. The light
+    one merges them in seconds; the full one is due only if small ones remain."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    steps = []
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 256)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 145_640_538, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 0, "small_fragments": 8_246})
+    monkeypatch.setattr(vector_index, "prune_due", lambda coll: False)
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "full") or {"compacted": True})
+    vector_index.ensure(c)
+    assert steps == ["light"]
 
 
 def test_a_prune_counts_what_it_removed_while_writers_keep_committing(
@@ -595,3 +620,211 @@ def test_a_refresh_writes_a_delta_and_merges_the_deltas_past_the_cap(collection,
     assert asked[0] == 0, "a delta over the new rows, never the newest index rewritten"
     assert counts == [2, 3, 2, 3], "past the cap the deltas merge into one beside the base"
     assert 3 in asked, "the merge takes the deltas (indices - 1), never the base"
+
+
+def test_the_light_compaction_merges_the_small_fragments_and_catches_the_book_id_index_up(collection, monkeypatch):
+    """A COST test (München, 2026-10-30): wikipedia's table held 2,368 small
+    fragments, 1.96 M rows outside the book_id index, and each 128-document
+    delete or held-chunks read took 2.4–3.4 s — a third of its pipeline
+    thread in genesis's delete. Bench: 2,000 small fragments, a 128-id
+    delete 0.36–0.66 s; merged, 0.011–0.022 s. The light compaction merges
+    the small ones only (no deletion is materialized, so no large fragment
+    is rewritten) and folds the book_id index's new rows in as a delta; it
+    is due long before the full one."""
+    _fill(collection, 2000)
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    tbl.create_scalar_index("book_id", index_type="BTREE")
+    for i in range(40):
+        _fill(collection, 5, seed=i + 1, start=2000 + 5 * i)       # the per-flush appends
+    tbl.delete("book_id = 3")                                       # a deletion in the big fragment
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    st = vector_index.stats(collection)
+    assert vector_index.light_compact_due(st) and not vector_index.compact_due(st), st
+    ds = vector_index._dataset(embeddings._conn(collection).open_table(embeddings.TABLE))
+    big_before = {f.fragment_id for f in ds.get_fragments() if f.count_rows() > 1000}
+    out = vector_index.compact(collection, log=lambda m: None, light=True)
+    assert out["compacted"] is True, out
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    ds = vector_index._dataset(tbl)
+    frags = ds.get_fragments()
+    assert len(frags) <= 2, f"{len(frags)} fragments"
+    assert {f.fragment_id for f in frags if f.count_rows() > 1000} == big_before, \
+        "the large fragment is not rewritten (its deletion stays a deletion file)"
+    assert ds.stats.index_stats("book_id_idx")["num_unindexed_rows"] == 0
+    assert tbl.count_rows() == 2000 + 200 - 1
+    assert not vector_index.light_compact_due(vector_index.stats(collection))
+
+
+def test_a_write_waits_out_a_short_compaction_and_defers_past_a_long_one(collection):
+    """A write refused at once during a light compaction (seconds) cost the
+    embed deferred documents and a genesis pass its 10-minute backoff; it
+    waits now, up to REWRITE_WAIT_S, and only then is a retryable conflict."""
+    import threading
+    import time
+    from app import worker
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    released = threading.Timer(0.3, lambda: rw.__exit__(None, None, None))
+    released.start()
+    t0 = time.monotonic()
+    with vector_index.writing(collection, wait_s=5):
+        waited = time.monotonic() - t0
+    assert 0.2 < waited < 3, waited
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    try:
+        with pytest.raises(vector_index.RewriteInProgress) as e:
+            with vector_index.writing(collection, wait_s=0.2):
+                pass
+        assert worker.vector_store_contended(e.value), "a deferral, never a document error"
+    finally:
+        rw.__exit__(None, None, None)
+
+
+def test_genesis_writes_through_the_writer_registration():
+    """genesis's flush committed under the manifest lock alone, so a
+    compaction neither waited for it nor held it off: wikipedia's full pass
+    lost its commit to a genesis Delete (München, 2026-10-30)."""
+    import inspect
+    from app.bundles import genesis
+    src = inspect.getsource(genesis.import_shard)
+    # every part the batch touches (the single table is its one target,
+    # app/vector_parts.py), registered before the manifest lock
+    assert "embeddings._write_lock(con, parts=" in src
+    assert "vector_write_lock(con)" not in src
+
+
+def test_the_bundle_importer_writes_through_the_registration_and_defers_on_a_rewrite():
+    import inspect
+    from app.bundles import importer
+    assert "embeddings._write_lock(con, collection)" in inspect.getsource(importer)
+    assert "vector_write_lock(con)" not in inspect.getsource(importer)
+
+
+def test_the_light_compaction_is_not_queued_behind_the_long_passes(isolated_config, tmp_path, monkeypatch):
+    """München, 2026-10-30: fragments come back at 70–80 a minute, and the
+    light pass waited behind a 253 s prune and a 305 s refresh, the table at
+    ~2,000 small fragments meanwhile. It runs before both now, once a pass."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    steps = []
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 145_000_000, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 4_000_000, "small_fragments": 2_029})
+    monkeypatch.setattr(vector_index, "prune_due", lambda coll: True)
+    monkeypatch.setattr(vector_index, "prune", lambda coll, con=None, log=None:
+                        steps.append("prune") or {})
+    monkeypatch.setattr(vector_index, "refresh", lambda coll, con=None, log=None:
+                        steps.append("refresh") or {"refreshed": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "full") or {"compacted": True})
+    vector_index.ensure(c)
+    assert steps == ["light", "prune", "refresh"], steps
+
+
+def _small_fragments_appended(collection, n: int, start: int) -> None:
+    for i in range(n):
+        _fill(collection, 5, seed=start + i + 1, start=start + 5 * i)   # one commit, one fragment
+
+
+def test_the_light_compaction_has_its_own_cadence_between_the_index_passes(collection, monkeypatch):
+    """#107's AFTER (München, 2026-10-30): run once per index pass (every
+    VECTOR_INDEX_REFRESH_S, 30 minutes), the light compaction let
+    wikipedia's table drift from 206 small fragments to 2,101 in half an
+    hour, and held_chunks of 128 from 0.43 s to 2.45 s. Between the passes
+    the maintainer now asks every VECTOR_INDEX_LIGHT_CHECK_S, and the check
+    reads the fragment statistics alone (no row count, no index statistics)."""
+    import time
+    from app import db, node_state, worker
+    _fill(collection, 2000)
+    embeddings._conn(collection).open_table(embeddings.TABLE).create_scalar_index(
+        "book_id", index_type="BTREE")
+    _small_fragments_appended(collection, 40, 2000)
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    con = db.connect(collection)
+    node_state.set_worker_state("running")
+    key = str(collection.lance_dir)
+    worker._vindex_last[key] = time.time()             # the index's pass ran just now
+    assert vector_index.small_fragments(collection) >= 30
+    assert worker._maintain_vector_index(con, collection) is True
+    assert vector_index.small_fragments(collection) < 30
+    events = [r["message"] for r in con.execute("SELECT message FROM events WHERE stage='index'")]
+    assert any(m.startswith("light-compacted") for m in events), events
+    # within the light cadence nothing is asked, however many fragments arrived
+    _small_fragments_appended(collection, 40, 3000)
+    assert worker._maintain_vector_index(con, collection) is False
+    assert vector_index.small_fragments(collection) >= 30
+    # paused: nothing runs, nothing is stamped
+    worker._vlight_last.clear()
+    node_state.set_worker_state("paused")
+    assert worker._maintain_vector_index(con, collection) is False
+    assert key not in worker._vlight_last
+    node_state.set_worker_state("running")
+    assert worker._maintain_vector_index(con, collection) is True
+    # a check with nothing due reads the fragment statistics only
+    asked = []
+    real_stats = vector_index.stats
+    monkeypatch.setattr(vector_index, "stats", lambda c: asked.append(1) or real_stats(c))
+    worker._vlight_last.clear()
+    assert worker._maintain_vector_index(con, collection) is False
+    assert asked == [], "the light check asks no row count and no index statistics"
+
+
+def test_the_light_check_stands_down_while_the_table_is_held(collection, monkeypatch):
+    _fill(collection, 50)
+    _small_fragments_appended(collection, 10, 50)
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 5)
+    ran = []
+    monkeypatch.setattr(vector_index, "compact", lambda c, con=None, log=None, light=False:
+                        ran.append(light) or {"compacted": True})
+    with vector_index.maintenance(collection):         # a build or a refresh
+        assert vector_index.light(collection) is None
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    try:
+        assert vector_index.light(collection) is None
+    finally:
+        rw.__exit__(None, None, None)
+    assert ran == []
+    assert vector_index.light(collection) == {"compacted": True}
+    assert ran == [True]
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 1000)
+    assert vector_index.light(collection) is None, "not due below the threshold"
+
+
+def test_the_lang_bitmap_comes_with_the_book_id_index_and_filters_agree(collection, monkeypatch):
+    """München, 2026-10-31: on wikipedia's 146 M rows a `lang IN ('en')`
+    prefilter took 2,107 ms against 86 ms unfiltered — Lance read every
+    row's lang. A BITMAP (Lance's index for a column of few values) is built
+    in the same cheap step as book_id's, and the filtered answer is the same."""
+    _fill(collection, 300)
+    rows = [{"id": f"d{i}", "book_id": 1000 + i, "lang": "it", "seq": 0, "chapter": "",
+             "text": f"it{i}", "vector": np.ones(DIM, np.float16)} for i in range(20)]
+    embeddings._conn(collection).open_table(embeddings.TABLE).add(rows)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    assert vector_index.stats(collection)["lang_indexed"] is False
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    before = sorted(r["id"] for r in tbl.search().where("lang IN ('it')").limit(100).to_list())
+    first = vector_index.ensure(collection)
+    assert first["kind"] == "btree" and first["lang"]["kind"] == "bitmap"
+    assert vector_index.stats(collection)["lang_indexed"] is True
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert sorted(r["id"] for r in tbl.search().where("lang IN ('it')").limit(100).to_list()) \
+        == before == sorted(f"d{i}" for i in range(20))
+
+
+def test_a_table_indexed_on_book_id_before_gets_its_lang_bitmap_in_its_own_step(collection,
+                                                                                  monkeypatch):
+    _fill(collection, 300)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    vector_index.build_scalar(collection)                      # as before 2026-10-31
+    st = vector_index.stats(collection)
+    assert st["book_id_indexed"] and st["lang_indexed"] is False
+    out = vector_index.ensure(collection)
+    assert out["kind"] == "bitmap" and out["column"] == "lang"
+    assert vector_index.stats(collection)["lang_indexed"] is True

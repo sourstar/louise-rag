@@ -38,7 +38,8 @@ def write(path, c):
         snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
         title=c.title, slices=c.slices, kinds=c.kinds, share=c.share,
         reranker=c.reranker, source=c.source,
-        share_slices=c.share_slices, share_kinds=c.share_kinds)
+        share_slices=c.share_slices, share_kinds=c.share_kinds,
+        embed_slices=c.embed_slices, embed_select=c.embed_select)
 
 
 # ---- the Codex half -------------------------------------------------------
@@ -85,6 +86,11 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         # 07 §7.8 share_slices / share_kinds (2026-10-07): away from None too
         'share_slices = ["lang=en"]\n'
         'share_kinds = ["records"]\n'
+        # 07 §7.8 embed_slices (2026-10-31): away from None too
+        'embed_slices = ["lang=en"]\n'
+        # 07 §7.8 embed_select (2026-11-02): away from None too ("smart" is
+        # wikipedia's only; this is gutenberg)
+        'embed_select = "all"\n'
         '\n[encoder]\n'
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back
@@ -170,6 +176,24 @@ def test_the_mode_is_written_in_the_documents_word(codex_loaded):
     assert collections_mod._load_one(path).embed_mode_default == "lazy"
 
 
+def test_the_reranker_window_and_the_sources_survive_a_rewrite(codex_loaded):
+    """Both were dropped by every rewrite until 2026-10-25: the `[reranker]`
+    `window` (05 §5.6, amended 2026-10-21) came back as the default, and a
+    deposit collection's `[[sources]]` (06 §6.7) vanished — the guards above
+    compare `Collection` fields, and the subscriptions are not one."""
+    import tomllib
+    path, _, _ = codex_loaded
+    path.write_text(path.read_text(encoding="utf-8") + "window = 1024\n"
+                    '\n[[sources]]\nurl = "https://example.org/a\\\\b.xml"\ninterval = 60\n',
+                    encoding="utf-8")
+    before = collections_mod._load_one(path)
+    assert before.reranker.window == 1024
+    write(path, before)
+    assert collections_mod._load_one(path) == before
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["sources"] == [
+        {"url": "https://example.org/a\\b.xml", "interval": 60}]
+
+
 def test_codex_rewrites_are_idempotent(codex_loaded):
     path, before, _ = codex_loaded
     write(path, before)
@@ -222,6 +246,8 @@ _UNPOPULATED: dict[str, str] = {
                    "such key, and since 2026-10-08 every file is a Codex file",
     "embed_mode_note": "derived at load — `embed = \"p2p\"` with `share = false` runs as "
                        "`all` and this says so (07 §7.8, 2026-10-19); never a file key",
+    "vector_part": "set only on a PART of a split vector store (app/vector_parts.py `view`); "
+                   "never a file key",
 }
 
 

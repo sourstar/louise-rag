@@ -12,19 +12,53 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
 - labels of referenced entities and properties come from a callable over
   the dump's own label table, not from the Wikidata Action API with a
   MariaDB cache (`LazyLabelFactory`): the text is a function of the dump;
+  the language chain is upstream's (`get_lang_val`: the language, `mul`,
+  the fallback) — parser 1 left `mul` out for referenced entities, fixed
+  in parser 2 (2026-10-24);
 - time, coordinate and quantity values are formatted by `format.py`, not
   by `wbformatvalue` on a running Wikibase (D4, revised 2026-10-19);
 - aliases keep the dump's order, deduplicated with `dict.fromkeys`; the
   upstream `list({...})` made their order depend on the hash seed;
-- a value whose entity has no label in the language is rendered as its id
-  (`Q2755432`) instead of `<no label>`: the id is searchable, the
-  placeholder is not; a PROPERTY without a label still drops its claim
-  from the text, as upstream;
+- a value whose entity has no label in the language is rendered by its
+  NAME (names.py, the pack's `name` table; parser 2, operator 2026-10-24:
+  an id is meaningless to a reader), and as its id (`Q2755432`) only when
+  it has no label at all — never `<no label>`; the entity's own label falls
+  back to its name the same way; a PROPERTY without a label still drops its
+  claim from the text, as upstream;
+- `novalue` / `somevalue` read as Wikibase shows them, "no value" /
+  "unknown value" (`SPECIAL_VALUES`), with their qualifiers; upstream wrote
+  "has <property>" for both — for `novalue` the opposite — and dropped the
+  qualifiers (parser 2; offered upstream, wmde-wikidata-textifier.md §4);
+- a lexeme, form or sense value is its id (`L7`); upstream wrote the
+  datavalue's Python repr (parser 2; §5);
 - the `instance of` (P31) statement is rendered FIRST, the rest in the
   dump's order: it is the sticky line the chunker repeats in every window
   (upstream's `sticky_property_ids`), found by its place in the text;
+- the HISTORY SECTION is ours (parser 2, `history_text`): what the rank
+  filter drops — a property's normal-rank statements when it has a
+  preferred one, not quantities or external ids, at most ten a property,
+  the most recent first — rendered by upstream's classes as a text of its
+  own after the language's text, under the connective "Other statements
+  include" (`OTHER_STATEMENTS`, the word each Wikibase UI uses for a
+  statement); upstream's text is untouched;
 - the rank filter, the `external_ids`/`qualifiers`/`references` defaults
-  and the connectives (`language_variables.json`, inlined) are upstream's.
+  and the connectives (`language_variables.json`, inlined) are upstream's,
+  plus Italian (ours, parser 2; offered upstream in
+  docs/notes/upstream-reports/wmde-wikidata-textifier.md §3);
+- ANNOTATIONS ONLY, for the compiled module (2026-11-02,
+  docs/notes/python-hot-spots.md "E"): the image compiles this file with
+  mypyc (tools/build_native.py), which CHECKS annotations at run time where
+  Python never does — a `str` given a number raises. Where a value comes
+  from the dump as it is, its annotation now says so: `Any` for
+  `_lang_val`'s result, an `Entity`'s `label` and `description` and a
+  `MonolingualText`'s `lang`; `list[Any]` for the statement and snak lists
+  `_filter_by_rank`, `_dropped_by_rank`, `_datatype` and `_snak_claim`
+  read (they skip what is not a dict); and one `# type: ignore[arg-type]`
+  on the `entity-type` lookup, a `dict.get` with a key of any type, as
+  written. Not one line of behaviour changes, and the compiled module's
+  text is the source's, byte for byte (tools/measure/textify_identity.py,
+  tests/test_plugins_wikidata_textify_compiled.py). The `.py` stays the
+  source: the compiled module is built from it in the image, never kept.
 
 `chunker.py` carries the cutting rule of **WikidataTextEmbedding**
 (`src/utils.py`, `chunk_item_text` and `_trim_to_length`, commit c9dc819),

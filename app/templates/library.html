@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Library — louise-rag{% endblock %}
+{% block title %}Library — Project Louise{% endblock %}
 {% block content %}
 {# what the node's mode runs, from the one table the worker reads
    (app/node_state.py); `worker_state` may be absent in a partial render #}
@@ -26,27 +26,47 @@
     {% endfor %}
     {# Grey wherever the mode parses nothing, because it would genuinely do
        nothing: a scan is parsing, and only "run everything" parses. #}
-    <button onclick="rescanAll()"
+    <button onclick="confirmAction('rescan-all')"
             {% if not mode_scans %}disabled
-            title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan all collections</button>
+            title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan all collections…</button>
   </div>
+  {# a rescan of every card at once asks first, as each card's does #}
+  <template data-confirm="rescan-all" data-label="Rescan all collections">
+    <h2>Rescan all {{ shelves|length }} collection{{ '' if shelves|length == 1 else 's' }}?</h2>
+    <div class="note"><b>Every collection's corpus folder is examined again, none skipped,</b> one collection after the other: the record of what earlier scans saw is cleared. A new file is added; a file whose content changed has its document parsed, indexed and embedded again. Unchanged documents keep their work.</div>
+    <div class="note">On a large corpus this takes from minutes to hours, and the page waits until every scan is done.</div>
+  </template>
   <div class="note">{{ mode_says.get(worker_state, '') }}</div>
 </div>
 
-  <div class="note">counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %} — each collection is recounted every 2 min, a large one less often (its card says when)</div>
+{# THE VERBOSE TEXT BEHIND ONE CLOSED LINE (operator, 2026-11-02: "Compact
+   all the verbose text information as 'details' … A crowded interface is a
+   bad interface"): the status stays in sight as the line itself, the
+   explanation is one tap away — `details.more`, the Ask tab's Settings look #}
+<details class="more" id="counts-age">
+  <summary>counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %}</summary>
+  <div class="note">While this page is open each collection is recounted every 2 min, a large one less often (its card says when); after a time nobody looked, the first view shows the last count with its age.</div>
+</details>
 <div class="grid">
 {% for c in shelves %}
 <div class="panel" data-collection="{{ c.name }}">
   <h2>{{ c.name }} <span class="badge">{{ c.plugin_label }}</span></h2>
   <div>
     <span class="badge brass">profile: {{ c.profile }}</span>
+    {# THE EMBEDDER (operator, 2026-11-02): the model `recipe_for` resolves —
+       the worker's own resolution — without VeGa's `vega-` prefix, and the
+       weights' quantization where the Codex states it (web._embedder_tag);
+       the full served name in the tooltip. No encoder, no tag. #}
+    {% if c.embedder %}
+    <span class="badge lapis embedder" title="served model: {{ c.embedder.served }}">embedder: {{ c.embedder.name }}{% if c.embedder.quant %} · {{ c.embedder.quant }}{% endif %}</span>
+    {% endif %}
     <span class="badge lapis">space: {{ c.space_id }}</span>
     {% if c.license.class %}
     {# The BORDER is the acknowledgement — green once these terms are
        accepted, red while one is still needed. The class WORD keeps its
        own colour, so a yellow licence reads yellow inside a green
        border instead of the whole badge reading green. #}
-    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
+    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% elif c.license.needs_ack %} title="the terms are not yet acknowledged: Options › acknowledge license…"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
     {% endif %}
     {% if c.copy_state and c.copy_state.state != 'in-use' %}
     {# 03 §3.6: a copy this peer has not finished testing. Red once the node
@@ -75,8 +95,6 @@
   <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif mode_fetches %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
       <span{% if c.fetched.docs_total %} title="documents (files)"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="extra formats — local only">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fetch }}">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
-  {% else %}
-  <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
   {% endif %}
   {% if c.counts_pending %}
   <div class="note">counting — the bars below read 0 until the first scan lands.</div>
@@ -118,54 +136,25 @@
      the scheduling pool whenever the worker runs (import ignores the
      mode) -> turquoise; otherwise the mode speaks: off -> grey,
      on-demand -> orange, all -> turquoise while the worker runs #}
+  {# the dense target leaves out what this node does not embed, by choice (07 §7.8 embed_slices) #}
+  {% set dense_target = c.stage_targets.embed if c.stage_targets is defined and c.stage_targets.embed is not none else indexable %}
   {% if c.counts_pending %}{% set dense_color = 'inherit' %}
-  {% elif indexable and c.embed_done >= indexable %}{% set dense_color = 'var(--ok)' %}
+  {% elif dense_target and c.embed_done >= dense_target %}{% set dense_color = 'var(--ok)' %}
   {% elif c.genesis %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}
   {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
   {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
   {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ indexable|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.embed_done/indexable)|round(1) if indexable else 0 }}%;background:var(--lapis)"></span></div></div>
-  <div class="note">
-    delta freshness: {{ c.last_discover_text }} ·
-    {% if c.embed_mode in ('all', 'p2p') %}
-      {# backfill selects from the manifest directly and never touches the
-         lazy queue, so the queue count is always 0 here and says nothing #}
-      {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
-      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.standalone %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
-      {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
-      {% endif %}
-    {% elif c.embed_mode == 'lazy' %}
-      on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
-    {% else %}
-      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
-    {% endif %}
-  </div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ dense_target|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min while the page is viewed: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.embed_done/dense_target)|round(1) if dense_target else 0 }}%;background:var(--lapis)"></span></div></div>
+  {# WARNINGS THAT ASK FOR AN ACTION stay in sight, as their badge and,
+     where it is the action, their reason; what each means is in Details #}
   {% if c.blocked %}
-  <div class="note">
-    <span class="badge err">{{ c.blocked }} blocked</span>
-    document{{ '' if c.blocked == 1 else 's' }} failed a stage or exhausted retries —
-    “clear errors &amp; retry” puts them back in the pipeline.
-  </div>
-  {% endif %}
-  {% if c.unindexable %}
-  <div class="note">
-    <span class="badge">{{ c.unindexable }} not indexable</span>
-    no usable content in the source (no text, or retracted upstream)
-  </div>
+  <div class="note"><span class="badge err" title="failed a stage or exhausted retries: Options › clear errors &amp; retry…">{{ c.blocked }} blocked</span></div>
   {% endif %}
   {% if c.gate and not c.gate.allowed %}
   <div class="note">
     <span class="badge err">embedding paused</span> {{ c.gate.reason }}
   </div>
-  {% endif %}
-  {% if c.genesis %}
-  {# PRE-EMBEDDED DATA, ONE LINE (operator, 2026-10-13: "a one line note like
-     'N pre embedded vectors by XYZ', remove all the rest", for every
-     collection): the vectors the archive brought, from the import ledger,
-     and who produced them, from the Codex's credits. The rest — fetch meter,
-     range rows, rejected shards — lives in the System log and `node health`. #}
-  <div class="note">{{ c.genesis.imported_vectors|num }} pre-embedded vectors by {{ c.genesis.producer }}</div>
   {% endif %}
   {# ONE knob on EVERY card's main box (operator: "single knob"). It
      governs the LOCAL encoder only; an archive imports whenever the
@@ -174,12 +163,12 @@
      on every card. #}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
-      <label style="margin:0 0 2px">Embed mode —
+      <label style="margin:0 0 2px">Embed mode{% if c.embed_device %} —
         {# which processor this collection's encoder actually spends: the
            GPU is the scarce, contended one; CPU encoders run beside it #}
         <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
               title="{{ 'shared GPU encoder' if c.embed_device == 'gpu' else 'CPU encoder container' }}">
-          {{ c.embed_device|upper }}</span>
+          {{ c.embed_device|upper }}</span>{% endif %}
       </label>
       {# persistent: writes embed_mode into the collection's TOML (Tier-2
          desired state, like create/ack) AND the runtime scope for
@@ -191,41 +180,148 @@
         {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all local'), ('p2p', 'all p2p')] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
-      </select>
-      {% if c.p2p is not none %}
-      {# the OTHER axis, independent of the encoder's: what this node makes
-         available — its records and every embedding it holds, as bundles
-         (04 §4.3). The two meet in one place only: all p2p needs sharing,
-         and the page asks before writing either pair (07 §7.8, 2026-10-19) #}
-      <label title="serve this collection's records and the embeddings held here as bundles (04 §4.3); all p2p needs it">
+      </select></div>
+    {% if c.embed_select %}
+    {# WHICH documents the encoder spends on (07 §7.8 `embed_select`;
+       operator, 2026-11-02: wikipedia's "smart" choice, its default) —
+       in sight beside the mode it narrows, saved to the collection's file #}
+    <div style="flex:0 1 auto">
+      <label style="margin:0 0 2px">Embed which</label>
+      <select data-embed-select onchange="setEmbedSelect('{{ c.name }}', this.value)"
+              title="smart: every English article, plus for each Wikidata item the longest article in another language when the English one is missing or shorter; the rest held and word-searchable, not embedded — saved to collections/{{ c.name }}.toml">
+        <option value="smart" {{ 'selected' if c.embed_select.policy == 'smart' }}>smart (English + the longest other language)</option>
+        <option value="all" {{ 'selected' if c.embed_select.policy == 'all' }}>every article</option>
+      </select></div>
+    {% endif %}
+    {% if c.shareable %}
+    {# the OTHER axis, independent of the encoder's: what this node makes
+       available — its records and every embedding it holds, as bundles
+       (04 §4.3). The two meet in one place only: all p2p needs sharing,
+       and the page asks before writing either pair (07 §7.8, 2026-10-19).
+       On every collection that can be served, beside the select and on its
+       line (operator, 2026-11-01); unchecked, the transfers under way
+       finish and nothing new starts (app/acquire/seeding.py `drain`) #}
+    <div style="flex:0 0 auto;min-width:0;align-self:flex-end;padding-bottom:6px">
+      <label class="check" title="serve this collection's records and the embeddings held here as bundles (04 §4.3); all p2p needs it. Unchecked: nothing new is served, the transfers under way finish first">
         <input type="checkbox" {{ 'checked' if c.share }}
-               onchange="setShare('{{ c.name }}', this.checked, '{{ c.embed_mode_file or '' }}')"> shared</label>
-      {% endif %}</div>
+               onchange="setShare('{{ c.name }}', this.checked, '{{ c.embed_mode_file or '' }}')">share</label>
+    </div>
+    {% endif %}
   </div>
   {% if c.embed_mode_note %}
   <div class="note"><span class="badge err">runs as all local</span> {{ c.embed_mode_note }}</div>
   {% endif %}
-  {% if c.p2p is not none %}
-  <div class="note" title="the bounty list is the open parts of the current snapshot (04 §4.5); a part is covered by the bundles accepted here (09 §9.10)">
-    p2p: {{ c.p2p.covered_pct }} % of chunks covered by bundles ·
-    bounty list {{ c.p2p.open|num }} open of {{ c.p2p.parts|num }} part{{ '' if c.p2p.parts == 1 else 's' }}{% if c.p2p.leads is not none %}, this node leads {{ c.p2p.leads|num }}, {{ c.p2p.left|num }} left to {{ c.p2p.peers - 1 if c.p2p.peers > 0 else 0 }} peer{{ '' if c.p2p.peers == 2 else 's' }}{% endif %} ·
-    {{ c.p2p.from_here|num }} chunk{{ '' if c.p2p.from_here == 1 else 's' }} bundled here, {{ c.p2p.from_peers|num }} taken from peers
-  </div>
-  {% endif %}
-  <div class="actions">
-    <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
-    <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
-    <button onclick="libReset('{{ c.name }}','fts')">reprocess lexical index</button>
-    <button onclick="libDiscover('{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan</button>
-  </div>
-  <div class="actions">
-    {% if c.license.needs_ack %}
-    <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
+  {# THE CARD: STATUS IN SIGHT, PROSE AND BUTTONS BEHIND TWO CLOSED LINES
+     (operator, 2026-11-02: "in each model card hide all the descriptive
+     text in a Details expandable section and all the buttons in a Options
+     section, keep embed mode and share check box visible"). In sight: the
+     name, the badges, the stage bars, the warnings that ask for an action,
+     the embed mode and share. `data-drawer` names each for scripts and
+     tests; the class stays exactly "more", the one look. #}
+  <details class="more" data-drawer="details">
+    <summary>Details</summary>
+    {% if not c.fetched %}
+    <div class="note">fetch stage: off — acquisition is not enabled for this collection</div>
     {% endif %}
-    <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
-    <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
-    <button onclick="removeCollection('{{ c.name }}', '{{ c.source }}')">remove…</button>
-  </div>
+    <div class="note">
+      delta freshness: {{ c.last_discover_text }} ·
+      {% if c.embed_mode in ('all', 'p2p') %}
+        {# backfill selects from the manifest directly and never touches the
+           lazy queue, so the queue count is always 0 here and says nothing #}
+        {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
+        {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.standalone %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
+        {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
+        {% endif %}
+      {% elif c.embed_mode == 'lazy' %}
+        on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
+      {% else %}
+        embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
+      {% endif %}
+    </div>
+    {% if c.blocked %}
+    <div class="note">
+      {{ c.blocked }} blocked: document{{ '' if c.blocked == 1 else 's' }} that failed a stage or exhausted retries —
+      “clear errors &amp; retry…” under Options puts them back in the pipeline.
+    </div>
+    {% endif %}
+    {% if c.unindexable %}
+    <div class="note">
+      <span class="badge">{{ c.unindexable }} not indexable</span>
+      no usable content in the source (no text, or retracted upstream)
+    </div>
+    {% endif %}
+    {% if c.issues %}
+    {# 06 §6.1, amended 2026-10-25: the origin's inconsistencies the parses met #}
+    <div class="note">
+      <span class="badge">{{ c.issues.values()|sum }} origin inconsistenc{{ 'y' if c.issues.values()|sum == 1 else 'ies' }}</span>
+      {% for code, n in c.issues|dictsort %}{{ code }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}
+      — <code>louise hold issues list {{ c.name }}</code>
+    </div>
+    {% endif %}
+    {% if c.genesis %}
+    {# PRE-EMBEDDED DATA, ONE LINE (operator, 2026-10-13: "a one line note like
+       'N pre embedded vectors by XYZ', remove all the rest", for every
+       collection): the vectors the archive brought, from the import ledger,
+       and who produced them, from the Codex's credits. The rest — fetch meter,
+       range rows, rejected shards — lives in the System log and `node health`. #}
+    <div class="note">{{ c.genesis.imported_vectors|num }} pre-embedded vectors by {{ c.genesis.producer }}</div>
+    {% endif %}
+    {% if c.p2p is not none %}
+    <div class="note" title="the bounty list is the open parts of the current snapshot (04 §4.5); a part is covered by the bundles accepted here (09 §9.10)">
+      p2p: {{ c.p2p.covered_pct }} % of chunks covered by bundles ·
+      bounty list {{ c.p2p.open|num }} open of {{ c.p2p.parts|num }} part{{ '' if c.p2p.parts == 1 else 's' }}{% if c.p2p.leads is not none %}, this node leads {{ c.p2p.leads|num }}, {{ c.p2p.left|num }} left to {{ c.p2p.peers - 1 if c.p2p.peers > 0 else 0 }} peer{{ '' if c.p2p.peers == 2 else 's' }}{% endif %} ·
+      {{ c.p2p.from_here|num }} chunk{{ '' if c.p2p.from_here == 1 else 's' }} bundled here, {{ c.p2p.from_peers|num }} taken from peers
+    </div>
+    {% endif %}
+  </details>
+  <details class="more" data-drawer="options">
+    <summary>Options</summary>
+    {# What discards work or data asks first (operator, 2026-11-02: "for the
+       buttons reprocess/rescan/remove add a confirmation step with a warning
+       on the effect, to prevent accidental clicks"): `confirmAction` shows
+       the card's own <template data-confirm>, written here beside the
+       numbers it quotes, and posts only from its labelled button. #}
+    <div class="actions">
+      <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
+      <button onclick="confirmAction('errors', '{{ c.name }}')">clear errors &amp; retry…</button>
+      <button onclick="confirmAction('reprocess', '{{ c.name }}')">reprocess lexical index…</button>
+      <button onclick="confirmAction('rescan', '{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan…</button>
+    </div>
+    <div class="actions">
+      {% if c.license.needs_ack %}
+      <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
+      {% endif %}
+      <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
+      <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
+      <button onclick="removeCollection('{{ c.name }}', '{{ c.source }}')">remove…</button>
+    </div>
+    {# THE WARNINGS say what each route does (app/web.py): `reset` with
+       stage "errors" (db.apply_reset: stage errors and spent retries
+       cleared, in the background) and "fts" (every indexed document back
+       to unindexed; the vectors untouched); `discover` (the scan cursor
+       cleared, then discovery.sync_collection inline — a changed file's
+       document loses every stage); `remove` (retire or forget,
+       collection_remove — its dialog is removeCollection's). #}
+    <template data-confirm="errors" data-for="{{ c.name }}" data-label="Clear errors on {{ c.name }}">
+      <h2>Clear the errors of {{ c.name }}?</h2>
+      <div class="note">{% if c.blocked %}<b>The {{ c.blocked|num }} blocked document{{ '' if c.blocked == 1 else 's' }} lose{{ 's' if c.blocked == 1 else '' }} the error recorded on {{ 'it' if c.blocked == 1 else 'them' }}</b> and get{{ 's' if c.blocked == 1 else '' }} {{ 'its' if c.blocked == 1 else 'their' }} retries back, as does any document part-way through its retries, and go{{ 'es' if c.blocked == 1 else '' }} back into the pipeline from the stage that failed.{% else %}No document is blocked now: only a document part-way through its retries, if any, gets them back.{% endif %} One that fails again is blocked again; the errors stay in the System log.</div>
+      <div class="note">Finding them reads the whole manifest: it runs in the background, and the counts update when it is done.</div>
+    </template>
+    <template data-confirm="reprocess" data-for="{{ c.name }}" data-label="Reprocess {{ c.name }}">
+      <h2>Reprocess the lexical index of {{ c.name }}?</h2>
+      <div class="note"><b>The lexical index is rebuilt from the start:</b> the {{ c.fts_done|num }} document{{ '' if c.fts_done == 1 else 's' }} indexed now {{ 'is' if c.fts_done == 1 else 'are' }} chunked and indexed again, and the indexed (lexical) bar drops to 0 and climbs back as it goes.
+        {% if c.stage_rates and c.stage_rates.fts and c.fts_done %}At the indexing rate measured here ({{ c.stage_rates.fts|num }} documents an hour) that takes {{ (c.fts_done * 3600 / c.stage_rates.fts)|eta }}.{% else %}It takes about as long as indexing them took the first time.{% endif %}</div>
+      <div class="note">The vectors are kept: nothing is embedded again. Search keeps answering from the old entries until each document's new ones replace them; documents still waiting for the encoder wait for their re-index.</div>
+    </template>
+    <template data-confirm="rescan" data-for="{{ c.name }}" data-label="Rescan {{ c.name }}">
+      <h2>Rescan {{ c.name }}?</h2>
+      <div class="note"><b>Every file of its corpus folder is examined again, none skipped:</b> the record of what earlier scans saw is cleared ({{ c.total|num }} document{{ '' if c.total == 1 else 's' }} known now). A new file is added; a file whose content changed has its document parsed, indexed and embedded again. Unchanged documents keep their work.</div>
+      <div class="note">On a large corpus this takes from minutes to hours, and the page waits until the scan is done.</div>
+    </template>
+    <template data-confirm="remove" data-for="{{ c.name }}">
+      <div class="note">It holds {{ c.total|num }} document{{ '' if c.total == 1 else 's' }}: {{ c.fts_done|num }} indexed, {{ c.embed_done|num }} embedded.</div>
+    </template>
+  </details>
 </div>
 {% endfor %}
 {# 02 §2.10: annotations collections — claims about another collection's
@@ -258,30 +354,42 @@
     <span class="badge brass" title="{{ a.copy_state.reasons | join(' · ') }}">tests open — in use by decision</span>
     {% endif %}
   </div>
-  {% if a.title %}<div class="note"><b>{{ a.title }}</b>{% if a.summary %} — {{ a.summary }}{% endif %}</div>{% endif %}
   <div class="note">
     {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}{{ a.note }}{% endif %}
-    · kinds: {{ a.kinds | join(', ') }}
   </div>
   <div class="row">
     <div>
-      <label title="serve this collection's claims and their edges as members (04 §4.3)">
+      <label class="check" title="serve this collection's claims and their edges as members (04 §4.3). Unchecked: nothing new is served, the transfers under way finish first">
         <input type="checkbox" {{ 'checked' if a.share }}
-               onchange="setShare('{{ a.name }}', this.checked, '')"> shared</label>
+               onchange="setShare('{{ a.name }}', this.checked, '')">share</label>
     </div>
   </div>
+  {# the same two closed lines as a held collection's card (operator,
+     2026-11-02): the description behind Details, every button behind Options #}
+  <details class="more" data-drawer="details">
+    <summary>Details</summary>
+    {% if a.title %}<div class="note"><b>{{ a.title }}</b>{% if a.summary %} — {{ a.summary }}{% endif %}</div>{% endif %}
+    <div class="note">kinds: {{ a.kinds | join(', ') }}</div>
+  </details>
   {# updated, not replaced (operator, 2026-10-23): the next snapshot of the
      SAME collection — the claims re-checked against the targets' newest
-     snapshots, or a new claims file as the whole set from now on #}
-  <div class="actions">
-    <button title="re-check every claim against the newest snapshot of what it annotates; a claim whose record is gone is withdrawn"
-            onclick="updateAnnotations('{{ a.name }}', null)">re-check claims</button>
-    <button title="a new claims file is the whole claim set from now on: a claim kept keeps its id, a new one is added, one left out is withdrawn"
-            onclick="document.getElementById('upd_{{ a.name }}').click()">update with a claims file…</button>
-    <input type="file" id="upd_{{ a.name }}" accept=".jsonl,.ndjson,.json" style="display:none"
-           onchange="if(this.files[0])updateAnnotations('{{ a.name }}', this.files[0]); this.value=''">
-    <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
-  </div>
+     snapshots, or a new claims file as the whole set from now on; both
+     check first and ask with what they would change (updateAnnotations) #}
+  <details class="more" data-drawer="options">
+    <summary>Options</summary>
+    <div class="actions">
+      <button title="re-check every claim against the newest snapshot of what it annotates; a claim whose record is gone is withdrawn"
+              onclick="updateAnnotations('{{ a.name }}', null)">re-check claims</button>
+      <button title="a new claims file is the whole claim set from now on: a claim kept keeps its id, a new one is added, one left out is withdrawn"
+              onclick="document.getElementById('upd_{{ a.name }}').click()">update with a claims file…</button>
+      <input type="file" id="upd_{{ a.name }}" accept=".jsonl,.ndjson,.json" style="display:none"
+             onchange="if(this.files[0])updateAnnotations('{{ a.name }}', this.files[0]); this.value=''">
+      <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
+    </div>
+    <template data-confirm="remove" data-for="{{ a.name }}">
+      <div class="note">It holds {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}its claims{% endif %}.</div>
+    </template>
+  </details>
   <div id="upd_result_{{ a.name }}"></div>
 </div>
 {% endfor %}
@@ -292,11 +400,14 @@
    does not hold (its catalogue minus what it holds), with who serves each.
    Taking one is `share fetch`, queued for the worker (app/jobs.py
    SHARE_FETCH): the Codex and snapshots are pulled and the collection is
-   held with the slices and kinds chosen here; the members follow at the
-   worker's fetch beat. A yellow or red collection then asks for its
+   held whole — every slice, records and vectors, the latest snapshot, the
+   encoder the node decides (RULE 2; nothing of it is asked here, the take
+   dialog names a local name only); the members follow at the worker's
+   fetch beat. A yellow or red collection then asks for its
    acknowledgement before any member moves (invariant 9). A peer chooses
-   what it fetches; nothing is fetched that was not chosen (operator,
-   2026-10-20). `louise share offer` lists the same. #}
+   WHICH collections it takes; nothing is fetched that was not taken
+   (operator, 2026-10-20). `louise share offer` lists the same, and
+   `louise share fetch --slice/--kinds/--encoder` takes less or otherwise. #}
 {# a render without `offered` (a test's, a page that passes less) shows an
    empty offer — never an Undefined handed to tojson (München's gate,
    2026-10-20); the filter at each use, since a `set` in this block is not
@@ -309,15 +420,19 @@
   <div class="panel" data-collection="{{ r.name }}" data-kind="refused">
     <h2>{{ r.name }} <span class="badge err">waiting</span></h2>
     <div class="note">{{ r.reason }}</div>
-    <div class="note">Its texts and the peers' vectors may still arrive; nothing is searched or embedded here until the reason above is gone.</div>
+    <details class="more"><summary>What this means</summary>
+      <div class="note">Its texts and the peers' vectors may still arrive; nothing is searched or embedded here until the reason above is gone.</div>
+    </details>
   </div>
   {% endfor %}
   {% endif %}
   <h2>Offered by peers <span class="badge">{{ offered|default([], true)|length }}</span></h2>
-  <div class="note">What live neighbours announce and this node does not hold. Nothing is fetched
-    that was not chosen here or with <code>louise share fetch</code>; <code>louise share offer</code>
-    lists the same. A collection taken here appears above once its Codex and snapshots are held;
-    its records and bundles follow at the worker's next fetch beat.</div>
+  <div class="note">What live neighbours announce and this node does not hold.</div>
+  <details class="more"><summary>Details</summary>
+    <div class="note">Nothing is fetched that was not chosen here or with <code>louise share fetch</code>;
+      <code>louise share offer</code> lists the same. A collection taken here appears above once its
+      Codex and snapshots are held; its records and bundles follow at the worker's next fetch beat.</div>
+  </details>
   {% if not offered|default([], true) %}<div class="note">Nothing is offered that this node does not already hold.</div>{% endif %}
   {% for o in offered|default([], true) %}
   <div class="panel" data-offer="{{ o.collection_id }}"{% if o.superseded_by %} style="opacity:.65"{% endif %}>
@@ -344,70 +459,65 @@
 <div class="panel">
   <h2>Add a collection</h2>
   {# 07 §7.6: the web interface's new collection IS `hold collection
-     create --recipe FILE`, through its route (07 §7.4). It writes the Codex
-     and the collection file of 07 §7.8. #}
-  <div class="note">A collection is created from a <b>recipe</b>: a TOML with
-    every Codex field the plugin does not default — at least its
-    <code>[space]</code> and <code>[work]</code>, or a held collection to take
-    the space from (06 §6.6). This writes the Codex and the collection's file,
-    which holds no slice yet: nothing is fetched until you set
-    <code>slices = "all"</code> in it. See Help.</div>
+     create`, through its route (07 §7.4). RULE 2 (operator, 2026-10-20;
+     amended 2026-10-25): the user chooses the source and a local name —
+     and for annotations, the claims file — and nothing else. The node
+     decides the rest: the recipe is its own for the source
+     (`$CONFIG_DIR/recipes/<plugin>.toml`), the encoder is the model on its
+     server whose stated run loads the recipe's weights, the collection
+     takes every slice and embeds on demand; an annotations collection's
+     targets are the collections its claims' uids name, from their newest
+     snapshots. No server address, protocol, model name or Codex field is
+     asked here: those are the command line's (shown below). #}
+  <div class="note">Choose the source and a name on this node.</div>
+  <details class="more"><summary>What the node decides</summary>
+    <div class="note">The rest — its recipe for the source, the model on its server that runs the
+      recipe's encoder, every slice, embedding on demand — and it says what it decided, or what is
+      missing: if no model there runs the encoder, nothing is created and the reason is said. The
+      command line changes any of it.</div>
+  </details>
   <div class="row">
-    <div><label>Plugin</label>
+    <div><label>Source</label>
       {# display names only — the internal id is minted into every document
          uid and can never change; 'embedded' currently means the wikivec
          pre-embedded Wikipedia dataset on every known deployment #}
-      <select id="nc_plugin" onchange="createKindChanged()">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}<option value="annotations">annotations (claims about a held collection)</option></select>
+      <select id="nc_plugin" onchange="createKindChanged()">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}<option value="annotations">annotations (claims about held collections)</option></select>
     </div>
+    <div><label>Name on this node (the only thing to choose)</label>
+      <input id="nc_name" placeholder="default: the source's name"></div>
   </div>
   {# 02 §2.10: the annotations type — no space, no encoder, no recipe: a
-     claims file about a held collection's records, checked against the
-     target snapshot before anything is written (`create annotations
-     --dry-run`), then created by the worker, which signs the first snapshot.
-     Shown in place of the recipe form when the type is chosen (2026-10-19). #}
+     claims file about held collections' records, checked against their
+     newest snapshots before anything is written (`create annotations
+     --dry-run`), then created by the worker, which signs the first snapshot. #}
   <div id="nc_ann" style="display:none">
     <div class="row">
-      <div><label>Name</label><input id="na_name" placeholder="gutenberg-book-editions"></div>
-      <div><label>Annotates (a held collection)</label>
-        <select id="na_target" onchange="annotationTargetChanged()">{% for t in annotatable %}<option value="{{ t.name }}" data-snapshot="{{ t.snapshot or '' }}">{{ t.name }}</option>{% endfor %}</select></div>
-      <div><label>From snapshot (the target snapshot the claims hold from)</label>
-        <input id="na_from" placeholder="2026-09"></div>
-      <div><label>Title (optional)</label><input id="na_title" placeholder="Book editions"></div>
-      <div><label>Summary (optional)</label><input id="na_summary" placeholder="one line on what the claims say"></div>
-      <div><label>Annotator (optional; default: the claims' one contributor)</label><input id="na_annotator"></div>
       <div><label>Claims file (JSON Lines, one claim per line)</label><input type="file" id="na_claims" accept=".jsonl,.json,.ndjson,application/json,text/plain"></div>
     </div>
-    <div class="note">The claims are checked against the target snapshot named: every claim's two records must be in it. <b>Check</b> counts them and writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and signs its first snapshot.</div>
+    <details class="more"><summary>How the claims are checked</summary>
+      <div class="note">The node reads from the claims which held collections they are about (each
+        record's id names its source), checks every claim against each one's newest snapshot, titles
+        the collection after them and credits the claims' contributor. <b>Check</b> counts them and
+        writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and
+        signs its first snapshot.</div>
+    </details>
     <div class="actions">
       <button onclick="checkAnnotations()">Check claims</button>
       <button class="primary" onclick="createAnnotations()">Create on this node</button>
     </div>
-    <pre class="cli">louise hold collection create annotations --annotates &lt;collection&gt; --from-snapshot &lt;id&gt; --claims FILE --name &lt;name&gt; [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    <details class="more"><summary>Command line</summary>
+      <pre class="cli">louise hold collection create annotations --claims FILE --name &lt;name&gt; [--annotates &lt;collection&gt; --from-snapshot &lt;id&gt;] [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    </details>
     <div id="na_result"></div>
   </div>
   <div id="nc_std">
-  <div class="row">
-    <div><label>Space from (optional)</label>
-      <input id="nc_space_from" placeholder="a held collection's name or id"></div>
-    {# a collection names its own encoder — there is no default one
-       (operator, 2026-09-18) — and the file it gets names this one #}
-    <div><label>Model server (this node's, filled in when it names one)</label>
-      <input id="nc_encoder" placeholder="http://nas:30437"></div>
-    {# the rest of the file's [encoder] (07 §7.8, amended 2026-10-09): a URL
-       that names no model (LocalAI, api vega) needs the model named here #}
-    <div><label>API</label>
-      <select id="nc_api"><option value="">openai</option><option>ollama</option><option>vega</option></select></div>
-    <div><label>Embed model (when the URL names none)</label>
-      <input id="nc_embed_model" placeholder="vega-medcpt-article"></div>
-    <div><label>Query model (optional)</label>
-      <input id="nc_query_model" placeholder="default: the embed model"></div>
-  </div>
-  <label>Recipe (TOML)</label>
-  <textarea id="nc_recipe" rows="10" style="width:100%" placeholder="[space]&#10;…&#10;&#10;[work]&#10;…"></textarea>
+  <div class="note" id="nc_plan"></div>
   <div class="actions">
     <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--api A] [--embed-model M] [--query-model M] [--space-from &lt;collection&gt;]</pre>
+  <details class="more"><summary>Command line</summary>
+    <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --name &lt;name&gt; [--encoder URL --api A --embed-model M --query-model M] [--space-from &lt;collection&gt;]</pre>
+  </details>
   <div id="nc_result"></div>
   </div>
 </div>
@@ -437,6 +547,28 @@ async function rescanAll(){
   {% for c in shelves %}await libDiscover('{{ c.name }}',true);{% endfor %}
   toast('rescan triggered for every collection');
 }
+// A CONFIRMATION BEFORE WHAT DISCARDS WORK (operator, 2026-11-02: "for the
+// buttons reprocess/rescan/remove add a confirmation step with a warning on
+// the effect, to prevent accidental clicks"). The warning is the card's own
+// <template data-confirm>, rendered beside the numbers it quotes; the request
+// is posted only from the button that names the action. Cancel comes first
+// and has the focus, so Enter or a second stray tap posts nothing.
+const CONFIRMED={
+  errors:name=>libReset(name,'errors'),
+  reprocess:name=>libReset(name,'fts'),
+  rescan:name=>libDiscover(name),
+  'rescan-all':()=>rescanAll(),
+};
+function confirmAction(what,name){
+  const t=document.querySelector(`template[data-confirm="${what}"]`+(name?`[data-for="${CSS.escape(name)}"]`:''));
+  if(!t||!CONFIRMED[what])return;
+  showModal(t.innerHTML+`<div class="actions">
+      <button class="primary" id="confirm-cancel" onclick="hideModal()">Cancel</button>
+      <button class="danger" id="confirm-go">${esc(t.dataset.label)}</button>
+    </div>`);
+  document.getElementById('confirm-go').onclick=()=>{hideModal();CONFIRMED[what](name)};
+  document.getElementById('confirm-cancel').focus();
+}
 async function libDiscover(name,quiet){
   try{await postJSON('/admin/library/'+name+'/discover',{})}catch(e){toast('rescan failed: '+e);return}
   if(!quiet){toast('rescanned '+name);location.reload()}
@@ -450,10 +582,16 @@ async function setEmbedMode(name,mode,shared){
     if(d.share_enabled){location.reload()}}
   catch(e){toast('embed mode failed: '+e);location.reload()}
 }
+async function setEmbedSelect(name,value){
+  try{await postJSON('/admin/library/'+name+'/embed-select',{value});
+    toast(name+': embed '+(value==='smart'?'smart (English + the longest other language)':'every article')+
+          ' — saved to collections/'+name+'.toml; applied after the next scan')}
+  catch(e){toast('embed selection failed: '+e);location.reload()}
+}
 async function setShare(name,on,mode){
   if(!on&&mode==='p2p'&&!confirm(name+' embeds in all p2p mode, which publishes what it embeds; disabling sharing switches it to all local. Proceed?')){location.reload();return}
   try{const d=await postJSON('/admin/library/'+name+'/share',{share:on});
-    toast(name+': sharing '+(on?'on':'off')+(d.embed_mode_changed?' — embed mode → all local':'')+' — saved to collections/'+name+'.toml');
+    toast(name+': sharing '+(on?'on':'off — nothing new is served; the transfers under way finish first')+(d.embed_mode_changed?' — embed mode → all local':'')+' — saved to collections/'+name+'.toml');
     if(d.embed_mode_changed){location.reload()}}
   catch(e){toast('sharing failed: '+e);location.reload()}
 }
@@ -513,7 +651,7 @@ function openGrowAdditive(name,opts){
   showModal(`<h2>Grow ${esc(name)}</h2>
     <div style="max-height:260px;overflow-y:auto;margin:8px 0">${rows}</div>
     <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px">
-      <input type="checkbox" id="grow_all" style="width:auto"> everything (all slices)
+      <input type="checkbox" id="grow_all" style="width:auto" ${held.has('all')?'checked':''}> everything (all slices)
     </label>
     ${growExtrasBlock(name)}
     <div class="actions">
@@ -580,41 +718,34 @@ async function getJSON(url){
   const r=await fetch(url);const d=await r.json().catch(()=>({}));
   if(!r.ok)throw (d.detail||r.statusText);return d;
 }
-// the create form's encoder: this node's model server, when it names one
-(async()=>{
-  try{
-    const s=await getJSON('/api/encoders/suggest');
-    const enc=document.getElementById('nc_encoder'), api=document.getElementById('nc_api');
-    if(s.url&&enc&&!enc.value){enc.value=s.url; if(api) api.value=s.api;}
-    if(s.models&&s.models.length){
-      const list=document.createElement('datalist'); list.id='nc_models';
-      list.innerHTML=s.models.map(n=>`<option value="${esc(n)}">`).join('');
-      document.body.appendChild(list);
-      for(const id of ['nc_embed_model','nc_query_model']){const el=document.getElementById(id); if(el) el.setAttribute('list','nc_models');}
-    }
-  }catch(e){}
-})();
-// 07 §7.6: a new collection is `hold collection create --recipe FILE`,
-// through its route (07 §7.4) — the Codex and the collection file
+// RULE 2 (2026-10-25): a new collection is the source and a local name; the
+// node's own recipe for the source, the encoder, the slices and the embed
+// mode are the node's (POST /api/hold/collection/create with {plugin, name})
+const NODE_RECIPES={{ plugin_recipes|default({}, true)|tojson }};
+function explainCreate(){
+  const box=document.getElementById('nc_plan'); if(!box)return;
+  const plugin=document.getElementById('nc_plugin').value;
+  const r=NODE_RECIPES[plugin];
+  box.innerHTML=r
+    // one line in sight; what the node then decides is behind "What the node decides"
+    ? `From this node's recipe for ${esc(plugin)}: <code>${esc(r)}</code>.`
+    : `This node has no recipe for ${esc(plugin)}: a new ${esc(plugin)} collection's encoder, work budget and description are chosen once on the command line below. A ${esc(plugin)} collection a peer offers is taken from "Offered by peers" with no recipe at all.`;
+}
 async function createCollection(){
   const plugin=document.getElementById('nc_plugin').value;
-  const recipe=document.getElementById('nc_recipe').value;
-  const space_from=document.getElementById('nc_space_from').value.trim()||null;
-  const encoder=document.getElementById('nc_encoder').value.trim();
-  const api=document.getElementById('nc_api').value||null;
-  const embed_model=document.getElementById('nc_embed_model').value.trim()||null;
-  const query_model=document.getElementById('nc_query_model').value.trim()||null;
+  const name=document.getElementById('nc_name').value.trim()||null;
   const box=document.getElementById('nc_result');
-  if(!recipe.trim()){toast('paste the recipe');return}
-  if(!encoder){toast('name the encoder: a collection names its own (this node names no model server)');return}
-  box.innerHTML='<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
+  box.innerHTML='<div class="note">asking the node…</div>';
   try{
-    const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder,api,embed_model,query_model});
-    const j=await waitForJob(q.id,s=>{box.innerHTML='<div class="note">'+esc(s)+'</div>'});
+    const q=await postJSON('/api/hold/collection/create',{plugin,name});
+    const head=q.decided?`<div class="note">${esc(q.decided)}.</div>`:'';
+    box.innerHTML=head+'<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
+    const j=await waitForJob(q.id,s=>{box.innerHTML=head+'<div class="note">'+esc(s)+'</div>'});
     const d=j.result;
-    box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
-      file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
+    box.innerHTML=head+`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
+      file <b>${esc(d.held)}</b> — it takes every slice and embeds on demand.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
+    setTimeout(()=>location.reload(),3500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 // the annotations type (02 §2.10) has its own form: no recipe, no encoder
@@ -622,22 +753,16 @@ function createKindChanged(){
   const ann=document.getElementById('nc_plugin').value==='annotations';
   document.getElementById('nc_ann').style.display=ann?'':'none';
   document.getElementById('nc_std').style.display=ann?'none':'';
-  if(ann)annotationTargetChanged();
+  if(!ann)explainCreate();
 }
-function annotationTargetChanged(){
-  const sel=document.getElementById('na_target'), opt=sel.options[sel.selectedIndex];
-  const from=document.getElementById('na_from');
-  if(opt&&!from.dataset.edited)from.value=opt.dataset.snapshot||'';
-}
-document.getElementById('na_from').addEventListener('input',e=>{e.target.dataset.edited='1'});
-// the flags as query parameters and the file as the raw body: no multipart
+explainCreate();
+// the name as a query parameter and the file as the raw body: no multipart
 // (python-multipart is not a dependency of the platform; the bundle import
-// is sent the same way)
+// is sent the same way). The targets, their snapshots, the title, the
+// summary and the annotator are the node's (RULE 2, 2026-10-25)
 function annotationsRequest(dryRun){
   const q=new URLSearchParams();
-  for(const [k,id] of [['name','na_name'],['annotates','na_target'],['from_snapshot','na_from'],
-                       ['title','na_title'],['summary','na_summary'],['annotator','na_annotator']])
-    q.set(k,document.getElementById(id).value.trim());
+  q.set('name',document.getElementById('nc_name').value.trim());
   q.set('dry_run',dryRun?'true':'false');
   const file=document.getElementById('na_claims').files[0];
   if(!file){toast('choose the claims file');return null}
@@ -652,7 +777,9 @@ async function postClaims(req){
 }
 function previewHtml(p){
   const dl=o=>Object.entries(o||{}).map(([k,v])=>esc(k)+' '+esc(v)).join(', ')||'none';
-  return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of <b>${esc(p.target)}</b> as snapshot ${esc(p.from_snapshot)} holds them · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
+  const ts=(p.targets&&p.targets.length?p.targets:[{target:p.target,from_snapshot:p.from_snapshot}])
+    .map(t=>`<b>${esc(t.target)}</b> as snapshot ${esc(t.from_snapshot)} holds them`).join(' and ');
+  return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of ${ts} · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
 }
 async function checkAnnotations(){
   const req=annotationsRequest(true); if(!req)return;
@@ -664,7 +791,7 @@ async function checkAnnotations(){
 }
 async function createAnnotations(){
   const req=annotationsRequest(false); if(!req)return;
-  if(!document.getElementById('na_name').value.trim()){toast('name the collection');return}
+  if(!document.getElementById('nc_name').value.trim()){toast('name the collection');return}
   const box=document.getElementById('na_result');
   box.innerHTML='<div class="note">checking the claims, then queued for the worker…</div>';
   try{const q=await postClaims(req);
@@ -766,18 +893,24 @@ async function waitForJob(id,onState){
 // Two removals, in plain words, the default by where the collection came
 // from (operator, 2026-10-20: a copy removed and taken again under another
 // name was refused — "retire" had kept its directory, and so its id).
+// The warning says what each does (app/web.py collection_remove,
+// app/hold/forget.py) and what the card holds (its <template
+// data-confirm="remove">); Cancel has the focus, as in confirmAction.
 async function removeCollection(name, source){
   const copy=(source==='shard');
+  const held=document.querySelector(`template[data-confirm="remove"][data-for="${CSS.escape(name)}"]`);
   showModal(`<h2>Remove ${esc(name)}?</h2>
+    ${held?held.innerHTML:''}
     <div class="note">${copy?'This collection was taken from peers: its data is theirs to serve again.':'This collection was built here from a corpus.'}</div>
-    <label><input type="radio" name="rm_mode" value="forget" ${copy?'checked':''}> <b>Forget</b> — remove this node's copy and its state. It can be taken again later, under any name.</label>
-    <label><input type="radio" name="rm_mode" value="retire" ${copy?'':'checked'}> <b>Retire</b> — stop running it; keep everything on disk (manifest, index, vectors). Restorable by renaming its file back. While retired, its id stays bound to this name: taking it again under another name is refused.</label>
+    <label style="text-transform:none;letter-spacing:0;margin:6px 0"><input type="radio" style="width:auto" name="rm_mode" value="forget" ${copy?'checked':''}> <b>Forget</b> — deletes this node's copy now: its records, lexical index, vectors and state, and the corpus files it downloaded unless another collection reads them. <b>It cannot be undone</b>: to have it again it is taken from peers, or fetched, parsed, indexed and embedded again. It can then be taken under any name.</label>
+    <label style="text-transform:none;letter-spacing:0;margin:6px 0"><input type="radio" style="width:auto" name="rm_mode" value="retire" ${copy?'':'checked'}> <b>Retire</b> — the node stops running it within one round: it is no longer searched, embedded or shared. Nothing on disk is deleted (manifest, index, vectors); restorable by renaming its file back. While retired, its id stays bound to this name: taking it again under another name is refused.</label>
     <div class="note">Type the collection name to confirm.</div>
     <input id="rm_confirm" placeholder="${esc(name)}">
     <div class="actions">
-      <button class="primary" onclick="doRemove('${esc(name)}')">Remove</button>
-      <button onclick="hideModal()">Cancel</button>
+      <button class="primary" id="confirm-cancel" onclick="hideModal()">Cancel</button>
+      <button class="danger" id="confirm-go" onclick="doRemove('${esc(name)}')">Remove ${esc(name)}</button>
     </div>`);
+  document.getElementById('confirm-cancel').focus();
 }
 async function doRemove(name){
   if(document.getElementById('rm_confirm').value.trim()!==name){toast('name does not match');return}

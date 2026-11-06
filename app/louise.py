@@ -1,4 +1,4 @@
-"""louise â the command line. docs/07-commands.md.
+"""louise — the command line. docs/07-commands.md.
 
     louise hold collection create <plugin> --recipe FILE [--space-from CODEX]
                                     [--platform-image D] [--root DIR]
@@ -7,7 +7,7 @@
                                     [--encoder URL [--query-encoder URL] [--api A]
                                      [--embed-model M] [--query-model M]]
                                     [--calibration-set FILE] [--name N] --accept
-    louise hold collection continue <codex> --platform-image D --continues-through <snapshot>
+    louise hold collection continue <codex> --platform-image D --through <snapshot>
                                     [--origin FILE] [--origin-reachable-until <snapshot>]
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
     louise hold collection list
@@ -17,7 +17,7 @@
     louise hold records validation <collection>
     louise hold snapshot create <collection> [--snapshot ID] [--shards-from FROM[:SNAPSHOT]]
     louise hold snapshot list <collection>
-    louise hold embedder check|benchmark <collection> [--accept]
+    louise hold embedder check|benchmark <collection> [--accept] [--model N] [--query-model N]
     louise hold embedder run --encoder URL [--api A] [--model M] [--query] [--pair]
     louise hold embedder rebaseline <collection> [--yes]
     louise hold vectors build <collection> [--snapshot ID | --delta ID] [--shard S | --slice V...]
@@ -29,6 +29,7 @@
     louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
     louise hold check <collection> [--checks A,B] [--sample F] [--seed HEX] [--snapshot ID] [--json]
     louise hold records show <collection> (<record-id> | --shard <slice>/<n>) [--raw]
+    louise hold issues list <collection> [--code C] [--limit N] [--json]
     louise hold snapshot delta <collection> <from> <to>
     louise hold index build <collection> --vector | show <collection>
     louise hold config show|apply [<collection>]
@@ -39,7 +40,7 @@
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
 
-One flag of Â§7.3's tree is accepted and refused here rather than
+One flag of §7.3's tree is accepted and refused here rather than
 silently doing something else, because what it needs is not built yet:
 `--encoder-image` / `--encoder-weights`, which must re-embed the
 calibration set to fill the space's `calibration` and `envelope` (migration
@@ -84,8 +85,8 @@ def _not_yet(flag: str, step: str) -> None:
 
 
 def _recipe(path: str) -> dict:
-    """A recipe is TOML (07 Â§7.3). JSON is accepted for a file that is
-    already a whole Codex â what `create` took before the template existed,
+    """A recipe is TOML (07 §7.3). JSON is accepted for a file that is
+    already a whole Codex — what `create` took before the template existed,
     and what a test fixture is easiest to write."""
     p = Path(path)
     if p.suffix == ".json":
@@ -98,6 +99,12 @@ def cmd_create(a) -> int:
         return cmd_create_deposit(a)
     if a.plugin == "annotations":
         return cmd_create_annotations(a)
+    if getattr(a, "dry_run", False):
+        # 2026-10-27: the flag was read by `create annotations` alone, and a
+        # plain create given it minted a collection (wikidata-p2 on the node)
+        raise CodexError("--dry-run belongs to `create annotations`; a plain create has no "
+                         "dry run — its own pre-check refuses a bad recipe before any card time, "
+                         "and anything that passes it is created")
     if not a.recipe:
         raise CodexError("--recipe is required: a collection is a plugin and a "
                          "recipe (06 §6.6); only `create deposit` needs none")
@@ -175,6 +182,11 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         block = _recipe(path) if path else None
         if block is not None and "space" in block:
             block = block["space"]
+        if block is None and encoder and models:
+            # RULE 2 (2026-10-25): the node determines the first deposit
+            # collection's space itself — a held Codex in the space whose
+            # weights the deposit encoder's stated run loads, copied whole
+            source = _space_of_served_model(root, encoder, api, models[0])
     codex = deposit.create(
         root, name, platform_image=preflight_create({}, platform_image),
         encoder_url=encoder, embed_model=models[0] if models else None,
@@ -191,6 +203,24 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         query_model=models[1] if models else None)
 
 
+def _space_of_served_model(root, encoder: str, api: str, model: str):
+    """A held text Codex whose space the model at `encoder` runs — the one
+    whose `space.encoder.weights` are the weights the model's stated run
+    loads (app/encoder_resolve.py: verified against the run id; a name never
+    decides) and whose space has no query encoder of its own, since a
+    deposit's encoder is symmetric (02 §2.9). The oldest by name, so the
+    choice is stable; None where the model states no run or no held space
+    is its."""
+    from app import encoder_resolve
+    weights = encoder_resolve.served_weights(encoder, api, model)
+    if not weights:
+        return None
+    found = sorted((n, c) for n, c in col._held(Path(root))
+                   if getattr(c, "space", None) is not None and c.modality == "text"
+                   and c.space.encoder.weights == weights and c.space.query.encoder is None)
+    return found[0][1] if found else None
+
+
 def cmd_create_annotations(a) -> int:
     """`hold collection create annotations --annotates C --from-snapshot S
     --claims FILE --name N` (07 §7.3; 02 §2.10): an annotations collection
@@ -198,16 +228,17 @@ def cmd_create_annotations(a) -> int:
     first snapshot (signed with the node key when there is one) and its
     collection file. Prints the new collection's id."""
     from app.hold import annotations as ann
-    missing = [f for f, v in (("--annotates", a.annotates), ("--from-snapshot", a.from_snapshot),
-                              ("--claims", a.claims), ("--name", a.name)) if not v]
+    missing = [f for f, v in (("--claims", a.claims), ("--name", a.name)) if not v]
     if missing:
-        raise CodexError(f"create annotations takes {', '.join(missing)}: the collection it "
-                         f"annotates, the target snapshot the claims hold from, the claims "
-                         f"file and the new collection's name (02 §2.10)")
+        raise CodexError(f"create annotations takes {', '.join(missing)}: the claims file and "
+                         f"the new collection's name (02 §2.10); the targets and their snapshots "
+                         f"are the claims' unless --annotates and --from-snapshot name them")
     if a.recipe:
         raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
                          "and named by the flags")
-    targets = annotation_targets(a.annotates, a.from_snapshot)
+    # named: as named, one --from-snapshot per --annotates; a target alone: its
+    # newest held snapshot; none: the collections the claims name (RULE 2)
+    targets = ann.resolve_targets(a.root, Path(a.claims).read_bytes(), a.annotates, a.from_snapshot)
     container = getattr(a, "container", None) or "jsonl"
     if getattr(a, "dry_run", False):
         _print(ann.preview(a.root, targets=targets, container=container,
@@ -362,6 +393,36 @@ def cmd_deposit_list(a) -> int:
     return 0
 
 
+def cmd_issues_list(a) -> int:
+    """`hold issues list <collection> [--code C] [--limit N] [--json]` (06
+    §6.1, 07 §7.3, amended 2026-10-25): the origin's inconsistencies the
+    last parse of each document met, by uid; the counts per code and each
+    code's meaning first (on stderr, or in the JSON). Read-only: no lock."""
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    plugin = collections_mod.PLUGIN_REGISTRY.get(codex.plugin)
+    meaning = issues.declared(plugin) if plugin is not None else dict(issues.PLATFORM)
+    if a.code is not None and a.code not in meaning:
+        raise CodexError(f"{a.code!r} is no issue code of {name} ({codex.plugin}); its codes: "
+                         f"{', '.join(sorted(meaning))}")
+    con = issues.open_read(rec._paths(a.root, name)[1] / "manifest.sqlite")
+    try:
+        summary = issues.summary(con, plugin) if con is not None else {"total": 0, "by_code": {}}
+        items = list(issues.listing(con, code=a.code, limit=a.limit)) if con is not None else []
+    finally:
+        if con is not None:
+            con.close()
+    if a.json:
+        _print({"issues": {"collection": name, "codes": meaning, **summary, "items": items}})
+        return 0
+    for code, got in sorted(summary["by_code"].items()):
+        print(f"{code}\t{got['documents']:,}\t{got['meaning']}", file=sys.stderr)
+    for it in items:
+        print(f"{it['uid']}\t{it['code']}\t{it['detail']}")
+    return 0
+
+
 def cmd_deposit_show(a) -> int:
     from app.hold import deposit
     _print(deposit.show(a.collection, a.key))
@@ -390,7 +451,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 query_encoder: str | None = None, name: str | None = None,
                 calibration_set: str | None = None, api: str | None = None,
                 embed_model: str | None = None, query_model: str | None = None,
-                calibration_from: str | None = None):
+                calibration_from: str | None = None, embed: str = "off"):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -414,6 +475,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
     platform_image = preflight_create(recipe, platform_image)
+    # A SLICING THE PLUGIN DERIVES AT CREATION (wikidata's family map,
+    # pack-format.md §2 amended 2026-10-24): the block goes into the Codex,
+    # the map into the SHARD. A recipe that states its own slicing keeps it
+    slicing_member = None
+    source_of = tpl.source_for(plugin)
+    if callable(getattr(source_of, "creation_slicing", None)) and "slicing" not in recipe:
+        recipe["slicing"], slicing_member = source_of.creation_slicing(name or plugin)
     if space_from:
         source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
@@ -422,13 +490,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 f"--space-from names a Codex whose cleaning_version is "
                 f"{source.cleaning_version} and this collection's is {want}. "
                 f"The flag exists so that two collections land in one space by "
-                f"construction (02 Â§2.7), and it copies no cleaner version the "
+                f"construction (02 §2.7), and it copies no cleaner version the "
                 f"plugin could not run")
         space = source.space.to_dict()
         # The two computed fields do not travel: `create` re-embeds
         # the set with this node's encoder and writes its OWN
-        # reference. Neither is inside `space_id` (02 Â§2.4), so the
-        # two collections still land in one space by construction â
+        # reference. Neither is inside `space_id` (02 §2.4), so the
+        # two collections still land in one space by construction —
         # and a difference here is real news about the encoder build,
         # which is why it is re-measured rather than copied.
         drifted = (space.pop("envelope"), space["calibration"].pop("vectors"))
@@ -457,8 +525,8 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                          query_model=query_model)
               if encoder else (None, None))
     credits = tpl.expand_archives(recipe.get("archives") or ())
-    # The creator's key: 09 Â§9.12 makes the calibration member's `key`
-    # header required and Â§9.4 lists its signature among a snapshot's files
+    # The creator's key: 09 §9.12 makes the calibration member's `key`
+    # header required and §9.4 lists its signature among a snapshot's files
     # without allowing null, so there is no unsigned collection. Loaded by
     # PATH (invariant 8) and never printed.
     from app.bundles import keys as node_keys
@@ -475,7 +543,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                                                   models[1], api=api, query=True)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
-                                   credits=credits, pairs=pairs,
+                                   credits=credits, pairs=pairs, slicing_member=slicing_member,
                                    # RULE 1: a held twin's document-side reference reused
                                    calibration_from=(col.shard_dir_of(
                                        Path(root), col.resolve(root, calibration_from)[0])
@@ -485,11 +553,166 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
         print(f"warning: --space-from {space_from} recorded reference "
               f"vectors {drifted[1]} and this node's encoder produced "
               f"{codex.space.calibration.vectors}. Both collections are "
-              f"in space {codex.space_id} â calibration is not inside "
-              f"space_id â but the two builds are not the same build.",
+              f"in space {codex.space_id} — calibration is not inside "
+              f"space_id — but the two builds are not the same build.",
               file=sys.stderr)
+    # `embed`: what the file spends (07 §7.8) — off for the command; the
+    # node's default for the Library's create from its own recipe (RULE 2)
     return codex, _write_held_file(root, codex, encoder, query_encoder, api=api,
-                                   embed_model=models[0], query_model=models[1])
+                                   embed_model=models[0], query_model=models[1],
+                                   embed=embed)
+
+
+def cmd_collection_new(a) -> int:
+    """`hold collection new <plugin> --recipe FILE --encoder URL --api A
+    --embed-model M --cpu-model T [--name N]`: A NEW COLLECTION, ONE
+    WORKFLOW (operator, 2026-11-06: "A mess up in a collection embedding is
+    the most severe flaw we can have, this is not acceptable. I expected that
+    a clear workflow for the creation of a new collection had been
+    implemented"). Wikidata's Nemotron collection was made by ten commands
+    chained by hand, each given its own copy of what the recipe states; the
+    calibration was measured on inputs cut by characters while the space
+    cuts by tokens, and its CPU reference failed the gate at 0.974831.
+
+    Here every input comes from the recipe, nothing is typed twice, and each
+    step is held to the one before it:
+      1. CALIBRATE: the recipe's encoder (`--encoder`, `--embed-model`)
+         against its CPU twin (`--cpu-model`, which must state a CPU run of
+         the same weights), at the recipe's ctx, cut, document instruction
+         and calibration set: the inputs the gate sends. The CPU lane is kept
+         in the node's store, keyed on all of them.
+      2. THE TOLERANCE: the recipe's `space.tolerance` must be the one just
+         measured. A recipe that states none takes it; one that states
+         another is refused, since a tolerance is measured, never chosen.
+      3. CREATE (07 §7.3). A collection of that name already made is held to
+         the recipe's inputs and the measured tolerance instead, and refused
+         when it differs.
+      4. THE CPU REFERENCE, written from the store entry step 1 made (no
+         second CPU pass), replacing any copy the collection held.
+      5. THE GATE (`hold embedder check`).
+    The measurement is kept as `<collection>/state/calibration.json`.
+    Embedding is not turned on: the collection file says embed = "off"
+    until the operator turns it on, after a pass. Exit 0 when the gate
+    passes, 1 when it fails, 2 for a refusal, 3 when an endpoint cannot be
+    reached. Run again after a stop: the CPU lane resumes from the store's
+    journal, and a step already done is checked, not redone."""
+    import argparse
+    import decimal
+
+    from app import collections as collections_mod, run_check
+    from app.hold import calibrate as calib, codex as cx
+    say = (lambda line: print(line, file=sys.stderr))
+    recipe = _recipe(a.recipe)
+    space = recipe.get("space") or {}
+    ctx = int(space.get("ctx") or 0)
+    cut = space.get("cut") or "characters"
+    instruction = (space.get("document") or {}).get("instruction")
+    set_id = (space.get("calibration") or {}).get("set")
+    enc = space.get("encoder") or {}
+    if ctx <= 0 or not set_id or not enc.get("weights") or not isinstance(enc.get("engine"), dict):
+        raise CodexError(f"{a.recipe}: the space states ctx, calibration.set, encoder.weights and "
+                         f"encoder.engine; `new` measures with those and nothing else")
+    q_weights = ((space.get("query") or {}).get("encoder") or {}).get("weights")
+    if q_weights and q_weights != enc["weights"]:
+        raise CodexError(f"{a.recipe}: an asymmetric space (a query encoder of its own weights): "
+                         f"`new` makes a space whose documents and questions share one encoder")
+    if not a.cpu_model:
+        raise CodexError("--cpu-model names the encoder's CPU twin (gpu_layers 0, the device "
+                         "hidden): the tolerance and the CPU reference are measured against it")
+    api = check_api(a.api)
+    model = model_keys(a.encoder, embed_model=a.embed_model)[0]
+    set_id, texts = calib.load_set(set_id)
+    say(f"recipe   ctx {ctx}, cut {cut}, document instruction {instruction!r}, set {set_id[:23]}…")
+
+    # BEFORE ANY MEASUREMENT (the workflow's own review, 2026-11-06): what can
+    # refuse without measuring refuses first, so a refusal costs no card lane.
+    # The platform image create pins, and a collection of that name already
+    # made, held to the recipe in everything but the tolerance (which step 2
+    # measures)
+    a.platform_image = preflight_create(recipe, a.platform_image)
+    existing = None
+    try:
+        existing = col.resolve(a.root, a.name)
+    except CodexError:
+        existing = None
+    if existing is not None:
+        sp = existing[1].space
+        differs = [k for k, got, want in (
+            ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
+            ("document instruction", sp.document_instruction, instruction),
+            ("calibration set", sp.calibration.set, set_id),
+            # the WEIGHTS (`cx.encoder_field` names the engine, not them)
+            ("encoder weights", getattr(sp.encoder, "weights", None), enc["weights"]))
+            if got != want]
+        if differs:
+            raise CodexError(f"{existing[0]} exists and its space differs from the recipe's in "
+                             f"{', '.join(differs)}: a collection is not changed in place; forget it "
+                             f"and run `new` again (RULE 1 for one nothing was published from)")
+
+    # 1. calibrate, on the inputs the gate sends
+    reference = calib.Endpoint(file=f"{a.recipe} (space.encoder)", url=a.encoder, api=api, model=model,
+                               weights=enc["weights"],
+                               engine=cx.engine_from_dict(enc["engine"], "space.encoder.engine"))
+    twin_recipe = collections_mod.EmbedRecipe(url=a.encoder, api=api, model=a.cpu_model, dtype="f32",
+                                              ctx=ctx, document_instruction=instruction, cut=cut)
+    stated = run_check.stated_run(twin_recipe, probe_item=run_check.PROBE)
+    if stated.driver != "cpu":
+        raise CodexError(f"--cpu-model {a.cpu_model} states a run on {stated.driver!r}, not the CPU")
+    if stated.weights != enc["weights"]:
+        raise CodexError(f"--cpu-model {a.cpu_model} runs weights {stated.weights[:23]}…, the "
+                         f"recipe's are {enc['weights'][:23]}…: a twin is the same weights")
+    twin = calib.Endpoint(file=f"the CPU twin {a.cpu_model}", url=a.encoder, api=api, model=a.cpu_model,
+                          weights=stated.weights, engine=cx.engine_from_dict(stated.engine, "the twin's run"))
+    say(f"1/5 calibrate  {model} against {a.cpu_model} (the CPU lane from the node's store when kept)")
+    measured = calib.measure(reference, [twin], set_id=set_id, texts=texts,
+                             embed=calib.http_embed(ctx, document_instruction=instruction,
+                                                    set_id=set_id, cut=cut))
+    measured.update(ctx=ctx, cut=cut, instruction=instruction, cpu_model=a.cpu_model)
+    tolerance = measured["tolerance"]
+
+    # 2. the tolerance is the measured one
+    said = space.get("tolerance")
+    if said is None:
+        space["tolerance"] = tolerance
+        say(f"2/5 tolerance  {tolerance} (measured; the recipe stated none)")
+    elif decimal.Decimal(str(said)) != decimal.Decimal(tolerance):
+        raise CodexError(f"{a.recipe}: space.tolerance is {said}, and {tolerance} was measured on "
+                         f"the space's own inputs: write {tolerance} (a tolerance is measured, "
+                         f"never chosen)")
+    else:
+        say(f"2/5 tolerance  {tolerance} (the recipe's, measured)")
+
+    # 3. create, or hold the collection already made to the recipe
+    if existing is not None:
+        name, codex = existing
+        if decimal.Decimal(str(codex.space.tolerance)) != decimal.Decimal(tolerance):
+            raise CodexError(f"{name} exists with tolerance {codex.space.tolerance}, and {tolerance} was "
+                             f"measured on its own inputs: a collection is not changed in place; forget "
+                             f"it and run `new` again (RULE 1 for one nothing was published from)")
+        say(f"3/5 create     {name} exists, its space the recipe's: kept")
+    else:
+        codex, held = create_from(a.root, a.plugin, recipe, platform_image=a.platform_image,
+                                  encoder=a.encoder, name=a.name, api=api, embed_model=a.embed_model)
+        name = col.name_of(a.root, codex.collection_id)
+        say(f"3/5 create     {name}  {codex.collection_id}  (held: {held})")
+    state = a.root / name / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "calibration.json").write_text(json.dumps(measured, indent=1, sort_keys=True), encoding="utf-8")
+
+    # 4. the CPU reference, from the store entry step 1 made
+    say("4/5 cpu-reference  from the node's store")
+    rc = cmd_embedder_cpu_reference(argparse.Namespace(root=a.root, collection=name, model=a.cpu_model,
+                                                       query_model=None, again=False, refresh=True))
+    if rc != 0:
+        say(f"stopped at 4/5: cpu-reference exited {rc}")
+        return rc
+
+    # 5. the gate
+    say("5/5 gate")
+    rc = cmd_embedder_check(argparse.Namespace(root=a.root, collection=name, accept=False,
+                                               model=None, query_model=None))
+    say(f"{name}: {'the gate PASSED; embedding stays off until the operator turns it on' if rc == 0 else f'the gate exited {rc}: nothing may be embedded'}")
+    return rc
 
 
 def _encoder_key_args(p) -> None:
@@ -647,10 +870,10 @@ def _write_held_file(root, codex, encoder: str | None = None,
 
 
 def _utc_now() -> str:
-    """09 Â§9.1's time: RFC 3339 in UTC to the second.
+    """09 §9.1's time: RFC 3339 in UTC to the second.
 
-    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it â
-    every signed body takes its `time` from a caller â so that a test can
+    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it —
+    every signed body takes its `time` from a caller — so that a test can
     pin what was signed, and so that two objects signed in one command
     cannot disagree about when it ran.
     """
@@ -665,7 +888,7 @@ NO_ENCODER = (
     "it was created with. `hold collection create` embeds the "
     "512-text calibration set with the encoder the recipe names "
     "and writes the reference vectors' hash into the Codex "
-    "(06 Â§6.6); there is no offline path that produces a valid "
+    "(06 §6.6); there is no offline path that produces a valid "
     "Codex, because a placeholder there is a collection no peer "
     "can ever join")
 
@@ -723,10 +946,10 @@ def check_reference_runs(space: dict, recipe, runs: set, *, query: bool = False)
 
 def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
                       api: str = "openai", query: bool = False):
-    """The encoder `create` embeds the calibration set with (06 Â§6.6).
+    """The encoder `create` embeds the calibration set with (06 §6.6).
 
-    There is no Codex yet â the two hashes this produces are Codex
-    fields â so the endpoint is resolved from the RECIPE's space block.
+    There is no Codex yet — the two hashes this produces are Codex
+    fields — so the endpoint is resolved from the RECIPE's space block.
     The endpoint is `--encoder URL`, the one the new file will name. It
     was EMBED_URL; there is no default encoder now (operator, 2026-09-18).
 
@@ -751,7 +974,13 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
     recipe = collections_mod.EmbedRecipe(
         url=url, api=api, model=model,
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"],
-        cut=space.get("cut") or "characters")
+        cut=space.get("cut") or "characters",
+        # THE DOCUMENT INSTRUCTION IS THE SPACE'S (09 §9.3, Codex version 11):
+        # the document reference is made with it, as every document is
+        # embedded; the query side's own instruction is prefixed by
+        # calibration.build_query_member, never here
+        document_instruction=(None if query
+                              else ((space.get("document") or {}).get("instruction") or None)))
     # G5: an endpoint that states its runs — VeGa's receipts — is held to
     # the engine and weights the recipe names, checked before the Codex exists
     vouched = api == embeddings.VEGA
@@ -774,11 +1003,6 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
 
 
 def cmd_derive(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate`, which re-embeds the calibration "
-                 "set for the new encoder (migration step 3)")
-
     mother = col.read(a.root, a.codex_id)
     space_from = col.read(a.root, a.space_from) if a.space_from else None
     space = cx.space_from_dict(_json(a.space)) if a.space else None
@@ -861,7 +1085,7 @@ def _inherited_encoder(root, sister: cx.Codex, mother: cx.Codex,
 
 def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
     """Creating a sister is an acceptance, of the space and of what follows
-    from it (02 Â§2.7). What can be said without the SHARD on disk is said
+    from it (02 §2.7). What can be said without the SHARD on disk is said
     here; how many chunks are already covered arrives with the coverage map."""
     same = sister.space_id == mother.space_id
     verdict = "matches" if same else "DIFFERS FROM"
@@ -869,7 +1093,7 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
                    if same else
                    "her mother's vectors do NOT carry over: this Codex breaks "
                    "with every vector that exists")
-    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}â¦)",
+    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}…)",
           file=sys.stderr)
     print(f"  {consequence}", file=sys.stderr)
     if sister.credits:
@@ -879,23 +1103,31 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
                                                   for c in sister.credits),
               file=sys.stderr)
     else:
-        print("  credits: none â she owes nothing and starts from zero",
+        print("  credits: none — she owes nothing and starts from zero",
               file=sys.stderr)
 
 
 def cmd_continue(a) -> int:
     origin = Origin(**_json(a.origin)) if a.origin else None
+    slicing = member = None
+    if getattr(a, "reslice", False):
+        # the slicing the plugin gives a collection created NOW (wikidata: the
+        # map of the code's family list over the pack's class tree), so the
+        # daughter is what a creation from scratch would be (02 §2.7, A1g)
+        mother_name, mother = col.resolve(a.root, a.codex_id)
+        source = tpl.source_for(mother.plugin)
+        if not callable(getattr(source, "creation_slicing", None)):
+            raise CodexError(f"--reslice: the {mother.plugin} plugin derives no slicing at creation")
+        slicing, member = source.creation_slicing(mother_name)
     d = col.continue_(a.root, a.codex_id, platform_image=a.platform_image,
                       continues_through=a.continues_through, origin=origin,
-                      origin_reachable_until=a.origin_reachable_until)
+                      origin_reachable_until=a.origin_reachable_until,
+                      slicing=slicing, slicing_member=member)
     print(d.collection_id)
     return 0
 
 
 def cmd_replace(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate` (migration step 3)")
     df = _json(a.defect)
     defect = Defect(df["check"], df["toolchain"], tuple(df["witnesses"]),
                     df["expected"], df["observed"], df["rationale"])
@@ -1057,7 +1289,8 @@ def cmd_node_pause(a) -> int:
     at the end of its current unit and runs nothing for until `resume`."""
     from app import node_state
     if a.collection:
-        names = node_state.set_paused(a.collection, True)
+        names = node_state.set_paused(a.collection, True,
+                                      by=f"louise node pause {a.collection} ({node_state.invoker()})")
         _print({"paused": sorted(names)})
         return 0
     state = "acquire-only" if a.acquire_only else "seed-only" if a.seed_only else "paused"
@@ -1070,7 +1303,7 @@ def cmd_node_pause(a) -> int:
 #: runs. Wrapped, not rewritten — the module keeps its own flags, and
 #: `python -m tools.<module>` keeps working until step 12 retires it.
 DEV_TOOLS = {"schedule-report": "sched_report", "embedder-profile": "profile_embed",
-             "refs-sync": "sync_refs"}
+             "refs-sync": "sync_refs", "wikidata-classes": "wikidata_classes"}
 
 
 def cmd_dev_tool(a) -> int:
@@ -1091,6 +1324,41 @@ def cmd_dev_tool(a) -> int:
         finally:
             sys.argv = saved
     return int(rc or 0)
+
+
+def cmd_dev_embed_select(a) -> int:
+    """`louise dev embed-select <collection> [--apply]` (app/embed_select.py;
+    operator, 2026-11-02): what the collection's embed selection chooses —
+    documents, embedded here, declined, with a Wikidata item, English — read
+    from the manifest opened read-only and its page_props, writing nothing.
+    `--apply` writes the marks now, as the worker does after a scan, under
+    the collection's lock."""
+    import sqlite3
+
+    from app import collections as _cm, embed_select
+    c = _cm.by_name(a.collection)
+    if c is None:
+        raise CodexError(f"{a.collection}: not a collection this node holds")
+    out = {"collection": c.name, "policy": embed_select.policy(c)}
+    if not embed_select.owns_marks(c):
+        print(json.dumps({**out, "note": "every document held is embedded"}, indent=2))
+        return 0
+    if a.apply:
+        from app import db as _db
+        _take_write_lock(a.root, c.name, "dev embed-select")
+        with _closing(_db.connect(c)) as con:
+            out.update(embed_select.apply(con, c, log=lambda m: print(m, file=sys.stderr)))
+    else:
+        con = sqlite3.connect(f"file:{c.manifest_path}?mode=ro", uri=True)
+        try:
+            _, _, counts = embed_select.decide(c, con)
+        except embed_select.Unavailable as e:
+            raise CodexError(f"{c.name}: {e}") from None
+        finally:
+            con.close()
+        out.update(counts)
+    print(json.dumps(out, indent=2))
+    return 0
 
 
 def cmd_dev_mark_embedded(a) -> int:  # noqa: C901
@@ -1340,6 +1608,119 @@ def cmd_dev_drop_rows(a) -> int:
     return 0
 
 
+def cmd_dev_wikidata_regroup(a) -> int:
+    """`louise dev wikidata-regroup <collection> [--row-group N] [--workers N]`:
+    the collection's wikidata pack rewritten file by file with small row
+    groups, the lines byte for byte (app/plugins/wikidata/pack.py `regroup`).
+    Resumable, safe beside a running records build; read-only for the
+    collection itself. A sparse family read 1,000 lines for each it kept."""
+    from app import collections as collections_mod
+    from app.plugins.wikidata import pack, source as wd
+    name, _codex = col.resolve(a.root, a.collection)
+    collection = collections_mod.by_name(name)
+    dumps = wd.find_dumps(Path(collection.corpus_dir), getattr(collection, "snapshot", None))
+    if not dumps:
+        print(f"[regroup] {name}: no wikidata dump under {collection.corpus_dir}", file=sys.stderr)
+        return 2
+    _whole_quota()
+    from app import config
+    out = pack.regroup(dumps[0], row_group=a.row_group, workers=a.workers or config.PARSE_PROCESSES,
+                       log=lambda m: print(m, file=sys.stderr, flush=True))
+    _print({"collection": name, "dump": dumps[0].name, **out})
+    return 0
+
+
+def cmd_dev_reindex(a) -> int:
+    """`louise dev reindex <collection> --ids FILE [--yes]`: the documents
+    FILE lists (one uid a line) queued for the text-index stage again —
+    `fts_done = 0`, nothing else — so the worker re-cuts them from the live
+    parse, rewrites their text-index entries (delete-then-insert) and their
+    `documents.chunks`. Embedding is untouched: their vectors are the
+    records' (2026-10-25: gutenberg rows indexed under an earlier parse kept
+    stale chunk counts and text, `tools/measure/chunks_drift.py` lists them).
+    A document out of scope or not yet extracted is left alone and counted.
+    The collection's write lock held. A dry run without --yes."""
+    import time
+    from app import db
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    uids = sorted({line.strip() for line in Path(a.ids).read_text(encoding="utf-8").splitlines()
+                   if line.strip()})
+    coll = rec.local_collection(a.root, name, codex)
+    if a.yes:
+        _take_write_lock(a.root, name, "louise dev reindex", exit_code=2)
+    con = db.connect(coll)
+    try:
+        eligible = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            eligible += con.execute(
+                f"SELECT COUNT(*) FROM documents WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", part).fetchone()[0]
+        if not a.yes:
+            print(f"[reindex] would queue {eligible} of {len(uids)} listed document(s) of {name} for the "
+                  f"text-index stage (fts_done = 0; embedding untouched) — --yes", file=sys.stderr)
+            return 0
+        con.execute("BEGIN IMMEDIATE")
+        queued = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            queued += con.execute(
+                f"UPDATE documents SET fts_done=0, updated_at=? WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", [int(time.time()), *part]).rowcount
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    _print({"collection": name, "listed": len(uids), "queued": queued, "left_alone": len(uids) - queued,
+            "note": "the worker's text-index stage re-cuts them; embedding untouched"})
+    return 0
+
+
+def cmd_dev_index_drift(a) -> int:
+    """`louise dev index-drift <collection> [--shards S,…] [--cut-all]
+    [--sample F] [--seed HEX] [--snapshot ID] [--ids-out FILE]`: the
+    documents whose served state — the manifest's chunk count and hashes,
+    the text index — disagrees with the latest held snapshot's records
+    (app/hold/drift.py; the 127-part gap, STATUS 2026-10-25). Read-only;
+    exit 1 when a document is named, 0 when every one agrees, 130 when a
+    signal ended the walk at a part boundary. `--ids-out` is `dev reindex
+    --ids`'s input."""
+    from app.hold import drift, records as rec, seed as seed_mod
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = seed_mod.latest_snapshot(Path(a.root), name, a.snapshot)
+    local = rec.local_collection(a.root, name, codex)
+    shards = [s.strip() for s in a.shards.split(",") if s.strip()] if a.shards else None
+    try:
+        seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
+    except ValueError:
+        raise CodexError(f"--seed is 32 bytes as hex, got {a.seed!r}") from None
+    stop = threading.Event()             # 07 §7.7: a signal ends the walk at the next part
+    before = {}
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            before[sig] = signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):    # not the main thread
+            pass
+    try:
+        # the uids are streamed to --ids-out part by part, never held whole
+        # (2026-10-31: wikipedia's 8.6 M named took the walk past 8 GB)
+        report = drift.run(a.root, name, codex, snapshot, local, shards=shards, cut_all=a.cut_all,
+                           sample=a.sample, seed=seed, log=lambda m: print(m, file=sys.stderr),
+                           stop=stop.is_set, ids_out=Path(a.ids_out) if a.ids_out else None)
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+    report.pop("ids", None)
+    if a.ids_out:
+        report["ids_out"] = str(a.ids_out)
+    print(drift.summary_line(report), file=sys.stderr)
+    _print(report)
+    if report["interrupted"]:
+        print("[index-drift] interrupted at a part boundary: the report covers the parts walked", file=sys.stderr)
+        return 130
+    return 1 if report["named"] else 0
+
+
 def cmd_dev_unindexable(a) -> int:
     """`louise dev unindexable <collection> <uid> [--yes]`: a document this
     image's plugin now refuses (`UnindexableDocument`, e.g. gutenberg's parser
@@ -1381,6 +1762,41 @@ def cmd_dev_unindexable(a) -> int:
     finally:
         con.close()
     return 0
+
+
+def cmd_dev_rewrite_vectors(a) -> int:
+    """`louise dev rewrite-vectors <collection> [--yes] [--restart] [--drop-old]`
+    (operator, 2026-10-31: "Rewrite wikipedia now"): the vector table copied
+    into one with Lance's stable row ids, indexed, verified and swapped in
+    (app/vector_rewrite.py). Without --yes, the plan. Only on a PAUSED
+    collection; SIGTERM finishes the group in flight and exits 130."""
+    import signal
+    import threading
+    from app import db, node_state, vector_rewrite
+    collection = _node_collections(a.collection)[0]
+    say = lambda m: print(f"[rewrite-vectors] {collection.name}: {m}", file=sys.stderr)  # noqa: E731
+    if a.drop_old:
+        _print(vector_rewrite.drop_old(collection, log=say))
+        return 0
+    if not a.yes:
+        _print(vector_rewrite.plan(collection))
+        return 0
+    if collection.name not in node_state.paused_collections():
+        print(f"louise: {collection.name} is not paused: `louise node pause {collection.name}` "
+              f"first — nothing may write its vector table while it is copied", file=sys.stderr)
+        return 2
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    with _closing(db.connect(collection)) as con:
+        try:
+            out = vector_rewrite.run(collection, con, stop=stop, log=say, group=a.group,
+                                     restart=a.restart)
+        except vector_rewrite.RewriteError as e:
+            print(f"louise: {collection.name}: {e}", file=sys.stderr)
+            return 2
+    _print(out)
+    return 130 if out.get("interrupted") else 0
 
 
 def cmd_dev_carry(a) -> int:
@@ -1428,7 +1844,8 @@ def cmd_dev_carry(a) -> int:
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
                                     rebuilt=getattr(a, "rebuilt", False), recut=recut,
-                                    log=say)}
+                                    resliced=getattr(a, "resliced", False),
+                                    unembedded=getattr(a, "unembedded", False), log=say)}
     if recut and producer:
         say(f"[carry] the cut is crossed with --keep {a.keep}: only that archive's rows stay, "
             f"so no row the character cut shortened is left to recut (A1e)")
@@ -1511,10 +1928,57 @@ def cmd_node_show(a) -> int:
     return 0
 
 
+#: The web process `node start` runs beside the worker: the image's own
+#: command (Dockerfile), so one node started either way serves the same app.
+WEB_COMMAND = ("-m", "uvicorn", "app.api:app", "--host", "0.0.0.0")
+WEB_STOP_WAIT_S = 30.0
+
+
+def cmd_node_start(a) -> int:
+    """`node start [--acquire-only | --seed-only] [--only worker|web]` (07
+    §7.3): the daemon — the worker's rounds and the web interface — until
+    stopped. A mode flag sets the node's mode as `node pause` does (it
+    survives a restart, §7.8). `--only` runs one of the two, which is how a
+    deployment with one container each runs them. Exit: the worker's —
+    0 after `node stop`, 130 on a signal (§7.7)."""
+    import subprocess
+    from app import config, node_state
+    if a.acquire_only or a.seed_only:
+        state = "acquire-only" if a.acquire_only else "seed-only"
+        node_state.set_worker_state(state, by=f"louise node start --{state}")
+    web_argv = [sys.executable, *WEB_COMMAND, "--port", str(config.PORT)]
+    if a.only == "web":
+        os.execv(sys.executable, web_argv)
+    web = subprocess.Popen(web_argv) if a.only is None else None
+    try:
+        from app import worker
+        return worker.main()
+    finally:
+        if web is not None and web.poll() is None:
+            web.terminate()
+            try:
+                web.wait(timeout=WEB_STOP_WAIT_S)
+            except subprocess.TimeoutExpired:
+                web.kill()
+                web.wait()
+
+
+def cmd_node_stop(a) -> int:
+    """`node stop` (07 §7.3): asks the worker to finish its current units,
+    commit and exit 0 — through the node's state, which every container of
+    the node shares; it does not wait for the exit."""
+    from app import node_state
+    node_state.request_stop()
+    _print({"node": "stopping", "store": str(node_state.path()),
+            "says": "the worker finishes its current units, commits and exits 0"})
+    return 0
+
+
 def cmd_node_resume(a) -> int:
     from app import node_state
     if a.collection:
-        names = node_state.set_paused(a.collection, False)
+        names = node_state.set_paused(a.collection, False,
+                                      by=f"louise node resume {a.collection} ({node_state.invoker()})")
         _print({"paused": sorted(names)})
         return 0
     node_state.set_worker_state("running", by="louise node resume")
@@ -1526,7 +1990,7 @@ def cmd_node_resume(a) -> int:
 
 
 #: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
-_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
+_SHARE_VERBS = ("collection", "serve", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
 
 
 def cmd_share(a) -> int:
@@ -1536,7 +2000,7 @@ def cmd_share(a) -> int:
     opens a port (07 §7.4), and neither does this one. `--slices` and
     `--kinds` narrow what is served: `share_slices` and `share_kinds` in the
     same file (07 §7.8), comma-separated; `all` lifts a narrowing. A
-    whole-collection member — terms, validation, calibration, seals — is
+    whole-collection member — terms, validation, the slicing map, calibration, seals — is
     always served (app/share/seeder.py `serves`)."""
     import re
     from app.hold import deposit
@@ -1715,6 +2179,8 @@ def _fetch_members_here(root, name: str, *, slices, kinds, session=None) -> dict
     con = sqlite3.connect(manifest, isolation_level=None)
     con.row_factory = sqlite3.Row
     try:
+        from app import db
+        db.wal(con)            # invariant 6: the first opener of a fresh manifest decides its mode
         with peers_connection() as node_con:
             hints = transport.hints_for(node_con, codex.collection_id, now=time.time())
         return transport.fetch_members(root, name, codex, slices=slices, kinds=tuple(kinds),
@@ -1728,6 +2194,27 @@ def peers_connection():
     from contextlib import closing
     from app.share import peers
     return closing(peers.connect())
+
+
+def _whole_quota() -> None:
+    """An operator's pass over a collection's parts takes the whole CPU
+    quota, as `hold records build` does (config.build_parse_processes): the
+    worker keeps quota − 1 because its main thread runs the rounds and the
+    API, a command has nothing else to run (docs/notes/multicore-audit.md)."""
+    from app import config
+    if config.BUILD_WHOLE_QUOTA:
+        config.PARSE_PROCESSES = config.build_parse_processes()
+        # a child retires after PARSE_TASKS_PER_CHILD tasks (its caches grow
+        # with what it parsed): 500 replaced every child of wikidata's build
+        # every few seconds, each paying the spawn import; 20,000 kept the
+        # same children for the run at +10–30 MB each per 5 min, records/s
+        # +10 % (München, 2026-10-30). The worker's env sets its own.
+        if not os.getenv("PARSE_TASKS_PER_CHILD"):
+            config.PARSE_TASKS_PER_CHILD = max(int(config.PARSE_TASKS_PER_CHILD), CLI_TASKS_PER_CHILD)
+
+
+#: an operator pass's children live this many tasks unless the env says otherwise
+CLI_TASKS_PER_CHILD = 20_000
 
 
 def cmd_share_attest(a) -> int:
@@ -1758,6 +2245,7 @@ def cmd_share_attest(a) -> int:
         _print({"republish": True, "held_by_this_key_unpublished": len(ids), **out,
                 "note": "the worker forwards the events to every neighbour at its next beat"})
         return 0
+    _whole_quota()
     name, codex, snapshot, seed, report = run_check(a)
     with _closing(peers.connect()) as con:
         out = attest_mod.publish(a.root, name, codex, list(report.attestations.values()),
@@ -1967,8 +2455,11 @@ def cmd_ask_chat(a) -> int:
         _print(out)
         return 0
     print(out["answer"])
+    for c in out.get("cited") or []:
+        # what each [n] of the answer is (05 §5.4, amended 2026-11-03)
+        print(f"[{c['n']}] {c['uid']} — {c.get('title') or ''}" if "n" in c else f"[{c['id']}]")
     for t in out["turns"]:
-        line = f"[{t['tool']} {json.dumps(t['arguments'], ensure_ascii=False)}]"
+        line = f"[{t.get('by', 'model')} {t['tool']} {json.dumps(t['arguments'], ensure_ascii=False)}]"
         if t.get("error"):
             line += f" refused: {t['error']}"
         print(line, file=sys.stderr)
@@ -2077,8 +2568,18 @@ def cmd_show(a) -> int:
     out.pop("refused", None)
     out.update(_copy_state(a.root, name, codex).to_json())
     out.update(_show_shard(a.root, name))
+    # 06 §6.1 (amended 2026-10-25): the origin's inconsistencies the last
+    # parse of each document met, counted per code (`hold issues list`)
+    out["issues"] = _issues_summary(a.root, name, codex)
     _print(out)
     return 0
+
+
+def _issues_summary(root, name: str, codex) -> dict:
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    return issues.summary_at(rec._paths(root, name)[1] / "manifest.sqlite",
+                             collections_mod.PLUGIN_REGISTRY.get(codex.plugin))
 
 
 def _show_shard(root, name: str) -> dict:
@@ -2192,6 +2693,7 @@ def cmd_records_build(a) -> int:
     # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
     # another, for a node whose origins are not there yet
     corpus = a.corpus or (Path(a.root) / name / "origin")
+    _whole_quota()
     # Invariant 2: SIGTERM or SIGINT finishes the current unit and exits 130.
     # Without this a stop KILLED the build: its parse pool's children were
     # re-parented to init and kept running (2026-09-21).
@@ -2203,8 +2705,46 @@ def cmd_records_build(a) -> int:
             pass
     result = rec.build(a.root, a.collection, corpus_dir=corpus,
                        snapshot_id=a.snapshot_id,
-                       records_per_shard=a.records_per_shard, stop=stop)
+                       records_per_shard=a.records_per_shard, stop=stop,
+                       records_from=getattr(a, "records_from", None),
+                       records_from_discarded=getattr(a, "records_from_discarded", None))
     return 130 if result.interrupted else 0
+
+
+def cmd_snapshot_discard(a) -> int:
+    """`hold snapshot discard <collection> <snapshot> [--yes]`
+    (app/hold/discard.py): the latest snapshot, which this node never served
+    and attested nothing of, moved aside with its parts under
+    `<SHARD>/.discarded/<snapshot>/`; its derived indexes go. A dry run without
+    --yes. Takes the collection's lock."""
+    from app import db as _db
+    from app.hold import discard as discard_mod, records as rec
+    from app.share import peers
+    name, codex = col.resolve(a.root, a.collection)
+    root = Path(a.root)
+    if a.yes:
+        _take_write_lock(root, name, "hold snapshot discard")
+    local = rec.local_collection(root, name, codex)
+    with _closing(_db.connect(local)) as con, _closing(peers.connect()) as node_con:
+        _print(discard_mod.discard(root, name, a.snapshot_id, con=con, node_con=node_con,
+                                   dry_run=not a.yes))
+    return 0
+
+
+def cmd_records_relocate(a) -> int:
+    from app.hold import collection as c, relocate as rl
+    name, _codex = c.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold records relocate")
+    # Invariant 2: SIGTERM or SIGINT finishes the parts in hand and exits 130
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):                # not the main thread
+            pass
+    got = rl.relocate(a.root, a.collection, corpus_dir=a.corpus, workers=a.workers,
+                      dry_run=a.dry_run, stop=stop)
+    return 130 if got.interrupted else 0
 
 
 def cmd_records_validation(a) -> int:
@@ -2250,6 +2790,7 @@ def cmd_snapshot_create(a) -> int:
         seeded = seed.seed_shards(a.root, ref_name, source, from_snapshot=source_snapshot,
                                   log=lambda m: print(m, file=sys.stderr))
         snapshot_id = snapshot_id or seeded["snapshot_id"]
+    _whole_quota()
     snap = sn.create(a.root, a.collection, snapshot_id=snapshot_id)
     if seeding:
         bad = seed.same_parts_or_withdraw(a.root, ref_name, snap, source, source_snapshot)
@@ -2354,8 +2895,10 @@ def cmd_vectors_export(a) -> int:
 
 
 def _ack_origin_unchecked(a, name, codex) -> int:
-    """`hold collection ack <collection> --origin-unchecked` — the other thing
-    an operator may acknowledge (07 §7.7; 03 §3.6): that this peer's own
+    """`hold collection ack <collection> --origin-unchecked` — NO LONGER
+    NEEDED since 2026-11-01 (03 §3.6 amended, operator: the origin check is
+    shown and never waited for); kept so a decision already recorded reads
+    the same. The other thing an operator may acknowledge: that this peer's own
     `records-vs-origin` COULD NOT RUN while every other test of the copy
     passed. It prints what passed, what could not run and when it was last
     tried, waits for consent, and records the decision with its time and the
@@ -2985,7 +3528,7 @@ def cmd_vectors_check(a) -> int:
     import os
 
     from app import embeddings
-    from app.hold import collection as col, embedder as emb, land as landing, \
+    from app.hold import collection as col, embedder as emb, \
         records as rec, vectors_check as vck
 
     name, codex = col.resolve(a.root, a.collection)
@@ -3005,25 +3548,10 @@ def cmd_vectors_check(a) -> int:
     except emb.GateDeferred:
         pass
 
-    # `check` asks for a shard's chunk ids before it asks for any of its
-    # text, so the cut is done once per sampled shard and the text is read
-    # out of it. Cutting a shard is the expensive part — a re-cut per
-    # sampled chunk would be sixteen passes over the same records.
-    cut: dict[str, dict] = {}
-
-    def chunk_ids_for(entry):
-        cut.clear()
-        cut.update(landing.cut(codex, landing.records_for(
-            a.root, name, snapshot, f"{entry.slice}/{entry.n:05d}", None)))
-        return sorted(cut)
-
-    def text_of(cid):
-        # the text, or a pair layer's chunk with its `fields` (09 §9.3)
-        return landing.input_of(cut, cid)
-
+    _whole_quota()
     report = vck.check(
         codex, snapshot, seed=bytes.fromhex(a.seed) if a.seed else os.urandom(32),
-        chunk_ids_for=chunk_ids_for, text_of=text_of,
+        shard_tree=col.shard_dir_of(Path(a.root), name),
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
         embed=embed, fraction=a.sample,
         drop=(lambda ids: embeddings.delete_chunks(ids, collection=local))
@@ -3111,6 +3639,7 @@ def run_check(a):
         checks=a.checks.split(",") if a.checks else None, sample=a.sample,
         embed=embed, reference=reference,
         reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
+        reparse_many=_reparse_many_from(codex, name, getattr(a, "origin_dir", None)),
         origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
         weigh_unit=_weigh_from(codex, getattr(a, "origin_dir", None)),
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
@@ -3169,6 +3698,7 @@ def cmd_check(a) -> int:
     attestation, is reported with its reason, and is retried.
     """
     from app.hold import check as chk
+    _whole_quota()
     name, codex, snapshot, seed, report = run_check(a)
     written = report.attestations
 
@@ -3179,6 +3709,10 @@ def cmd_check(a) -> int:
     if tried is not None and tried.result == chk.INCONCLUSIVE:
         from app import copy_state
         copy_state.note_origin_attempt(a.root, name, codex, why=tried.why, now=_utc_now())
+    elif tried is not None:
+        # a verdict: the note of an earlier attempt that could not run is gone
+        from app import copy_state
+        copy_state.clear_origin_attempt(a.root, name)
 
     if a.json:
         _print(report.to_json())
@@ -3205,7 +3739,7 @@ def _reparse_from(codex, name: str, origin_dir):
     """
     from pathlib import Path
 
-    from app import collections as collections_mod, layers as layers_mod, plugin_io
+    from app import plugin_io
     from app.pack import build as pack_build, records as pack_records
 
     prepare = None
@@ -3227,12 +3761,7 @@ def _reparse_from(codex, name: str, origin_dir):
     # `record_line` — a shape-2 collection writes `figures` on every line,
     # so a re-parse that produced shape 1 would differ from every record it
     # was checking and report the whole sample as failing.
-    collection = collections_mod.Collection(
-        name=name, plugin=codex.plugin, profile=None,
-        embed_mode_default=None, corpus_dir=base,
-        manifest_path=base / "manifest.sqlite", fts_dir=base,
-        lance_dir=base, acquire_enabled=False, license_ack=None,
-        layers=layers_mod.layers_for(codex), codex=codex)
+    collection = _reparse_collection(codex, name, base)
     plugin = collection.plugin_instance()
 
     def reparse(uid: str, locator: str) -> bytes:
@@ -3248,6 +3777,66 @@ def _reparse_from(codex, name: str, origin_dir):
             record, record_line=int(getattr(codex, "record_line", 1) or 1))
 
     return reparse
+
+
+def _reparse_collection(codex, name: str, base):
+    """The collection a re-parse runs as: the origin at `base`, the Codex's
+    layers and record shape (`_reparse_from` explains why both)."""
+    from pathlib import Path
+
+    from app import collections as collections_mod, layers as layers_mod
+    base = Path(base)
+    return collections_mod.Collection(
+        name=name, plugin=codex.plugin, profile=None,
+        embed_mode_default=None, corpus_dir=base,
+        manifest_path=base / "manifest.sqlite", fts_dir=base,
+        lance_dir=base, acquire_enabled=False, license_ack=None,
+        layers=layers_mod.layers_for(codex), codex=codex)
+
+
+#: records handed to the parse pool per page by `_reparse_many_from`
+REPARSE_PAGE = 256
+
+
+def _reparse_many_from(codex, name: str, origin_dir):
+    """`Ctx.reparse_many` for a LOCAL origin: the comparisons of
+    `records-vs-origin` in the parse pool's processes, in order (CLAUDE.md,
+    multi-core — one wikidata check ran at 38 records/s on one core, ~27 h;
+    München, 2026-11-01). The pool's window, profile cap, watchdog and
+    fallback are `parallel.compute_pages`'. None for a network origin: its
+    members are fetched under this process's transfer budget, and children
+    fetching at once would each draw a budget of their own (invariant 5)."""
+    from collections import deque
+
+    from app import parallel
+    if not origin_dir:
+        return None
+    collection = _reparse_collection(codex, name, origin_dir)
+
+    def many(items):
+        pending: deque = deque()
+
+        def pages():
+            page: list[dict] = []
+            for uid, locator, line in items:
+                page.append({"uid": uid, "locator": locator, "line": line})
+                if len(page) >= REPARSE_PAGE:
+                    pending.append(page)
+                    yield page
+                    page = []
+            if page:
+                pending.append(page)
+                yield page
+        for results in parallel.compute_pages("origin-line", collection, pages()):
+            page = pending.popleft()
+            for row, (ok, value) in zip(page, results):
+                if ok:
+                    yield row["uid"], value, None
+                elif value.get("type") == "FileNotFoundError":
+                    yield row["uid"], "unreachable", None
+                else:
+                    yield row["uid"], "errored", f"{row['uid']}: {value.get('type')}: {value.get('msg')}"[:200]
+    return many
 
 
 _member_origins: dict = {}
@@ -3433,11 +4022,11 @@ def _read_member(member):
 
 
 def cmd_embedder_check(a) -> int:
-    """`hold embedder check` â the calibration gate of 03 Â§3.3.
+    """`hold embedder check` — the calibration gate of 03 §3.3.
 
     Exit 0 on a pass, 1 on a fail, 3 when the encoder was unreachable:
-    03 Â§3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
-    pass", and 07 Â§7.7 reserves 3 for exactly that. A gate that exited 1
+    03 §3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
+    pass", and 07 §7.7 reserves 3 for exactly that. A gate that exited 1
     on an unreachable endpoint would flag a collection for a network
     problem.
     """
@@ -3446,6 +4035,11 @@ def cmd_embedder_check(a) -> int:
     _take_write_lock(a.root, name, "hold embedder check")     # it writes a statement (07 §7.7)
     if hold_runs.applies(codex):
         return _embedder_check_runs(a, name, codex)
+    if a.model or a.query_model:
+        print(f"louise: {name} is a Codex version {codex.version} collection: a candidate "
+              f"model is gated as a RUN, and only a version-3 collection states runs",
+              file=sys.stderr)
+        return 2
     try:
         run, codex = _gate(a)
     except emb.GateDeferred as e:
@@ -3453,7 +4047,7 @@ def cmd_embedder_check(a) -> int:
         return 3
     verdict = "PASS" if run.ok else "FAIL"
     print(f"{verdict}  {run.why()}")
-    print(f"  space       {run.space_id[:23]}â¦")
+    print(f"  space       {run.space_id[:23]}…")
     print(f"  encoder     {codex.space.encoder.label or cx.encoder_field(codex)[1][:23]}")
     print(f"  tolerance   {run.tolerance}")
     print(f"  seed        {run.seed.hex()}")
@@ -3492,17 +4086,25 @@ def _embedder_check_runs(a, name, codex) -> int:
     # no collection file beside it (2026-09-19).
     for role in roles:
         run_check.reference(a.root, name, codex, role)
+    if a.query_model and "query" not in roles:
+        print(f"louise: {name}: --query-model names a query side, and this space has none "
+              f"(its questions are embedded by the document encoder)", file=sys.stderr)
+        return 2
     try:
-        recipe = _recipe_for(codex, name)
+        recipe = _as_candidate(_recipe_for(codex, name), a)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
     worst = 0
+    from app import encoder_use
     for role in roles:
         passes: list = []
         try:
-            body = run_check.validate(a.root, name, codex, recipe, role=role,
-                                      on_run=passes.append)
+            # leased for the whole gate: the worker's idle sweep leaves it loaded
+            with encoder_use.held(recipe, query=role == "query", collection=name,
+                                  holder=_lease_holder("hold embedder check")):
+                body = run_check.validate(a.root, name, codex, recipe, role=role,
+                                          on_run=passes.append)
         except emb.GateDeferred as e:
             print(f"louise: deferred: {role}: {e}", file=sys.stderr)
             return 3
@@ -3519,6 +4121,14 @@ def _embedder_check_runs(a, name, codex) -> int:
             print(f"  whole set   worst {min(run.all_cosines):.6f}, "      # cross-vendor table's row
                   f"median {__import__('statistics').median(run.all_cosines):.6f}, "
                   f"below 0.995: {sum(c < 0.995 for c in run.all_cosines)} of {len(run.all_cosines)}")
+        if "exactness" in body:
+            print(f"  exactness   {body['exactness']}, {body['loads']} fresh load(s), "
+                  f"closest answers {body['load_variation']}")
+        cpu = body.get("cpu_reference")
+        print(f"  cpu         " + (f"worst {cpu['worst']}, median {cpu['median']} against the "
+                                   f"stored CPU reference (run {cpu['run'][:23]}…)" if cpu else
+                                   "no stored CPU reference for these weights "
+                                   "(`hold embedder cpu-reference`)"))
         print(f"  fingerprint {body['fingerprint']}")
         print(f"  batches     {'as one text at a time' if body['batch_invariant'] else 'DIFFER from one text at a time: validated for single-text work only'}")
         print(f"  benchmark   {body['tokens_per_s']} tokens/s")
@@ -3527,10 +4137,116 @@ def _embedder_check_runs(a, name, codex) -> int:
     return worst
 
 
-def cmd_embedder_benchmark(a) -> int:
-    """`hold embedder benchmark` â the same run, reporting the rate.
+def cmd_embedder_cpu_reference(a) -> int:
+    """`hold embedder cpu-reference <collection> --model M [--query-model Q]`
+    (operator, 2026-10-31; docs/notes/near-exact-runs.md §2): the 512
+    calibration items as the encoder's CPU TWIN embeds them, kept so that
+    every gate compares its run with them without the CPU's hours. The twin
+    must state a CPU run and give back its own bytes (the sixteen fingerprint
+    texts, one at a time, again in reverse order). Exit 0 when kept, 1 when
+    the twin is not reproducible, 2 when it is not a CPU run, 3 when it could
+    not be asked."""
+    import httpx
 
-    03 Â§3.3 measures it on the same pass as the gate, so this is not a
+    from app import config, embeddings, encoder_use, run_check
+    from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
+    name, codex = col.resolve(a.root, a.collection)
+    if not a.model:
+        print("louise: --model names the encoder's CPU twin (gpu_layers 0, the device "
+              "hidden): a CPU reference is the CPU's answers", file=sys.stderr)
+        return 2
+    roles = ["document"] + (["query"] if a.query_model else [])
+    if a.query_model and codex.space.query.encoder is None:
+        print(f"louise: {name}: --query-model names a query side, and this space has none",
+              file=sys.stderr)
+        return 2
+    try:
+        recipe = _as_candidate(_recipe_for(codex, name), a)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    items = run_check.calibration_items(a.root, name, codex)
+    for role in roles:
+        query = role == "query"
+        try:
+            # the twin leased for the role's whole pass: one call is the 512
+            # items on the CPU, hours, past any lease renewed per batch
+            with encoder_use.held(recipe, query=query, collection=name,
+                                  holder=_lease_holder("hold embedder cpu-reference")):
+                stated = run_check.stated_run(recipe, query=query,
+                                              probe_item=run_check.probe_for(codex, role))
+                if stated.driver != "cpu":
+                    print(f"louise: {role}: the model states a run on {stated.driver!r}, not the "
+                          f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
+                    return 2
+                # A ROLE THIS RUN ALREADY KEPT IS NOT MADE AGAIN (RULE 1: the same
+                # run on the same set gives the same bytes, invariant 12). Before
+                # this, a pass stopped in its query role redid the document role's
+                # 6.7 h on its next start (gutenberg, 2026-11-02)
+                set_id = codex.space.calibration.set
+                if getattr(a, "again", False):
+                    cpu_ref.discard_journal(a.root, name, role, run_id=stated.run_id,
+                                            set_id=set_id)
+                # `refresh` (`hold collection new`): the collection's copy is
+                # written again from the node's store, never trusted as it is
+                done = (None if getattr(a, "again", False) or getattr(a, "refresh", False) else
+                        cpu_ref.kept(a.root, name, role, run_id=stated.run_id,
+                                     set_id=set_id, count=len(items)))
+                if done is not None:
+                    print(f"kept already  {role}  run {stated.run_id[:23]}…  {done}")
+                    continue
+                texts = emb.gate_texts(codex, role, items)
+                # ONE TEXT A REQUEST, each bounded by the space's window: the
+                # collection's `[encoder] batch` is the card's (wikidata's 16
+                # texts of up to 8,191 tokens outlived the card's 300 s on the
+                # CPU, three times, München 2026-11-01), and one text a
+                # request is the CPU's own answer, no batch composition in it
+                cpu = dataclasses.replace(recipe, batch=1)
+                timeout = cpu_ref.request_timeout(recipe.ctx, config.EMBED_CONCURRENCY)
+                embed = run_check.answers(cpu, query=query, name=name, timeout=timeout)
+                one = run_check.answers(cpu, how="one", query=query, name=name,
+                                        timeout=timeout)
+                # THE NODE'S STORE (operator, 2026-11-06): what `hold embedder
+                # calibrate` or another collection of this encoder already
+                # made is taken, never made again; journalled a window at a
+                # time, so a stop costs the window in flight (gutenberg's query
+                # role lost 352 answers, 2026-11-02)
+                instruction = (getattr(recipe, "document_instruction", None) if role == "document"
+                               else getattr(codex.space.query, "instruction", None))
+                store = cpu_ref.node_directory(cpu_ref.node_key(
+                    weights=stated.weights, set_id=set_id, ctx=recipe.ctx,
+                    instruction=instruction, role=role,
+                    cut=getattr(recipe, "cut", "characters")))
+                cpu_ref.adopt_journal(cpu_ref.journal(a.root, name, role, run_id=stated.run_id,
+                                                      set_id=set_id),
+                                      store, run_id=stated.run_id, set_id=set_id)
+                got = cpu_ref.obtain(store, role, set_id=set_id, texts=texts,
+                                     run_id=stated.run_id,
+                                     run={"driver": stated.driver, "engine": stated.engine,
+                                          "weights": stated.weights},
+                                     embed=embed, one=one,
+                                     again=bool(getattr(a, "again", False)), say=print)
+        except (emb.GateDeferred, cpu_ref.Deferred, embeddings.ReceiptDeferred,
+                embeddings.EndpointDeferred, httpx.TransportError) as e:
+            # not now: VeGa away, a receipt expired, the twin busy. The
+            # journal keeps every window already answered; exit 3 reruns
+            print(f"louise: deferred: {role}: {e}; the answers journalled so far are "
+                  f"kept", file=sys.stderr)
+            return 3
+        except cpu_ref.NotReproducible as e:
+            print(f"louise: {e}", file=sys.stderr)
+            return 1
+        path = cpu_ref.write(a.root, name, role, run_id=got.run_id, run=got.run,
+                             set_id=set_id, vectors=got.vectors)
+        print(f"kept  {role}  run {got.run_id[:23]}…  {len(got.vectors)} vectors  {path}  "
+              f"({got.how}; the node's store: {got.path})")
+    return 0
+
+
+def cmd_embedder_benchmark(a) -> int:
+    """`hold embedder benchmark` — the same run, reporting the rate.
+
+    03 §3.3 measures it on the same pass as the gate, so this is not a
     second measurement: it runs the gate and reports the number the
     statement would carry.
     """
@@ -3541,8 +4257,8 @@ def cmd_embedder_benchmark(a) -> int:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
     print(f"{run.tokens_per_s} tokens/s over {512} calibration texts "
-          f"({'compliant' if run.ok else 'NOT COMPLIANT â the rate of a '
-             'non-compliant encoder weights nothing (04 Â§4.5)'})")
+          f"({'compliant' if run.ok else 'NOT COMPLIANT — the rate of a '
+             'non-compliant encoder weights nothing (04 §4.5)'})")
     return 0 if run.ok else 1
 
 
@@ -3563,13 +4279,20 @@ def cmd_embedder_calibrate(a) -> int:
         set_id, texts = calib.load_pairs(a.pairs)
     else:
         set_id, texts = calib.load_set(a.set_id)
-    _print(calib.measure(reference, against, set_id=set_id, texts=texts,
-                         embed=calib.http_embed(a.ctx)))
+    instruction = getattr(a, "document_instruction", None) or None
+    if instruction and getattr(a, "pairs", None):
+        raise CodexError("--document-instruction prefixes a text; a pair space's documents "
+                         "are pairs (09 §9.3)")
+    measured = calib.measure(reference, against, set_id=set_id, texts=texts,
+                             embed=calib.http_embed(a.ctx, document_instruction=instruction,
+                                                    set_id=set_id, cut=a.cut))
+    # the inputs the tolerance was measured on: the recipe's `cut` must be this
+    _print({**measured, "ctx": a.ctx, "cut": a.cut})
     return 0
 
 
 def _gate(a):
-    """Run the gate for a collection, resolving its encoder the way 07 Â§7.8
+    """Run the gate for a collection, resolving its encoder the way 07 §7.8
     resolves one: the collection's own endpoint, and nothing else — there
     is no default encoder (operator, 2026-09-18)."""
     from app import embeddings
@@ -3581,7 +4304,7 @@ def _gate(a):
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. It is written "
-            f"by `hold collection create` (09 Â§9.12) and is a member of every "
+            f"by `hold collection create` (09 §9.12) and is a member of every "
             f"snapshot; without it there is nothing to compare against")
     reference = _read_reference(member, codex)
 
@@ -3598,20 +4321,43 @@ def _gate(a):
         except emb.GateDeferred:
             raise
         except Exception as e:                      # noqa: BLE001
-            # 03 Â§3.1: an unreachable encoder is INCONCLUSIVE, not a
-            # failure â "it produces no attestation and no flag, it is
+            # 03 §3.1: an unreachable encoder is INCONCLUSIVE, not a
+            # failure — "it produces no attestation and no flag, it is
             # reported with its reason, and it is retried".
             raise emb.GateDeferred(
                 f"the encoder for {name} was unreachable or failed: {e}") from e
 
-    return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
+    from app import encoder_use
+    with encoder_use.held(recipe, collection=name, holder=_lease_holder("hold embedder")):
+        return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
+
+
+def _as_candidate(recipe, a):
+    """`--model` / `--query-model`: the gate asks a CANDIDATE model name
+    instead of the one the collection's file names — a model YAML gated
+    before the live one moves to it, so the collection's searches never wait
+    on a run that is still being gated, or that fails. On 2026-10-31
+    gutenberg's YAML moved first and was gated after: for 25 minutes its
+    searches had no vector leg (an untested run answers no query, 03 §3.3),
+    and the run failed — its vectors had cosine 0.12 to the reference.
+
+    The statement is the RUN's, and a run is its engine, not its name (the
+    wrapper's `run_object`: backend, tree, env, options, weights, driver):
+    once the live YAML equals the candidate's but for the name, the run it
+    answers with is the one already stated. A candidate that differs in
+    anything else is another run, and the live one is gated anew."""
+    from dataclasses import replace
+    if not (a.model or a.query_model):
+        return recipe
+    return replace(recipe, model=a.model or recipe.model,
+                   query_model=a.query_model or recipe.query_model)
 
 
 def _read_reference(member, codex):
     from safetensors.numpy import load_file
     tensors = load_file(str(member))
     if "vectors" not in tensors:
-        raise CodexError(f"{member.name}: no `vectors` tensor (09 Â§9.12)")
+        raise CodexError(f"{member.name}: no `vectors` tensor (09 §9.12)")
     return tensors["vectors"].tolist()
 
 
@@ -3648,6 +4394,132 @@ def _recipe_for(codex, name):
     recipe = collections_mod.recipe_for(collection)
     return replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
                    dim=int(codex.space.dim))
+
+
+def _card_types(a):
+    """This node's card types (the GPU probe's /gpu), or the one `--card`
+    names as `driver:vendor:device`."""
+    from app.rage import settings as rec
+    from app.hold import rage_settings as es
+    if getattr(a, "card", None):
+        parts = a.card.split(":")
+        if len(parts) != 3:
+            raise ValueError("--card is driver:vendor:device, e.g. xe:8086:e223")
+        return (es.Card(*[x.strip().lower().removeprefix("0x") for x in parts]),)
+    return rec.node_cards()
+
+
+def cmd_rage_settings_show(a) -> int:
+    """`hold rage-settings show <collection>` (09 §9.19): every signer's
+    recommended RAGE settings in the collection's SHARD, which one this node
+    takes for its card, and what its collection file states — the file's
+    own keys win. Exit 0; 1 when a file was set aside."""
+    from app import collections as collections_mod
+    from app.rage import settings as rec
+    from app.hold import rage_settings as es
+    name, codex = col.resolve(a.root, a.collection)
+    shard = col.shard_dir_of(a.root, name)
+    bodies, refused = es.read_all(shard, collection_id=codex.collection_id,
+                                  space_id=codex.space_id)
+    for body in bodies:
+        print(f"signed by {body['key']} at {body['time']}")
+        for e in body["entries"]:
+            c = e["card"]
+            print(f"  {c['driver']} {c['vendor_id']}:{c['device_id']}  "
+                  + ", ".join(f"{k} {v}" for k, v in sorted(e["settings"].items()))
+                  + f"  measured {e['measured']}  engine {e['engine_id'][:23]}…")
+    for why in refused:
+        print(f"set aside: {why}")
+    if not bodies and not refused:
+        print(f"{name}: no recommended RAGE settings in {shard / es.DIR}")
+    try:
+        cards = _card_types(a)
+    except ValueError as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    if not cards:
+        print("this node's card type is not known (GPU_PROBE_URL unset or silent; "
+              "--card names one): no recommendation applies")
+        return 1 if refused else 0
+    from app import run_check
+    chosen = es.recommend(bodies, cards, own=run_check.signer())
+    collection = collections_mod.by_name(name)
+    embed = getattr(collection, "embed", None)
+    stated = sorted(getattr(embed, "stated", ())) if embed is not None else []
+    print("this node's card: " + ", ".join(f"{c.driver} {c.vendor_id}:{c.device_id}"
+                                           for c in cards))
+    if chosen is None:
+        print("no entry for it: the collection file's settings apply")
+    else:
+        print(f"recommended for it by {chosen.signer}: batch {chosen.batch}, "
+              f"concurrency {chosen.concurrency}")
+    if embed is not None:
+        print(f"the collection file states: {', '.join(stated) or 'neither'} "
+              f"(batch {embed.batch}, concurrency {embed.concurrency}); what it leaves "
+              f"unset takes the recommendation")
+        if not getattr(a, "card", None):
+            used = rec.applied(collection, embed)
+            print(f"in effect here: batch {used.batch}, concurrency {used.concurrency}")
+    return 1 if refused else 0
+
+
+def cmd_rage_settings_record(a) -> int:
+    """`hold rage-settings record <collection> --batch N --concurrency M
+    [--busy F --chunks-per-s F --window-s S] [--card driver:vendor:device]`
+    (09 §9.19): sign this node's measured settings for its card type into
+    the collection's SHARD, replacing its own earlier entry for that card.
+    The `engine_id` recorded is the encoder's engine (09 §9.3) in the run
+    that answers now, and that run must be one this node has validated for
+    the space: a setting is recorded only from a gated run. Exit 0 recorded; 2 a usage error or no validated run; 3 the
+    encoder or the probe could not be asked."""
+    from app import run_check
+    from app.bundles import keys as node_keys
+    from app.hold import embedder as emb, rage_settings as es, runs as runs_mod
+    name, codex = col.resolve(a.root, a.collection)
+    if a.batch is None and a.concurrency is None:
+        print("louise: name --batch, --concurrency or both: what is recommended",
+              file=sys.stderr)
+        return 2
+    try:
+        cards = _card_types(a)
+    except ValueError as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    if len(cards) != 1:
+        print("louise: " + ("this node's card type is not known (GPU_PROBE_URL unset or "
+                            "silent)" if not cards else "this node has several card types")
+              + ": --card driver:vendor:device names the one measured", file=sys.stderr)
+        return 3 if not cards else 2
+    try:
+        recipe = _recipe_for(codex, name)
+        stated = run_check.stated_run(recipe, probe_item=run_check.probe_for(codex))
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    except Exception as e:   # noqa: BLE001 — the encoder away: nothing recorded
+        print(f"louise: the encoder could not be asked: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 3
+    kept = runs_mod.statements(a.root, name, codex, "document", signer=run_check.signer())
+    if stated.run_id not in kept:
+        print(f"louise: {name}: run {stated.run_id[:23]}… is not validated on this node "
+              f"(`hold embedder check {name}`): settings are recorded from a gated run",
+              file=sys.stderr)
+        return 2
+    try:
+        now = _utc_now()
+        entry = es.entry(cards[0], engine_id=es.engine_id_of(stated.engine),
+                         batch=a.batch, concurrency=a.concurrency, busy=a.busy,
+                         chunks_per_s=a.chunks_per_s, window_s=a.window_s, time=now)
+        key = node_keys.load_signing_key()
+        path = es.record(col.shard_dir_of(a.root, name), key,
+                         collection_id=codex.collection_id, space_id=codex.space_id,
+                         new=entry, time=now)
+    except (CodexError, node_keys.NodeKeyError) as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    print(f"{name}: recorded in {path}")
+    return 0
 
 
 def cmd_embedder_rebaseline(a) -> int:
@@ -3698,7 +4570,7 @@ def cmd_embedder_rebaseline(a) -> int:
 
 
 def _write_statement(a, run, codex):
-    """`--accept`. 09 Â§9.12: the statement is "kept in `state/`"."""
+    """`--accept`. 09 §9.12: the statement is "kept in `state/`"."""
     from app.bundles import keys as node_keys
     from app.hold import collection as col, embedder as emb
 
@@ -3842,7 +4714,9 @@ def cmd_index_show(a) -> int:
         if validity.declared(local) is not None:
             # the first check of a versioned collection's table (2026-10-13:
             # a table written without them is withheld from every as-of search)
-            names = embeddings._conn(local).open_table(embeddings.TABLE).schema.names
+            from app import vector_parts
+            first = vector_parts.views(local)[:1] or [local]
+            names = embeddings._conn(first[0]).open_table(embeddings.TABLE).schema.names
             out["validity_columns"] = set(embeddings.VALIDITY_COLUMNS) <= set(names)
     _print(out)
     return 0
@@ -3861,9 +4735,29 @@ def cmd_config_apply(a) -> int:
     """`hold config apply [<collection>]` (07 §7.8): the files applied now,
     as the node applies them at start — a runtime embed-mode override gives
     way to the file's value. Exit 1 when a named file is refused (an
-    `[encoder]` it does not name: what `embed materialize` reported)."""
-    from app import effective_config
+    `[encoder]` it does not name: what `embed materialize` reported).
+
+    `--set KEY=VALUE …` (07 §7.8 "Pickup", 2026-10-25) writes the values into
+    the collection's file first, through its one writer — the Library's
+    (app/collection_file.py) — then applies it. A key that is not a value of
+    the file, a value the node would refuse, or `--set` with no collection
+    is exit 2 with nothing written, the keys named. Desired state goes into
+    the file only (invariant 10): the state database changes only by the
+    apply, as at start."""
+    from app import collection_file, effective_config
+    written = None
+    if getattr(a, "set", None):
+        if not a.collection:
+            raise CodexError("--set writes one collection's file: `hold config apply <collection> "
+                             f"--set KEY=VALUE`; the keys are {collection_file.accepted()} (07 §7.8)")
+        try:
+            written = collection_file.set_values(a.collection,
+                                                 collection_file.parse_assignments(a.set))
+        except collection_file.SetRefused as e:
+            raise CodexError(str(e)) from None
     out = effective_config.apply(a.collection)
+    if written is not None:
+        out = {"written": written, **out}
     _print(out)
     return 1 if out["refused"] else 0
 
@@ -3880,15 +4774,42 @@ def _node_collections(name: str | None) -> list:
 
 
 def cmd_records_fetch(a) -> int:
-    """`hold records fetch <collection> [--profile P] [--dry-run]` (07 §7.3):
-    the acquisition spec run for a profile — the file's, unless one is
-    named (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
+    """`hold records fetch <collection> [--slice … | --profile P] [--snapshot
+    ID] [--dry-run]` (07 §7.3): the acquisition spec run for slices or a
+    profile — the file's, unless one is named — to a snapshot's cutoff when
+    one is named; the slices a complete fetch took recorded in the file
+    (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
     from app import db
+    from app.acquire.specs import ACQUIRE_REGISTRY
     from app.hold import records_fetch
     collection = _node_collections(a.collection)[0]
-    profile = a.profile or collection.profile or "demo"
+    if getattr(collection, "source", "origin") == "shard":
+        # the loader's own rule (acquire_enabled with source = "shard"):
+        # the origin's files would land in the SHARD this copy reads
+        raise CodexError(f"{collection.name} is held from peers (source = \"shard\", 07 §7.8): "
+                         f"its corpus is the SHARD, and `share fetch {collection.name} --slice …` "
+                         f"takes more of it, not the origin")
+    if a.slice is None and a.snapshot is None:
+        profile = a.profile or collection.profile or "demo"
+        # a NAMED profile is recorded in the file as the slices it spells
+        record, said = records_fetch.record_for_profile(
+            collection, ACQUIRE_REGISTRY.get(collection.plugin), a.profile)
+        for note in said:
+            print(f"louise: {collection.name}: {note}", file=sys.stderr)
+        kw = {"record": record} if record is not None else {}
+        with _closing(db.connect(collection)) as con:
+            return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run, **kw)
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    if spec is None:
+        raise CodexError(f"{collection.name}: no acquisition spec is registered for "
+                         f"plugin {collection.plugin!r}")
+    sel = records_fetch.select(collection, spec, slices=a.slice, profile=a.profile,
+                               snapshot_id=a.snapshot)
+    for note in sel.notes:
+        print(f"louise: {collection.name}: {note}", file=sys.stderr)
     with _closing(db.connect(collection)) as con:
-        return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+        return records_fetch.fetch(collection, con, sel.profile, dry_run=a.dry_run,
+                                   until=sel.until, record=sel.record)
 
 
 def cmd_node_health(a) -> int:
@@ -4034,10 +4955,18 @@ def cmd_user(a) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
+    top = argparse.ArgumentParser(prog="louise", description="Louise — knowledge, kept.")
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node|user")
     node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
     nverbs = node.add_subparsers(dest="verb", required=True)
+    p = nverbs.add_parser("start", help="the daemon: the worker's rounds and the web interface, until stopped")
+    p.add_argument("--acquire-only", action="store_true", dest="acquire_only")
+    p.add_argument("--seed-only", action="store_true", dest="seed_only")
+    p.add_argument("--only", choices=("worker", "web"), default=None,
+                   help="run one of the two (a deployment with a container each)")
+    p.set_defaults(fn=cmd_node_start)
+    p = nverbs.add_parser("stop", help="the worker finishes its current units, commits and exits 0")
+    p.set_defaults(fn=cmd_node_stop)
     p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
                                        "until resume; or ONE collection: its write lock released at "
                                        "the end of the current unit, nothing run for it until resume")
@@ -4071,12 +5000,26 @@ def build_parser() -> argparse.ArgumentParser:
                                          "pointer (03 §3.7; 09 §9.11)")
     root_arg(p); p.add_argument("collection"); p.add_argument("snapshot")
     p.set_defaults(fn=cmd_collection_certify)
+    p = verbs.add_parser("new", help="a new collection, one workflow: calibrate, tolerance, create, CPU "
+                                     "reference, gate, every input from the recipe (embedding stays off)")
+    root_arg(p)
+    p.add_argument("plugin")
+    p.add_argument("--recipe", required=True, metavar="FILE")
+    p.add_argument("--name", required=True, help="the collection's local name: the one thing only the "
+                                                  "operator knows (RULE 2)")
+    p.add_argument("--encoder", required=True, metavar="URL", help="the endpoint of the recipe's encoder")
+    p.add_argument("--cpu-model", required=True, metavar="NAME",
+                   help="its CPU twin (gpu_layers 0): the tolerance and the CPU reference")
+    p.add_argument("--platform-image", default=None)
+    _encoder_key_args(p)
+    p.set_defaults(fn=cmd_collection_new)
+
     p = verbs.add_parser("create", help="write a Codex from a plugin and a recipe; print its id")
     root_arg(p)
     p.add_argument("plugin", nargs="?", default=None,
                    help="the plugin the collection is of; omit when the file is a whole Codex")
     p.add_argument("--recipe", default=None,
-                   help="TOML with every Codex field the plugin does not default (06 Â§6.6); "
+                   help="TOML with every Codex field the plugin does not default (06 §6.6); "
                         "`create deposit` takes none")
     p.add_argument("--name", default=None,
                    help="the collection's name; `create deposit` requires it (02 §2.9)")
@@ -4137,7 +5080,6 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.add_argument("--layers", help="JSON file with the layers list")
     p.add_argument("--update", help="JSON file: cadence, day, grace_days")
     p.add_argument("--work", help="JSON file: tokens, per")
@@ -4155,17 +5097,20 @@ def build_parser() -> argparse.ArgumentParser:
                         "own in one (09 §9.12)")
     p.add_argument("--name", default=None, help="her local name (default: the plugin's, 07 §7.8)")
     p.add_argument("--accept", action="store_true", required=True,
-                   help="creating a sister is an acceptance (02 Â§2.7)")
+                   help="creating a sister is an acceptance (02 §2.7)")
     p.set_defaults(fn=cmd_derive)
 
     p = verbs.add_parser("continue", help="a daughter: a new toolchain, the same space")
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--platform-image", required=True)
-    p.add_argument("--continues-through", required=True,
-                   help="the mother's LAST snapshot â the boundary, named from "
+    p.add_argument("--through", "--continues-through", dest="continues_through", required=True,
+                   help="the mother's LAST snapshot — the boundary, named from "
                         "the side that already exists")
     p.add_argument("--origin", help="JSON file with the new origin block")
     p.add_argument("--origin-reachable-until")
+    p.add_argument("--reslice", action="store_true",
+                   help="the slicing a creation would get now (wikidata: the family map of the "
+                        "code's families) — every record and vector reused (A1g)")
     p.set_defaults(fn=cmd_continue)
 
     p = verbs.add_parser("replace", help="a corrective sister, with its reproducible defect")
@@ -4174,7 +5119,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON file: check, toolchain, witnesses, expected, observed, rationale")
     p.add_argument("--platform-image")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.set_defaults(fn=cmd_replace)
 
     p = verbs.add_parser("list", help="collections held, with their lineage")
@@ -4229,7 +5173,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="accept the web-sources disclaimer, once for the node (04 §4.4)")
     p.add_argument("--origin-unchecked", action="store_true", dest="origin_unchecked",
                    help="record the decision to use a copy whose origin could not "
-                        "be checked, every other test having passed (03 §3.6)")
+                        "be checked — no longer needed since 2026-11-01: the origin "
+                        "check is shown and never waited for (03 §3.6)")
     p.set_defaults(fn=cmd_collection_ack)
 
     src_ = nouns.add_parser("source", help="a deposit collection's URL sources (06 §6.7)")
@@ -4301,15 +5246,28 @@ def build_parser() -> argparse.ArgumentParser:
                        help="the cutoff to build to")
         p.add_argument("--shard-records", type=int, dest="records_per_shard",
                        help="override the Codex's slicing.shard_records (tests)")
+        p.add_argument("--records-from", dest="records_from", metavar="COLLECTION",
+                       help="take the record lines of this held collection's latest snapshot "
+                            "instead of parsing — a daughter or re-creation that changes only "
+                            "the slicing (RULE 1)")
+        p.add_argument("--records-from-discarded", dest="records_from_discarded", metavar="SNAPSHOT",
+                       help="take the record lines of this collection's own discarded snapshot "
+                            "(`hold snapshot discard`) instead of parsing them; cut afresh (RULE 1)")
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
-    p = rverbs.add_parser("fetch", help="run the acquisition spec for a profile (06 §6.2): "
+    p = rverbs.add_parser("fetch", help="run the acquisition spec for slices or a profile (06 §6.2): "
                                         "the origin's files, on the node's budget")
     p.add_argument("collection")
-    p.add_argument("--profile", default=None,
-                   help="a profile the acquisition spec declares (default: the "
-                        "collection file's)")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--slice", nargs="+", default=None, metavar="SLICE",
+                       help="the slices to fetch, as the SHARD's paths name them (lang=it), or "
+                            "`all`; what a complete fetch took is recorded in the collection's file")
+    which.add_argument("--profile", default=None,
+                       help="a profile the acquisition spec declares (default: the "
+                            "collection file's)")
+    p.add_argument("--snapshot", default=None, metavar="ID",
+                   help="run the spec to this snapshot's cutoff (2026-09), by the origin's cutoff rule")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="print the plan — files, bytes, the licence state — and fetch nothing")
     p.set_defaults(fn=cmd_records_fetch)
@@ -4317,6 +5275,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = rverbs.add_parser("validation", help="write validation.json from the Codex")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_records_validation)
+
+    p = rverbs.add_parser("relocate", help="every record's origin written again from the manifest by the "
+                                           "build's own function; the parts that change rewritten by the "
+                                           "build's writer (RULE 1; refused while a snapshot lists them)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--corpus", required=True, metavar="DIR", help="the origin base the build used")
+    p.add_argument("--workers", type=int, default=None, help="parts in parallel (default: the cpu quota)")
+    p.add_argument("--dry-run", action="store_true", help="count what would change; write nothing")
+    p.set_defaults(fn=cmd_records_relocate)
 
     p = rverbs.add_parser("seal", help="the certifier captures the seals' evidence into seals/<snapshot>.json "
                                        "(03 §3.7; 09 §9.15), each seal validated offline first")
@@ -4368,6 +5335,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_records_show)
 
     # ---- hold config ----------------------------------------------------
+    iss = nouns.add_parser("issues", help="the origin's inconsistencies the parses met (06 §6.1)")
+    isverbs = iss.add_subparsers(dest="verb", required=True)
+    p = isverbs.add_parser("list", help="each document's flagged origin inconsistencies, by uid, "
+                                        "with the counts per code")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--code", default=None, help="only this code's documents")
+    p.add_argument("--limit", type=int, default=None, help="at most N documents' issues")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_issues_list)
+
     cfg = nouns.add_parser("config", help="the effective configuration, each value with its tier (07 §7.8)")
     cverbs = cfg.add_subparsers(dest="verb", required=True)
     p = cverbs.add_parser("show", help="each collection's effective values and the tier each comes from")
@@ -4376,6 +5353,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = cverbs.add_parser("apply", help="apply the files now, as the node does at start: a runtime "
                                         "override gives way to the file's value")
     p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--set", action="append", default=None, metavar="KEY=VALUE", dest="set",
+                   help="write one value into the collection's file first, then apply it; "
+                        "repeatable (embed=off, share=true, encoder.url=…; 07 §7.8)")
     p.set_defaults(fn=cmd_config_apply)
 
     # ---- hold snapshot --------------------------------------------------
@@ -4404,6 +5384,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sverbs.add_parser("list", help="the chain this peer holds")
     args_collection(p); p.set_defaults(fn=cmd_snapshot_list)
 
+    p = sverbs.add_parser("discard", help="move aside the latest snapshot, which nothing published "
+                                          "names, with its parts; its derived indexes go (RULE 1)")
+    args_collection(p); p.add_argument("snapshot_id", metavar="snapshot")
+    p.add_argument("--yes", action="store_true", help="discard; without it, say what would move")
+    p.set_defaults(fn=cmd_snapshot_discard)
+
     p = sverbs.add_parser("delta", help="what changed between two held snapshots of the chain")
     args_collection(p)
     p.add_argument("from_snapshot", metavar="from"); p.add_argument("to_snapshot", metavar="to")
@@ -4427,15 +5413,52 @@ def build_parser() -> argparse.ArgumentParser:
                                        "the book_id index")
     args_collection(p); p.set_defaults(fn=cmd_index_show)
 
+    # ---- hold rage-settings --------------------------------------------
+    esn = nouns.add_parser("rage-settings",
+                           help="RAGE's settings (texts a request, requests in flight) "
+                                "recommended per card type, signed in the SHARD "
+                                "(09 §9.19; never binding)")
+    esverbs = esn.add_subparsers(dest="verb", required=True)
+    p = esverbs.add_parser("show", help="every signer's entries, and what applies here")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
+                   help="a card type instead of this node's (e.g. xe:8086:e223)")
+    p.set_defaults(fn=cmd_rage_settings_show)
+    p = esverbs.add_parser("record", help="sign this node's measured settings for its card")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--batch", type=int, help="texts a request")
+    p.add_argument("--concurrency", type=int, help="requests in flight")
+    p.add_argument("--busy", help="the card's compute engine busy share, a decimal (0.82)")
+    p.add_argument("--chunks-per-s", dest="chunks_per_s", help="chunks a second, a decimal")
+    p.add_argument("--window-s", dest="window_s", type=int, help="the window measured, seconds")
+    p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
+                   help="the card type measured, where the node has several")
+    p.set_defaults(fn=cmd_rage_settings_record)
+
     # ---- hold embedder --------------------------------------------------
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
     everbs = embd.add_subparsers(dest="verb", required=True)
 
-    p = everbs.add_parser("check", help="the calibration gate (03 Â§3.3)")
+    p = everbs.add_parser("check", help="the calibration gate (03 §3.3)")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--accept", action="store_true",
-                   help="record a passing run as this peer's statement (09 Â§9.12)")
+                   help="record a passing run as this peer's statement (09 §9.12)")
+    p.add_argument("--model", metavar="NAME",
+                   help="gate this model name instead of the file's `embed_model`: a "
+                        "candidate YAML, before the live one moves to it")
+    p.add_argument("--query-model", metavar="NAME",
+                   help="the same for the query side (`query_model`)")
     p.set_defaults(fn=cmd_embedder_check)
+
+    p = everbs.add_parser("cpu-reference",
+                          help="keep the calibration set as the encoder's CPU twin embeds it "
+                               "(every gate compares its run with it)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--model", metavar="NAME", help="the CPU twin's model name")
+    p.add_argument("--query-model", metavar="NAME", help="the query side's CPU twin")
+    p.add_argument("--again", action="store_true",
+                   help="make a role again even where this run already kept it")
+    p.set_defaults(fn=cmd_embedder_cpu_reference)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
     root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_embedder_benchmark)
@@ -4456,6 +5479,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a PAIR space: its calibration set, the pairs "
                         "tools/build_pair_calibration_set.py drew, embedded as pairs "
                         "(09 §9.12); not with --set")
+    p.add_argument("--document-instruction", default=None, metavar="TEXT",
+                   help="the space's space.document.instruction (09 §9.3, Codex version 11), "
+                        "prepended to every text as the documents will be: Nemotron's "
+                        "\"passage: \"; not with --pairs")
+    p.add_argument("--cut", required=True, choices=("characters", "tokens"),
+                   help="how the space cuts an input longer than --ctx: its recipe's `cut`. "
+                        "The tolerance and the CPU reference are measured on the inputs the "
+                        "gate sends; stated, never defaulted (2026-11-06: a token space "
+                        "calibrated by characters failed its gate at 0.974831)")
     p.set_defaults(fn=cmd_embedder_calibrate)
 
     p = everbs.add_parser("run", help="the run an endpoint states now — engine, weights, driver, "
@@ -4686,7 +5718,9 @@ def build_parser() -> argparse.ArgumentParser:
     dverbs = dev.add_subparsers(dest="verb", required=True)
     for verb, what in (("schedule-report", "what the worker spent its rounds on (tools/sched_report.py)"),
                        ("embedder-profile", "the concurrency an endpoint sustains (tools/profile_embed.py)"),
-                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)")):
+                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)"),
+                       ("wikidata-classes", "why the family map gives a class its family, and what candidate "
+                                            "roots would move (tools/wikidata_classes.py)")):
         p = dverbs.add_parser(verb, help=what, add_help=False)
         p.add_argument("rest", nargs=argparse.REMAINDER, help="the instrument's own flags")
         p.set_defaults(fn=cmd_dev_tool)
@@ -4694,6 +5728,11 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "and linked, as a new collection's is; writes (07 §7.8)")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_dev_adopt_bundles)
+    p = dverbs.add_parser("embed-select", help="what the collection's embed selection chooses (wikipedia: "
+                                                "smart); read-only unless --apply")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--apply", action="store_true", help="write the marks now, under the collection's lock")
+    p.set_defaults(fn=cmd_dev_embed_select)
     p = dverbs.add_parser("mark-embedded", help="documents whose every chunk has a vector here and whose "
                                                  "manifest row says embed_done = 0, marked (writes)")
     root_arg(p); p.add_argument("collection")
@@ -4728,11 +5767,52 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_drop_rows)
+    p = dverbs.add_parser("wikidata-regroup", help="a wikidata collection's pack rewritten with small row "
+                                                   "groups, file by file, lines unchanged (resumable)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--row-group", type=int, default=64)
+    p.add_argument("--workers", type=int, default=0, help="processes; default the whole quota")
+    p.set_defaults(fn=cmd_dev_wikidata_regroup)
+    p = dverbs.add_parser("reindex", help="the documents a file lists queued for the text-index stage "
+                                          "again (fts_done = 0), embedding untouched; writes only with "
+                                          "--yes (the collection's lock)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--ids", required=True, metavar="FILE", help="one uid a line")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_dev_reindex)
+    p = dverbs.add_parser("index-drift", help="the documents whose manifest counts, hashes or text index "
+                                              "disagree with the latest held snapshot's records; read-only, "
+                                              "exit 1 when any is named")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--shards", metavar="SLICE/NNNNN,…", help="these parts alone (default: every part)")
+    p.add_argument("--cut-all", action="store_true",
+                   help="cut every record, not only the parts whose manifest total is not the snapshot's")
+    p.add_argument("--sample", default="0.05", metavar="F",
+                   help="the fraction of parts whose text index is compared chunk by chunk with the "
+                        "records (03 §3.2's seeded sample); 0 for none")
+    p.add_argument("--seed", help="32 bytes as hex; the default is fresh OS entropy, printed in the report")
+    p.add_argument("--snapshot", help="which snapshot (default: the latest held)")
+    p.add_argument("--ids-out", metavar="FILE",
+                   help="the uids `dev reindex --ids` repairs, one a line")
+    p.set_defaults(fn=cmd_dev_index_drift)
     p = dverbs.add_parser("unindexable", help="a document the plugin now refuses: out of every index "
                                               "and its error written at once; writes only with --yes")
     root_arg(p); p.add_argument("collection"); p.add_argument("uid")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_unindexable)
+    p = dverbs.add_parser("rewrite-vectors", help="the vector table copied into one with Lance's stable "
+                                                  "row ids, indexed, verified and swapped in; the plan "
+                                                  "without --yes (a paused collection)")
+    p.add_argument("collection")
+    p.add_argument("--yes", action="store_true", help="do it")
+    p.add_argument("--restart", action="store_true", help="drop a copy in progress and start again")
+    p.add_argument("--drop-old", action="store_true", dest="drop_old",
+                   help="remove the table the swap set aside, once every process reads the new one")
+    p.add_argument("--group", type=int, default=8, help="source fragments per append (default 8)")
+    p.set_defaults(fn=cmd_dev_rewrite_vectors)
     p = dverbs.add_parser("carry", help="a collection's manifest, text index and vector table into a new "
                                         "collection with the same records (amendment A1); writes "
                                         "only with --yes (both collections' locks)")
@@ -4750,6 +5830,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="into a space that differs only by cutting by tokens (A1e): then drop "
                         "the rows the character cut shortened, not an archive's, and embed "
                         "their documents again")
+    p.add_argument("--resliced", action="store_true",
+                   help="into a collection that differs only by its slicing, its parts cut by "
+                        "content (A1g: a family map added): every vector carried; then "
+                        "`hold records build <to> --records-from <from>`")
+    p.add_argument("--unembedded", action="store_true",
+                   help="from a collection that holds NO vector into one with the same records, "
+                        "layers and cleaning, the encoder side of its space alone differing (A1h): the manifest and text index move, no vector table; "
+                        "then `hold records build <to> --records-from <from>`")
     p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
                    help="after a same-space carry made before provenance was kept: the "
                         "source's coverage rows copied unkeyed and its bundle tree linked "
@@ -4780,7 +5868,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
     shverbs = share.add_subparsers(dest="verb", required=True)
-    p = shverbs.add_parser("collection", help="serve what you hold — and announce it; --stop to stop")
+    p = shverbs.add_parser("collection", aliases=["serve"],
+                           help="serve what you hold — and announce it; --stop to stop")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--slices", default=None)
     p.add_argument("--kinds", default=None)
@@ -4855,7 +5944,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--translate", action="store_true")
     p.add_argument("--all-languages", action="store_true")
     p.add_argument("--filter", action="append", metavar="FACET=VALUE",
-                   help="restrict the legs to a facet value (05 §5.2); FACET=!VALUE excludes")
+                   help="restrict the legs to a facet value (05 §5.2); a range facet takes FROM..TO, "
+                        "either end omitted for open; FACET=!VALUE excludes")
     p.set_defaults(fn=cmd_ask_search)
     p = akverbs.add_parser("chat", help="the chat model with the three tools of 05 §5.4; needs CHAT_URL")
     p.add_argument("question", nargs="+")
@@ -4883,8 +5973,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
 
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
     if hasattr(signal, "SIGUSR1"):
         # a command that cannot say where it is: SIGUSR1 prints every
         # thread's stack to stderr and goes on (a SIGTERM'd contribute spent
@@ -4932,6 +6020,21 @@ def main(argv=None) -> int:
     except FileNotFoundError as e:
         print(f"louise: {e}", file=sys.stderr)
         return 2
+    except ConnectionError as e:
+        # An encoder or model ENDPOINT's answer (app/embeddings.py
+        # EndpointDeferred is a ConnectionError, as is an unreachable host):
+        # never the command's crash. Refused (2) where waiting cannot change
+        # it — the platform states no run, or the endpoint is the wrong one —
+        # deferred (3) otherwise, so `deploy/supervise-pass.sh` asks again
+        # only what may heal (07 §7.7; München, 2026-11-02: a refused load
+        # exited 1 and was retried every minute).
+        from app.embeddings import EndpointMisconfigured, EndpointRunRefused
+        from app.model_load import LoadRefused
+        if isinstance(e, (EndpointRunRefused, EndpointMisconfigured, LoadRefused)):
+            print(f"louise: refused: {e}", file=sys.stderr)
+            return 2
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
     except _HTTPException as e:
         # the ask surface (05) is one service under the CLI and the API, and
         # its refusals are HTTP ones — a withheld collection named is 403,
@@ -4954,5 +6057,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # `| head` is not an error, and `process_exit.run` says so. SIGPIPE is
+    # NOT set back to its default for it (Python's own "Note on SIGPIPE"):
+    # a pool child the kernel killed widowed the pipe the parent was feeding
+    # it, and the records build died of SIGPIPE (exit 141) four seconds
+    # later, before the pool could take its parts again (München,
+    # 2026-10-30; tests/test_process_exit.py)
     from app import process_exit
     process_exit.run(main)

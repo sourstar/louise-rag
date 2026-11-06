@@ -1,5 +1,5 @@
 {% if not fragment %}{% extends "base.html" %}{% endif %}
-{% block title %}{{ doc.header.title }} — louise-rag{% endblock %}
+{% block title %}{{ doc.header.title }} — Project Louise{% endblock %}
 {% block content %}
 {# The document behind a hit (STATUS 5j). Rendered twice from one file:
    standalone (a tab of its own) and as the inner HTML of the Ask page's
@@ -33,6 +33,8 @@
       {% for f in ch.plates %}
       {% if f.kind == 'img' %}{% set src = '/api/ask/figure?' ~ ({'collection': collection, 'uid': doc.header.uid, 'hash': f.hash}|urlencode) %}
       <figure class="plate"><a href="{{ src }}" target="_blank" rel="noopener" title="open the plate full size"><img src="{{ src }}" loading="lazy" alt="{{ f.caption or 'plate' }}"></a>{% if f.caption %}<figcaption dir="auto">{{ f.caption }}</figcaption>{% endif %}</figure>
+      {% elif f.kind == 'download' %}{% set dl = '/api/ask/figure?' ~ ({'collection': collection, 'uid': doc.header.uid, 'hash': f.hash, 'download': 1}|urlencode) %}
+      <a class="badge plate-download" href="{{ dl }}" download rel="noopener" title="{{ f.why }} — stored and shared, offered as a file">🖼 {{ f.caption or 'illustration' }} — not displayable ({{ f.media_type or 'unknown type' }}, {{ f.size }}) — download</a>
       {% elif f.kind == 'link' %}
       <a class="badge lapis plate-link" href="{{ f.href }}" target="_blank" rel="noopener" title="{{ f.why }} — the origin shows it">🖼 {{ f.caption or 'illustration' }} — at the source ↗</a>
       {% else %}
@@ -52,7 +54,7 @@
   .reader-body .figures{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 12px}
   .reader-body .plate{margin:0;max-width:240px}
   .reader-body .plate img{display:block;max-width:240px;max-height:240px;border-radius:4px;background:#fff}
-  .reader-body .plate figcaption{font-size:11px;color:#9fb0bc;margin-top:2px}
+  .reader-body .plate figcaption{font-size:11px;color:var(--muted);margin-top:2px}
 </style>
 <script>
 const READER_HL={{ highlights|tojson }};

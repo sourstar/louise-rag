@@ -217,6 +217,23 @@ def test_a_plate_whose_bytes_moved_FAILS(plates_shard):
     assert out.detail["failed"]
 
 
+def test_a_record_naming_more_than_the_cap_FAILS(plates_shard, monkeypatch):
+    """08 §8.7: at most MAX_PER_RECORD figures per record. The fixture's
+    records name one or two; a cap of 1 puts one over it."""
+    root, snapshot, codex = plates_shard
+    monkeypatch.setattr(fig, "MAX_PER_RECORD", 1)
+    out = chk.check_figures(_ctx(root, codex, snapshot))
+    assert out.result == chk.FAIL, out.why
+    assert any("08 §8.7" in f for f in out.detail["failed"])
+
+
+def test_the_build_refuses_a_record_over_the_cap():
+    from app.pack import build
+    build._refuse_too_many_figures({"uid": "x:1", "figures": [{}] * fig.MAX_PER_RECORD})
+    with pytest.raises(ValueError, match="08 §8.7"):
+        build._refuse_too_many_figures({"uid": "x:1", "figures": [{}] * (fig.MAX_PER_RECORD + 1)})
+
+
 def test_a_record_line_1_collection_has_nothing_to_check(plates_shard):
     from dataclasses import replace
     root, snapshot, codex = plates_shard

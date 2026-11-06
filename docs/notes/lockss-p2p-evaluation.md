@@ -1,5 +1,8 @@
 # LOCKSS as a reference protocol for the peer layer — evaluation
 
+> **Superseded** (2026-10-25, handover) by `docs/03-checking.md` and `docs/04-sharing.md`. Kept as the evaluation that shaped them.
+
+
 Requested 2026-08-19; written 2026-08-20. Concerns architecture-v2 §5 (P2P
 exchange), §6 (verification ladder) and §9/§8 (mutable sources). **Nothing
 in this document has been implemented** — it is an assessment, and §5's

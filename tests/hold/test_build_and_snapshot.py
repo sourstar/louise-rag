@@ -158,6 +158,61 @@ def test_the_first_snapshot_marks_every_record_added(
     assert snap.delta.changed == () and snap.delta.tombstoned == ()
 
 
+def test_a_missing_member_is_refused_before_a_record_is_read(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """wikipedia-v8 (2026-10-28): 43 minutes reading a 102 GB SHARD, then
+    refused for a validation.json nobody had written. The members are
+    checked first."""
+    root = _collection(tmp_path)
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=2)
+    from app.pack import records as pack_records
+    monkeypatch.setattr(pack_records, "iter_records", lambda p: (_ for _ in ()).throw(
+        AssertionError("a record was read before the members were checked")))
+    with pytest.raises(CodexError, match="validation.json is missing.*hold records validation"):
+        sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+
+
+def test_a_snapshot_file_is_written_whole_or_not_at_all(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """A kill while the file was written left a truncated snapshot, and the
+    re-run was refused as two snapshots under one id. Written beside and
+    renamed: a failed write leaves no snapshot, and the re-run creates it."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    out = root / "gutenberg" / "shard" / shard_mod.snapshot_path("2026-08")
+    real = Path.write_bytes
+
+    def dies(self, data):
+        real(self, data[: len(data) // 2])
+        raise OSError("killed mid-write")
+    monkeypatch.setattr(Path, "write_bytes", dies)
+    with pytest.raises(OSError):
+        sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    monkeypatch.undo()
+    assert not out.exists(), "no truncated snapshot under the id"
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    assert out.read_bytes() == snap.canonical()
+
+
+def test_a_first_snapshot_reads_uids_only_and_writes_the_same_delta(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """wikipedia-v8 (2026-10-28): 74.8 M records, and the uid → content_hash
+    map of every one of them did not fit beside the node's running work. A
+    first snapshot's delta needs the uids alone; its bytes are the map's."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    shard_dir = root / "gutenberg" / "shard"
+    monkeypatch.setattr(sn, "_content_hashes", lambda *a: (_ for _ in ()).throw(
+        AssertionError("a first snapshot read the content hashes")))
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    monkeypatch.undo()
+    by_map = sn.compute_delta(None, sn._content_hashes(shard_dir, snap.shards))
+    assert snap.delta == by_map and len(snap.delta.added) == 3
+    # a uid met twice counts once, as the map's key did
+    twice = sn._first_delta(shard_dir, snap.shards + snap.shards)
+    assert twice == by_map
+
+
 def test_files_lists_validation_and_nulls_a_green_collections_terms(
         isolated_config, tmp_path, corpus_dir):
     """09 §9.4's `files`; 02 §2.6: green collections have no LICENSE-TERMS."""
@@ -422,6 +477,83 @@ def test_the_build_command_exits_130_when_stopped(
     assert seen["stop"] is not None, "the command hands the build a stop to honour"
 
 
+def test_sigterm_while_the_profile_pauses_the_build_exits_130_and_loses_nothing(
+        isolated_config, tmp_path, monkeypatch):
+    """The node profile's `cpu_cores = 0` (app/cpu_limit.py) pauses the build
+    at a page boundary; a SIGTERM during that pause is honoured within a tick:
+    exit 130, every part committed before it kept, and the re-run writes the
+    same bytes as a build never paused or stopped (invariant 2)."""
+    import os
+    import signal
+    import threading
+    import time
+    from app import cpu_limit, louise, node_profile
+    from app.node_profile import Active, GpuLevel, Profile
+    from tests.conftest import gutenberg_books
+    corpus = gutenberg_books(tmp_path / "many", 160)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
+    reference = _collection(tmp_path / "reference")
+    _build(reference, corpus, records_per_shard=20)
+    parts = {p.relative_to(reference / "gutenberg" / "shard"): p.read_bytes()
+             for p in (reference / "gutenberg" / "shard" / "records").rglob("*.jsonl.zst")}
+
+    root = _collection(tmp_path / "paused")
+    profile = {"cores": 4}
+    monkeypatch.setattr(node_profile, "active", lambda now=None: Active(
+        Profile("quiet" if profile["cores"] == 0 else "day", profile["cores"], "full"),
+        GpuLevel("full"), None, None))
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    monkeypatch.setattr(cpu_limit, "PAUSE_TICK_S", 0.01)
+    cpu_limit.reset()
+    paused = threading.Event()
+    real_wait = cpu_limit.wait_while_paused
+
+    def waiting(stop=None, watch=None):
+        paused.set()
+        return real_wait(stop, watch)
+    monkeypatch.setattr(cpu_limit, "wait_while_paused", waiting)
+    staging = root / "gutenberg" / "state" / "build"
+    original = rec.build
+
+    def pause_after_a_part(*a, **k):
+        # the profile turns quiet once the build has committed its first part
+        def watch_parts():
+            while not list(staging.rglob("*.jsonl.zst")):
+                time.sleep(0.005)
+            profile["cores"] = 0
+        threading.Thread(target=watch_parts, daemon=True).start()
+        return original(*a, **k)
+    monkeypatch.setattr(rec, "build", pause_after_a_part)
+
+    def sigterm_once_paused():
+        assert paused.wait(60), "the build never paused"
+        os.kill(os.getpid(), signal.SIGTERM)
+    handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    killer = threading.Thread(target=sigterm_once_paused, daemon=True)
+    killer.start()
+    try:
+        code = louise.main(["hold", "records", "build", "gutenberg", "--root", str(root),
+                            "--corpus", str(corpus), "--shard-records", "20"])
+    finally:
+        for s, h in handlers.items():
+            signal.signal(s, h)
+    killer.join(5)
+    assert code == 130
+    kept = {p.relative_to(staging): p.read_bytes() for p in staging.rglob("*.jsonl.zst")}
+    assert kept, "the parts committed before the pause are kept"
+    assert all(parts[path] == data for path, data in kept.items()), "a committed part is the reference's"
+    assert len(kept) < len(parts), "the build was paused before its end"
+    assert not list((root / "gutenberg" / "shard").rglob("*.jsonl.zst")), "nothing promoted"
+
+    profile["cores"] = None
+    monkeypatch.setattr(rec, "build", original)
+    second = _build(root, corpus, records_per_shard=20)
+    assert not second.interrupted
+    got = {p.relative_to(root / "gutenberg" / "shard"): p.read_bytes()
+           for p in (root / "gutenberg" / "shard" / "records").rglob("*.jsonl.zst")}
+    assert got == parts, "the resumed build wrote other bytes than one never paused"
+
+
 def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tmp_path, corpus_dir):
     """`hold records build` asks the pack builder for no signature — its
     manifest is staging, and the snapshot is what is signed. The line said
@@ -433,7 +565,41 @@ def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tm
     assert line.endswith("unsigned (the snapshot carries the signature)") and "NODE_KEY_PATH" not in line
 
 
-def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_path, corpus_dir):
+@pytest.fixture
+def keeps_history(monkeypatch):
+    """The gutenberg fixture as an origin that KEEPS its history (06 §6.2's
+    `origin_versions`): Project Gutenberg itself replaces in place, so its
+    superseded versions are not kept (01 promise 7, 02 §2.3)."""
+    from app.collections import PLUGIN_REGISTRY
+    monkeypatch.setattr(PLUGIN_REGISTRY["gutenberg"], "origin_versions", "history")
+    monkeypatch.setattr(shard_mod, "_origin_versions", {})
+
+
+def test_a_part_of_an_origin_that_replaces_in_place_keeps_no_old_version(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """01 promise 7 (amended 2026-10-25, operator: A): everything held is
+    verifiable. Gutenberg overwrites a book in place, so the version a
+    re-issue supersedes can no longer be checked against the source and is
+    not kept."""
+    from pathlib import Path
+    monkeypatch.setattr(shard_mod, "_origin_versions", {})
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    assert not shard_mod.origin_keeps_history(shard_dir)
+    first = snap.shards[0]
+    old = (shard_dir / first.path).read_bytes()
+    new = tmp_path / "staged" / "00001.jsonl.zst"
+    new.parent.mkdir()
+    new.write_bytes(old + b"a different version")
+    shard_mod.promote(new, shard_dir / first.path, shard_dir=shard_dir)
+    assert (shard_dir / first.path).read_bytes() == old + b"a different version"
+    assert not (shard_dir / shard_mod.superseded_name(Path(first.path), "2026-08")).exists()
+
+
+def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_path, corpus_dir,
+                                                          keeps_history):
     """02 §2.3: "A re-issued part keeps its path; the version it supersedes
     is renamed with the id of the last snapshot that listed it and kept".
     Until 2026-10-12 every promotion overwrote it, on the producer
@@ -470,7 +636,7 @@ def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_p
 
 
 def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
-        isolated_config, tmp_path, corpus_dir):
+        isolated_config, tmp_path, corpus_dir, keeps_history):
     """The monthly update, end to end. Until 2026-10-12 a finished build's
     plan was never cleared, so the next build resumed it and re-promoted the
     same parts: no revised or new record ever reached a later snapshot."""
@@ -510,6 +676,10 @@ def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
             assert not (shard_dir / shard_mod.superseded_name(Path(path), "2026-08")).exists()
     snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
     assert snap2.shards[0].root != first.root and snap2.shards[0].path == first.path
+    # THE DELTA SEES IT (2026-10-28): it read the previous snapshot's parts
+    # after the build had promoted the new versions over them, and said
+    # nothing changed
+    assert snap2.delta.to_dict() == {"added": [], "changed": [uid], "tombstoned": []}
     assert all(s.writer == pack_records.WRITER for s in snap.shards)
     old_writer = {(s.slice, s.n): "pyarrow 0.0.1" for s in snap.shards}
     # the writer of an unchanged part is the one that wrote its bytes, carried

@@ -37,7 +37,7 @@ def _exec(name: str, path: Path):
 
 def _backend(directory: str, server_name: str, server: str):
     """backend.py as the image lays it out: louise_backend.py and the server,
-    under its own name, beside it (deploy/rage/Dockerfile.localai)."""
+    under its own name, beside it (the model pool's LocalAI image build, in git before 6a4f517)."""
     shared = {"louise_backend": BACKENDS / "louise_backend.py", server_name: ROOT / server}
     saved = {k: sys.modules.get(k) for k in shared}
     try:
@@ -166,8 +166,9 @@ def _medcpt(tmp_path, seen=None):
     """A stand-in model whose logit is the text's length minus 5."""
     seen = {} if seen is None else seen
 
-    def encoder(tokenizer_json, max_tokens):
+    def encoder(tokenizer_json, max_tokens, fixed=False):
         seen["encoder"] = (tokenizer_json, max_tokens)
+        seen["fixed"] = fixed
         return lambda pairs: pairs
 
     def infer(xml, device, cache_dir):
@@ -197,6 +198,21 @@ def test_medcpt_loads_from_the_load_call_and_its_models_env(tmp_path, monkeypatc
 def test_medcpt_refuses_a_load_it_cannot_honour(tmp_path, call, why):
     r = _medcpt(tmp_path).LoadModel(call(_medcpt_dir(tmp_path)), None)
     assert not r.success and why in r.message
+
+
+def test_medcpt_reranks_in_one_static_shape_on_the_gpu_only(tmp_path):
+    """München, 2026-10-30: padded to its batch's longest pair, a document's
+    score depended on its batch-mates (56 of 256 moved in reverse order).
+    On the GPU the encoder pads to the context and every batch is full."""
+    seen: dict = {}
+    s = _medcpt(tmp_path, seen)
+    assert s.LoadModel(load_call(_medcpt_dir(tmp_path), options=["device:xpu"],
+                                 context_size=512, batch=16), None).success
+    assert seen["fixed"] is True and s.reranker.fixed is True
+    cpu = _medcpt(tmp_path, seen)
+    assert cpu.LoadModel(load_call(tmp_path / "medcpt-cross-ov", options=["device:cpu"],
+                                   context_size=512, batch=16), None).success
+    assert seen["fixed"] is False and cpu.reranker.fixed is False
 
 
 def test_medcpt_scores_every_document_at_its_own_index_as_teis_sigmoid(tmp_path):
@@ -393,8 +409,9 @@ def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, 
     assert mt.languages() == frozenset({"de", "it", "la"})
     assert mt.translate([("über", "it"), ("x", "zz"), ("y", "la")]) == \
         ["<2it>|ÜBER", None, "<2la>|Y"]
-    assert len(asked) == 2 and set(asked[-1]) == {"prompt"}, \
-        "the model is the URL's (`…/upstream/<model>`, 07 §7.8)"
+    assert len(asked) == 2 and set(asked[-1]) == {"prompt", "max_tokens"}, \
+        "the model is the URL's (`…/upstream/<model>`, 07 §7.8); the bound rides along (the backend ignores it)"
+    assert all(0 < a["max_tokens"] <= 32768 for a in asked), "every batch request bounded (translate._completion)"
     assert sorted(seen["batches"][-1]) == ["<2it> über", "<2la> y"], "one pass for the batch"
     assert mt.health_url() == "http://models:8080/upstream/madlad/v1/models"
     mt.reset()
@@ -410,8 +427,9 @@ def _article(seen=None):
     model whose [CLS] vector is (len(first), len(second), segment-1 tokens)."""
     seen = {"encoded": []} if seen is None else seen
 
-    def encoder(tokenizer_json, max_tokens):
+    def encoder(tokenizer_json, max_tokens, fixed=False):
         seen["encoder"] = (tokenizer_json, max_tokens)
+        seen["fixed"] = fixed
 
         def encode(items):
             seen["encoded"].append(list(items))
@@ -452,6 +470,20 @@ def test_article_encoder_loads_from_the_load_call_and_its_models_env(tmp_path, m
     cpu = _article(seen)
     assert cpu.LoadModel(load_call(d, options=["device:cpu"], context_size=512), None).success
     assert seen["infer"][1] == "CPU" and cpu.pairs is False
+
+
+def test_article_encoder_pads_to_one_static_shape_on_the_gpu_only(tmp_path):
+    """München, 2026-10-30 (run 39578bfb, Arc B70): at dynamic shapes of
+    65–73 tokens OpenVINO's GPU plugin gave 7 of 160 pairs different bytes in
+    each of four passes; padded to 512, 0 of 160 (and 3x faster). On the CPU,
+    dynamic shapes reproduced (0 of 160), and padding would cost it 25x."""
+    seen: dict = {"encoded": []}
+    _loaded_article(tmp_path, seen)
+    assert seen["fixed"] is True, "device:xpu -> GPU: every input padded to the context"
+    cpu = _article(seen)
+    assert cpu.LoadModel(load_call(tmp_path / "medcpt-cross-ov", options=["device:cpu"],
+                                   context_size=512), None).success
+    assert seen["fixed"] is False
 
 
 @pytest.mark.parametrize("call,why", [
@@ -725,6 +757,70 @@ def test_the_gallery_lists_a_variant_per_gpu_each_with_its_requirements():
         assert (PYTHON_DIR / f"requirements-{variant}.txt").is_file(), (gpu, variant)
 
 
+# The louise-python trees by the names the node's YAMLs use. A tree is installed
+# BESIDE its predecessor under a dated name, and a rebuild moves the YAML's
+# backend line to it (louise-python-rebuild.md §2); the operator named the two
+# live VeGa wrappers (2026-11-02): vega-louise-openvino (the 20261030 tree,
+# OpenVINO tasks) and vega-louise-pytorch (the 20261021a tree, torch tasks);
+# OUR backends begin with vega-louise- when VeGa wraps them and louise- when
+# it does not (operator, 2026-11-03).
+PYTHON_TREES = ("vega-louise-openvino", "vega-louise-pytorch")
+
+
+def _on_a_python_tree(backend: str) -> bool:
+    return (backend in PYTHON_TREES
+            or re.fullmatch(r"(vega-)?louise-python(-\d{8}[a-z]?)?", backend) is not None)
+
+
+# The per-model Python backends consolidation removed (backend-consolidation.md,
+# 2026-10-17) and their VeGa wrappers.
+RETIRED_PER_MODEL = ("louise-dar-legal-it", "louise-madlad", "louise-medcpt-article-ov",
+                     "louise-medcpt-rerank", "vega-louise-dar-legal-it",
+                     "vega-louise-medcpt-article-ov")
+# Everything else is llama.cpp: the one VeGa package (and its CPU build), or an
+# engine loaded directly — MADLAD, whose parallel slots the wrapper refuses
+# (approved-encoders.md).
+LLAMA_CPP_BACKENDS = r"vega-louise-llama-cpp(-cpu)?|louise-sycl-f16-llama-cpp-[0-9a-f]{7,40}"
+
+
+def test_the_backend_rules_name_tonights_backends():
+    """The names the operator gave (2026-11-02) are python trees, the engine is
+    llama.cpp, and nothing live is a retired per-model backend."""
+    assert all(_on_a_python_tree(n) for n in PYTHON_TREES + ("louise-python-20261030",
+                                                            "vega-louise-python-20261021a"))
+    assert not _on_a_python_tree("louise-sycl-f16-llama-cpp-16acc89")
+    assert re.fullmatch(LLAMA_CPP_BACKENDS, "louise-sycl-f16-llama-cpp-16acc89")
+    assert not re.fullmatch(LLAMA_CPP_BACKENDS, "louise-madlad")
+    assert not set(RETIRED_PER_MODEL) & set(PYTHON_TREES)
+
+
+def test_every_staged_model_runs_on_one_of_our_backends_named_by_the_rule():
+    """Operator, 2026-11-03: "the prefix can be either vega-louise- or louise-
+    if vega is used or not". A model the node holds runs on our backend, and
+    its name says whether VeGa wraps it."""
+    for path in sorted((ROOT / "deploy" / "vega" / "stage" / "models").glob("*.yaml")):
+        text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        backend = json.loads(text)["backend"]
+        assert backend.startswith(("vega-louise-", "louise-")), \
+            f"{path.name}: {backend} is not named vega-louise-… (wrapped) or louise-… (not)"
+
+
+def test_command_r7b_stops_at_its_end_of_turn_marker_in_the_model_and_its_install():
+    """Measured 2026-11-03: on our engine an R7B answer asked without tools
+    ends with <|END_OF_TURN_TOKEN|> as text; the stop word removes it. The
+    staged model and the gallery body that installs it both carry it."""
+    stage = ROOT / "deploy" / "vega" / "stage"
+    for q in ("q8", "q4"):
+        model = stage / "models" / f"louise-chat-command-r7b-{q}.yaml"
+        body = json.loads("\n".join(l for l in model.read_text(encoding="utf-8").splitlines()
+                                    if not l.lstrip().startswith("#")))
+        install = json.loads((stage / "gallery" / f"louise-chat-command-r7b-{q}.json")
+                             .read_text(encoding="utf-8"))["overrides"]
+        for where, cfg in ((model.name, body), (f"gallery/{q}", install)):
+            assert "<|END_OF_TURN_TOKEN|>" in cfg.get("stopwords", []), f"{where}: no end-of-turn stop word"
+
+
 def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
     """deploy/vega/stage/models: what the node's LocalAI holds. A model on
     louise-python (or VeGa's wrapper of it) names one task, and every other
@@ -738,14 +834,17 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
                          if not l.lstrip().startswith("#"))
         body = json.loads(text)
-        # the tree is installed BESIDE its predecessor under a dated name, and a
-        # rebuild moves the YAML's backend line to it (louise-python-rebuild.md §2)
-        if not re.fullmatch(r"(vega-)?louise-python(-\d{8}[a-z]?)?", body["backend"]):
-            assert not body["backend"].startswith(("louise-", "vega-louise-")), \
-                f"{path.name}: on a retired per-model backend"
+        backend = body["backend"]
+        if not _on_a_python_tree(backend):
+            assert backend not in RETIRED_PER_MODEL, f"{path.name}: on a retired per-model backend"
+            assert re.fullmatch(LLAMA_CPP_BACKENDS, backend), \
+                f"{path.name}: {backend} is neither a louise-python tree nor a llama.cpp backend"
             continue
         task, rest = python_backend.split_task(body["options"])
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
+        if backend in PYTHON_TREES:
+            assert (task in python_backend.TORCH_TASKS) == (backend == "vega-louise-pytorch"), \
+                f"{path.name}: task {task} on {backend}, which the operator named for the other kind"
         seen.add(task)
     assert seen == set(tasks), "each live task serves a staged model"
 

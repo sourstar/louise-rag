@@ -33,7 +33,7 @@ _CHUNK_SIZE = 1 << 16
 # live against dumps.wikimedia.org. The policy asks for a descriptive product
 # string with a contact URL and the underlying library; other mirrors simply
 # ignore the header, so it is sent unconditionally.
-_USER_AGENT = (f"louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
+_USER_AGENT = (f"louise-rag/0.1 (+https://github.com/sourstar/project-louise) "
                f"httpx/{httpx.__version__}")
 
 

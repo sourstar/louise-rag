@@ -1,5 +1,8 @@
 # Tolerance calibration (F2)
 
+> **Superseded** (2026-10-25, handover) by `hold embedder calibrate` and the run validation of `docs/03-checking.md` §3.3; the tools named here (`tools/calibrate_space.py`) are retired by `docs/07-commands.md` §7.6.
+
+
 > **These numbers are illustrative, not measured.** The committed
 > fixtures are synthetic stand-in backends (same base vectors plus
 > backend-flavored numeric noise; an independent draw for the

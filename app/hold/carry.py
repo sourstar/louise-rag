@@ -91,7 +91,10 @@ def space_differences(a: Codex, b: Codex) -> list[str]:
                 "query.instruction": q.instruction, "epoch": s.epoch,
                 "cleaning_version": c.cleaning_version,
                 # the cut is the function's (Codex version 8): crossed by --recut alone
-                "cut": s.cut}
+                "cut": s.cut,
+                # every document vector is a function of it (Codex version 11):
+                # never crossed by a carry that keeps vectors
+                "document.instruction": s.document_instruction}
     fa, fb = fn(a), fn(b)
     return [k for k in fa if fa[k] != fb[k]]
 
@@ -247,6 +250,8 @@ def keep_predecessor_rows(root, from_ref: str, to_ref: str, *, apply: bool = Fal
         return plan
     tcon = sqlite3.connect(tp["manifest"], timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(tcon)                                    # invariant 6: a manifest is WAL
         tcon.execute("BEGIN IMMEDIATE")
         before = tcon.total_changes
         tcon.executemany(f"INSERT OR IGNORE INTO coverage({','.join(cols)}) "
@@ -344,6 +349,8 @@ def _checkpoint(manifest: Path) -> None:
     manifest is then one file, and the move cannot leave half of it behind."""
     con = sqlite3.connect(manifest, timeout=60)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         busy, _log, _done = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     finally:
         con.close()
@@ -362,6 +369,11 @@ def _checkpoint(manifest: Path) -> None:
 #: tolerance before use (03 §3.5), as for any carry. Query vectors are never
 #: stored, so the query side's weights do not reach the table either.
 WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
+#: A1h: what a carry from a collection holding no vector may change — the
+#: encoder's side of the space (the engine is outside `space_differences`)
+ENCODER_SIDE = frozenset({"encoder.weights", "dim", "dtype", "ctx", "cut", "pooling", "normalise",
+                          "query.encoder.weights", "query.instruction", "document.instruction",
+                          "epoch"})
 
 
 #: what may differ under `--rebuilt` (A1c): the parser and the image that runs
@@ -388,11 +400,53 @@ def origin_only_adds(a: Codex, b: Codex) -> bool:
             and len(fb) > len(fa))
 
 
+def unembedded_why_not(lance: Path, manifest: Path) -> str | None:
+    """Why the collection at `lance`/`manifest` holds vectors, or None when it
+    holds none (A1h): no row in its vector table, no document marked
+    embedded. Read-only; the table is opened only when it exists."""
+    from app import spaces
+    rows = spaces.known_lance_rows(lance)
+    if rows is None:
+        return "its vector table cannot be read: not proven empty"
+    if rows:
+        return f"its vector table holds {rows} row(s)"
+    con = sqlite3.connect(f"file:{manifest.as_posix()}?mode=ro", uri=True)
+    try:
+        if con.execute("SELECT 1 FROM documents WHERE embed_done > 0 LIMIT 1").fetchone():
+            return "a document is marked embedded"
+    finally:
+        con.close()
+    return None
+
+
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
           keep: str | None = None, rebuilt: bool = False, recut: bool = False,
+          resliced: bool = False, unembedded: bool = False,
           log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
     (G1). `apply=False` checks everything and writes nothing.
+
+    `unembedded` (A1h, 2026-10-31; wikidata from jina-v3 to bge-m3, nothing
+    embedded or published): the source holds NO vector, so the target's space
+    may differ on the ENCODER'S side (`ENCODER_SIDE`: weights, dim, dtype,
+    ctx, cut, pooling, normalisation, the query side, the epoch) — no vector
+    depends on it. What cuts the chunks the text index and the manifest hold —
+    the layers whole, their input forms, the cleaning — may not differ, and the
+    records must be the same records; the manifest
+    (its marks, the declined ones included) and the text index are functions
+    of the records alone and move; the vector table does not (the target
+    makes its own, of its own width). Its parts come from `hold records build
+    <to> --records-from <from>`, so no snapshot is compared here. By the
+    book, the target would discover, rdf and index 75.9 M documents again
+    (~23 h on the node) to the same bytes.
+
+    `resliced` (A1g, 2026-10-24; operator: a daughter with a new family map
+    reuses "all the vectors and corpus of the mother"): the target differs
+    only by its SLICING and cuts its parts by content (02 §2.2) — the same
+    records, the same chunks, the same space, other parts. Its parts come
+    from `hold records build <to> --records-from <from>` (the source's
+    record lines, none parsed), so no snapshot is compared here; the
+    coverage rows name the source's parts and are kept unkeyed.
 
     `rebuilt` (A1c, 2026-10-11): the target's records are BUILT, not seeded —
     its parser moved without moving cleaning or chunking (gutenberg's parser
@@ -401,13 +455,32 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     state is unusable until `reconcile` has compared every document's
     `content_hash` in the two snapshots."""
     from . import collection as col
-    from .seed import record_differences
+    from .seed import record_differences, records_slicing
     from app import spaces
 
     root = Path(root)
     from_name, src = col.resolve(root, from_ref)
     to_name, to = col.resolve(root, to_ref)
-    if rebuilt:
+    if unembedded and (resliced or rebuilt or keep or recut):
+        raise CodexError("carry --unembedded carries no vector: no --resliced, --rebuilt, --keep "
+                         "or --recut with it")
+    if resliced and (rebuilt or keep or recut):
+        raise CodexError("carry --resliced moves the same records' vectors whole: no --rebuilt, "
+                         "--keep or --recut with it")
+    if resliced:
+        from app.pack import slicing as sl
+        if src.collection_id == to.collection_id:
+            raise CodexError("carry: the source and the target are one collection")
+        other = [d for d in record_differences(src, to) if d != "slicing"]
+        if other or records_slicing(src) == records_slicing(to):
+            raise CodexError(
+                f"carry --resliced: {to.collection_id} and {src.collection_id} differ in "
+                f"{', '.join(other) or 'nothing'} — only the slicing may differ (A1g); anything else "
+                f"moves records or chunks, and nothing is carried")
+        if sl.parts_rule_of(to.slicing) is None:
+            raise CodexError(f"carry --resliced: {to_name} cuts its parts by count; a re-slice "
+                             f"needs parts cut by content (02 §2.2) to equal a build from scratch")
+    elif rebuilt:
         if src.collection_id == to.collection_id:
             raise CodexError("carry: the source and the target are one collection")
         other = [d for d in record_differences(src, to) if d not in RECORDS_REBUILT
@@ -419,8 +492,25 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
                 f"the origin only by files added beside the ones read (A1d); anything else "
                 f"moves chunks, and nothing is carried")
     else:
-        refuse_unless_same_records(src, to, "carry")
+        refuse_unless_same_records(src, to, "carry --unembedded" if unembedded else "carry")
     diff = space_differences(src, to)
+    if unembedded:
+        # the text index is keyed on chunk ids and the manifest counts chunks:
+        # what cuts them — the layers whole, their input forms, the cleaning —
+        # must be the same; only the ENCODER's side may differ
+        layer_side = [d for d in diff if d not in ENCODER_SIDE]
+        if [(l.chunker.to_dict(), l.rule, l.form) for l in src.layers] != \
+                [(l.chunker.to_dict(), l.rule, l.form) for l in to.layers]:
+            layer_side.append("layers")
+        if layer_side:
+            raise CodexError(
+                f"carry --unembedded: {to.collection_id} and {src.collection_id} differ in "
+                f"{', '.join(layer_side)}, which cut the chunks the text index and the manifest "
+                f"hold (A1h admits the encoder's side only: {', '.join(sorted(ENCODER_SIDE))})")
+        if diff:
+            log(f"[carry] {from_name} → {to_name}: the spaces differ in {', '.join(diff)}; "
+                f"{from_name} holds no vector, so nothing carried depends on them (A1h)")
+        diff = []
     if keep:
         diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
     if "query.instruction" in diff:
@@ -453,7 +543,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
             f"table cross into a space that differs only by ENGINE or by a declared input "
             f"form (02 §2.4, 03 §3.5); any other difference is another function, and its "
             f"vectors are embedded again, never carried")
-    if not rebuilt:
+    if not rebuilt and not resliced and not unembedded:
         a, b = latest_snapshot(root, from_name), latest_snapshot(root, to_name)
         if _part_entries(a) != _part_entries(b):
             raise CodexError(
@@ -473,6 +563,10 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
              "mode": "copy" if copy else "move"}
     if rebuilt:
         claim["rebuilt"] = True
+    if resliced:
+        claim["resliced"] = True
+    if unembedded:
+        claim["unembedded"] = True
     held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else None
     if held is not None and {k: held.get(k) for k in claim} != claim:
         raise CodexError(f"{marker} records another carry ({held}); this one is {claim}")
@@ -491,6 +585,13 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         if lance_dim not in (None, src.space.dim):
             raise CodexError(f"carry: {from_name}'s vector table is {lance_dim}-dimensional "
                              f"and its space is {src.space.dim}")
+        if unembedded:
+            why = unembedded_why_not(sp["lance"], sp["manifest"])
+            if why:
+                raise CodexError(
+                    f"carry --unembedded: {from_name} holds vectors ({why}); they are its "
+                    f"space's, and a carry across spaces never moves one (A1h). Without "
+                    f"vectors, nothing carried depends on the space")
         docs = _documents(tp["manifest"])
         busy = [k for k in ("index", "lance") if not _empty_dir(tp[k])]
         if docs or busy:
@@ -500,7 +601,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         plan["documents"] = _documents(sp["manifest"])
         if not apply:
             log(f"[carry] {from_name} → {to_name}: would {claim['mode']} the manifest "
-                f"({plan['documents']} documents), index/ and lance/"
+                f"({plan['documents']} documents), index/"
+                + (" (no vector: the target makes its own table, A1h)" if unembedded else " and lance/")
                 + (", state/bundles and state/share — the bundles, coverage rows and torrents "
                    "too (A1f: the same document vectors)" if shares and not copy else "")
                 + f", and re-pin to {to.space_id[:23]}…; nothing written (--yes)")
@@ -515,7 +617,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         return {**plan, "begun": True}
 
     done: dict[str, str] = {}
-    for k in ("lance", "index"):
+    # A1h: no vector crosses spaces; the target's table is its own, of its width
+    for k in (("index",) if unembedded else ("lance", "index")):
         done[k] = _transfer(sp[k], tp[k], copy=copy)
     # Moving: the companions before the main file — the main file in place is
     # what says the manifest arrived — so none is left beside a source that no
@@ -575,7 +678,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         final.update(same_space=True, predecessors=_predecessors_of(sp["state"], src.collection_id))
     marker.write_text(json.dumps(final, sort_keys=True), encoding="utf-8")
     log(f"[carry] {from_name} → {to_name}: manifest {done['manifest']}, index/ "
-        f"{done['index']}, lance/ {done['lance']}"
+        f"{done['index']}, lance/ {done.get('lance', 'not carried (A1h)')}"
         + (f", state/bundles {done.get('bundles')}, state/share {done.get('share')}" if shares and not copy else "")
         + f"; space re-pinned to {to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} "
         + ("re-keyed to it (A1f)" if shares else "kept unkeyed (provenance, never its coverage)"
@@ -583,6 +686,10 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
            f"`dev carry {from_name} {to_name} --reconcile` (A1c) — or, where {from_name} "
            f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
+           f"use: `hold records build {to_name} --records-from {from_name}` (its parts, from "
+           f"{from_name}'s record lines), `hold snapshot create {to_name}` (A1g)" if resliced else
+           f"use: `hold records build {to_name} --records-from {from_name}`, `hold snapshot "
+           f"create {to_name}`; its documents are embedded in its own space (A1h)" if unembedded else
            f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)"))
     return plan
 
@@ -856,6 +963,8 @@ def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False
     from app.share import coverage as cov
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         con.execute("BEGIN IMMEDIATE")
         con.execute("INSERT INTO space(id, space_id, dim, components, pinned_at) "
                     "VALUES(1, ?, ?, NULL, ?) ON CONFLICT(id) DO UPDATE SET "
@@ -1091,7 +1200,9 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True)
     try:
-        tbl = embeddings._conn(coll).open_table(embeddings.TABLE)
+        from app import vector_parts
+        split = vector_parts.is_split(coll)
+        tbl = None if split else embeddings._conn(coll).open_table(embeddings.TABLE)
         states = ",".join("?" * len(KEPT_STATES))
         marks = _sorted_runs((r[0] for r in con.execute(
             f"SELECT chunk_id FROM chunk_verification NOT INDEXED WHERE producer=? "
@@ -1160,6 +1271,13 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
             con.execute("COMMIT")
         # step 2: the rows, under the vector write lock, in few predicates
         with embeddings._write_lock(con):
+            if split:
+                # each document's rows in its part (app/vector_parts.py)
+                embeddings.delete_books(whole, coll)
+                embeddings.delete_chunks([c for b in partial for c in drop_ids[b]], coll)
+                log(f"[carry] {name}: dropped the rows of {len(whole)} whole document(s) and "
+                    f"{sum(len(drop_ids[b]) for b in partial)} chunk(s), by part")
+                whole, partial = [], []
             frags = embeddings.fragment_count(coll)
             batch = _delete_batch(frags)
             log(f"[carry] {name}: {batch} value(s) a delete ({frags} fragments, "

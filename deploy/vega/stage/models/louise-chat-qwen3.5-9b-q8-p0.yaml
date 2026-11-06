@@ -1,0 +1,57 @@
+# TEST COPY of louise-chat-qwen3.5-9b-q8 (operator, 2026-11-06: "For testing purpose do B", then "Run the 9B
+# tests on the copy"). One change: presence_penalty 0.0001, not 0. LocalAI v4.12.1 fills a penalty of 0 with
+# the family default (core/config/inference_defaults.go: `if cfg.PresencePenalty == 0`), and "qwen3.5" in the
+# name or the file gives qwen3.5's 1.5. 0.0001 is not 0, so it is kept: chat_eval probe 2026-11-06 PASSED 11/11
+# (the file's penalties neutral on free text and repetition; presence 2.0 changes both). The installed 9B
+# (presence 0) stays as LocalAI wrote it, stopped. Kept equal to the node's file.
+{
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "draft_model": "",
+  "mmproj": "",
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "name": "louise-chat-qwen3.5-9b-q8-p0",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "model": "llama-cpp/models/Qwen3.5-9B-Q8_0.gguf",
+    "batch": 2048,
+    "seed": 0,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 0.0001,
+    "frequency_penalty": 0,
+    "repeat_penalty": 1,
+    "repeat_last_n": 64
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}

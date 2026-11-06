@@ -32,7 +32,9 @@ from app.share import members as mem
 
 STAGING = "staging"          # under the collection's state/
 REFUSED = "refused"          # under staging/: what did not hash to its root
-WHOLE_KINDS = ("terms", "validation", "calibration", "seals")
+#: `slicing` is the family map a slicing block names (09 §9.16, amended 2026-10-24):
+#: without it a fetcher cannot tell which slice a record belongs to
+WHOLE_KINDS = ("terms", "validation", "slicing", "calibration", "seals")
 FETCHED_KINDS = ("records", "relations", "figures") + WHOLE_KINDS
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS held_members ("
@@ -52,7 +54,7 @@ def ensure_schema(con: sqlite3.Connection) -> sqlite3.Connection:
 
 def kind_of(member: str) -> str:
     """The kind a member name carries (09 §9.16)."""
-    if member in ("terms", "validation"):
+    if member in ("terms", "validation", "slicing"):
         return member
     for kind in ("records", "relations", "figures", "vectors", "buckets", "bundle",
                  "centres", "calibration", "seals", "origin", "index"):

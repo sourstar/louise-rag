@@ -57,13 +57,19 @@ def last(root: Path, name: str) -> dict[str, Any] | None:
         return None
 
 
-def due(root: Path, name: str, codex, snapshot_id: str | None, *, now: float) -> bool:
+def due(root: Path, name: str, codex, snapshot_id: str | None, *, now: float,
+        snapshot_hash: str | None = None) -> bool:
     """Has this collection a snapshot, and either no scheduled check of it
-    yet or none within one cadence?"""
+    yet or none within one cadence? A snapshot is ITS HASH, not its id: one
+    withdrawn before it was shared and created again under the same id
+    (wikipedia-v8's 2026-09, 2026-10-28) is a snapshot never checked. A
+    record from before the hash was kept compares by id, as it did."""
     if snapshot_id is None:
         return False
     prev = last(root, name)
     if prev is None or prev.get("snapshot_id") != snapshot_id:
+        return True
+    if snapshot_hash is not None and prev.get("snapshot_hash") not in (None, snapshot_hash):
         return True
     period = PERIOD_S.get(getattr(getattr(codex, "update", None), "cadence", "monthly"), PERIOD_S["monthly"])
     return now - float(prev.get("time", 0)) >= period
@@ -121,7 +127,8 @@ def run_one(collection, *, stop: Callable[[], bool], timeout_s: float = TIMEOUT_
             "report": report, "stderr_tail": tail}
 
 
-def record(root: Path, name: str, snapshot_id: str, got: dict[str, Any], *, now: float) -> Path:
+def record(root: Path, name: str, snapshot_id: str, got: dict[str, Any], *, now: float,
+           snapshot_hash: str | None = None) -> Path:
     """The report, under the collection's state directory — which must
     exist: a record never re-creates a collection by name (`turn` resolves
     the name by identity first)."""
@@ -130,8 +137,9 @@ def record(root: Path, name: str, snapshot_id: str, got: dict[str, Any], *, now:
         raise FileNotFoundError(f"{Path(root) / name}: no such collection here; the report is not kept")
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps({"time": now, "snapshot_id": snapshot_id, **got}, sort_keys=True),
-                   encoding="utf-8")
+    tmp.write_text(json.dumps({"time": now, "snapshot_id": snapshot_id,
+                               **({"snapshot_hash": snapshot_hash} if snapshot_hash else {}), **got},
+                              sort_keys=True), encoding="utf-8")
     tmp.replace(p)
     return p
 
@@ -160,8 +168,9 @@ def turn(*, stop: Callable[[], bool], log: Callable[[str], None], now: float | N
         except Exception:   # noqa: BLE001 — a SHARD that does not read is not checked this beat
             continue
         sid = snap.snapshot_id if snap else None
+        shash = getattr(snap, "hash", None) if snap else None
         t = time.time() if now is None else now
-        if not due(root, c.name, codex, sid, now=t):
+        if not due(root, c.name, codex, sid, now=t, snapshot_hash=shash):
             continue
         log(f"{c.name}: the plan, scheduled (03 §3.2), snapshot {sid}")
         got = run(c, stop=stop)
@@ -176,7 +185,7 @@ def turn(*, stop: Callable[[], bool], log: Callable[[str], None], now: float | N
             log(f"{c.name}: scheduled check {got['outcome']} in {got['secs']:.0f}s — the collection is held "
                 f"under no name now (forgotten while it was checked); not recorded")
             return c.name
-        record(root, where, sid, got, now=t)
+        record(root, where, sid, got, now=t, snapshot_hash=shash)
         log(f"{where}: scheduled check {got['outcome']} in {got['secs']:.0f}s"
             + (f" (started as {c.name}, renamed meanwhile)" if where != c.name else ""))
         return c.name

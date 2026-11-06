@@ -354,7 +354,7 @@ class, the Codex's `license.class` records it and is authoritative
 
 | class | examples | what may be shared |
 |---|---|---|
-| **green** | public domain, CC0: Gutenberg, reference genomes, public vector archives | records, vectors, index, figures; no acknowledgement |
+| **green** | public domain, CC0: Gutenberg, public vector archives | records, vectors, index, figures; no acknowledgement |
 | **yellow** | open with conditions: Wikipedia (CC BY-SA), most reference databases (attribution) | records, vectors, index, figures — after the peer has recorded its acknowledgement of the terms |
 | **red** | text under publisher copyright with free bulk access: PubMed abstracts | vectors, pointer records and index — after the same acknowledgement; the text is never exchanged, and a reader shows the origin's page. FIGURES DO NOT TRAVEL either: a plate is the origin's content and not something derived from it, so it falls on the text's side of this line and not the vectors' |
 
@@ -428,7 +428,8 @@ un-publish: once a part is served, no later snapshot reaches the peers
 who hold it. So `erasure: erasable` requires `privacy: never-share`, and
 a SHARD build refuses the pair otherwise; every collection that travels
 is append-only or retractable, and a tombstoned record stays in its
-closed part, excluded from search and embedding (01, promise 7).
+closed part until that part is re-issued (02 §2.2), excluded from search
+and embedding (01, promise 7).
 What "no trace" means in bytes is 02 §2.9.
 
 **The web sources of a deposit collection.** A deposit collection may
@@ -466,10 +467,11 @@ signed by the key that produced them, naming its collection, space,
 snapshot and chunk range (03 §3.5, 09 §9.7).
 
 **Before contributing.** A peer contributes vectors to a collection
-only when its own `roots` and `chunks` pass on the parts it holds, at
-least one `records-vs-origin` attestation exists for the snapshot — its
-own or another key's — and its encoder has passed the calibration gate
-for the space (03 §3.3). Records are checked before GPU is spent; there
+only when its own `roots` and `chunks` pass on the parts it holds and
+its encoder has passed the calibration gate for the space (03 §3.3). A
+`records-vs-origin` attestation is no longer a precondition (*amended
+2026-11-01*, operator: the check against the source is optional, the
+gating of the vectors is not; 03 §3.6). Records are checked before GPU is spent; there
 is no vector precondition, which would be circular. During the window
 of §4.6 no daughter of the lineage is embedded at all.
 

@@ -368,9 +368,24 @@ def test_with_nothing_else_to_do_every_candidate_is_taken_at_once(
 def test_candidate_walk_is_an_index_range_never_a_sort(collection):
     con = db.connect(collection)
     plan = " ".join(str(r[-1]) for r in con.execute(
-        "EXPLAIN QUERY PLAN " + genesis._CANDIDATES_PAGE_SQL, (-1, 10)))
+        "EXPLAIN QUERY PLAN " + genesis._CANDIDATES_PAGE_SQL, (0, genesis._SEED_WINDOW)))
     assert "idx_documents_scope" in plan, plan
     assert "TEMP B-TREE" not in plan.upper(), plan
+
+
+@pytest.mark.parametrize("n", [1, 2, 50, 500])
+def test_an_announced_document_is_found_by_its_primary_key(collection, n):
+    """The lookup that places what fts announced, and checks a demand before
+    its read: the uid key at EVERY list size. With 50 or more uids and no
+    sqlite_stat1 SQLite chose the scope index — 11.8 s per 500 uids on
+    wikipedia, fts ~8x slower (2026-11-03 04:40). A check at 2 uids passed."""
+    con = db.connect(collection)
+    for columns in ("rowid, uid, path, updated_at", "uid, path, updated_at"):
+        plan = " ".join(str(r[-1]) for r in con.execute(
+            "EXPLAIN QUERY PLAN " + genesis.by_uid_sql(columns, n),
+            [f"u{i}" for i in range(n)]))
+        assert "uid=?" in plan, plan
+        assert "idx_documents_scope" not in plan and "SCAN" not in plan.upper(), plan
 
 
 # --- 5. through the worker --------------------------------------------------

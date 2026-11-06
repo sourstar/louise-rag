@@ -99,8 +99,8 @@ segments_per_file = 1
 # its space block once (`space`, a file beside this one, or `space_from`, a Codex
 # to copy it from); every later one copies that collection's space.
 # The reference node (operator, 2026-10-06): granite-embedding-107m-multilingual
-# on RAGE, LocalAGI's own default, and the space file the deposit runbook wrote
-# from the run RAGE stated.
+# on the model pool, LocalAGI's own default, and the space file the deposit runbook wrote
+# from the run the model pool stated.
 # `encoder` is the SERVER; `api` (openai by default, ollama, vega) and the
 # models complete the [encoder] block the new collection's file is written with
 # (amended 2026-10-09). Absent, the model is the one a `…/upstream/<model>` URL

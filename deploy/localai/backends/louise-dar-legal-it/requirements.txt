@@ -1,5 +1,5 @@
 # louise-dar-legal-it's venv, beside the image's one torch (--system-site-packages),
-# with the pins deploy/rage/Dockerfile's venv-st was proven with: the pair
+# with the pins the model pool's image build (in git before 6a4f517)'s venv-st was proven with: the pair
 # jurifindit/DAR-legal-it's card names as what produced the figures
 # gazzetta-plugin.md §7.1b checks against.
 -r ../requirements-grpc.txt

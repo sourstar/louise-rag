@@ -1,0 +1,60 @@
+# A chat model candidate under 4 B (operator, 2026-11-03: "Search around for
+# official chat models at about 4b and 2b"; docs/notes/nemotron-embed.md).
+# Gemma 4 E2B (Google): 2 B effective, 5.1 B stored, Apache-2.0, 140+
+# languages, tools.
+# INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `gemma-4-e2b-it`: POST /models/apply
+#   with ../gallery/louise-chat-gemma-4-e2b-q8.json.
+# Ours on top: our llama.cpp package and the measured SYCL set
+# (tests/vega/test_engine_settings.py), parallel 1, a 16k context, seed 0,
+# no drafter, NO VISION PROJECTOR (Ask sends text).
+# THINKING OFF by `reasoning_effort: none` and `enable_thinking: false`.
+# Sampling: Google's sampling for Gemma (temperature 1.0, top_p 0.95, top_k
+# 64).
+{
+  "name": "louise-chat-gemma-4-e2b-q8",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "function": {
+    "automatic_tool_parsing_fallback": true,
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "seed": 0,
+    "batch": 2048,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 64,
+    "min_p": 0,
+    "repeat_penalty": 1,
+    "model": "gemma-4-E2B-it-Q8_0.gguf"
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6,
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}

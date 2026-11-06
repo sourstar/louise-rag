@@ -13,7 +13,7 @@ def test_a_show_on_a_node_that_never_booted_creates_nothing(isolated_config):
     assert not node_state.path().exists(), "peeked, never opened for writing"
     assert out["mode"] == "paused" and out["overrides"] == {"mode": "paused", "paused_collections": [],
                                                             "bandwidth_bps": None,
-                                                            "mode_writes": []}
+                                                            "mode_writes": [], "paused_by": {}}
     (row,) = out["collections"]
     from app import copy_state
     c = collections_mod.by_name("gutenberg")

@@ -1,0 +1,28 @@
+# The boundary loop of app/chunking.py's `cdc` chunker, compiled
+# (docs/notes/python-hot-spots.md, "D"). A Python extension built by maturin
+# with PyO3, the standard pair for one; the image builds its wheel in a
+# builder stage (Dockerfile, `cdc-build`) and installs it.
+[package]
+name = "louise_cdc"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+publish = false
+license = "AGPL-3.0-only"
+description = "The content-defined chunk boundary loop of Louise (app/chunking.py), compiled"
+
+[lib]
+name = "louise_cdc"
+crate-type = ["cdylib"]
+
+[dependencies]
+# EXACT: a different PyO3 cannot change an integer loop, but the build is
+# reproducible from the commit or it is not (Cargo.lock is committed and the
+# image builds with --locked). abi3-py312: one wheel for CPython 3.12 (the
+# image) and every later version (3.13 in the development sandboxes).
+pyo3 = { version = "=0.29.3", default-features = false, features = ["macros", "abi3-py312", "extension-module"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

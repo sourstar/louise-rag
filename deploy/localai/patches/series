@@ -1,6 +1,12 @@
 # LocalAI patches, applied in this order with `git am` onto the base: the
 # source our llama.cpp backend images are built from. Each is described, with
-# its upstream status, in docs/notes/localai-bugs.md.
-base 58830f7ac508845a6f4efa32cfca06af422d4d82
+# its upstream status, in docs/notes/localai-bugs.md. The base is LocalAI master of
+# 2026-11-02 (LLAMA_VERSION ddf48f8; the operator's A, 2026-11-02: one llama.cpp
+# engine for every model); 0002-0004 rebased onto it, their code unchanged.
+base 16acc8926bb8a27b67dc4d419dbceaeb4110f7af
 0001-system-list-load-options.patch
 0002-llama-cpp-embed-token-ids.patch
+0003-llama-cpp-encoder-decoder.patch
+0004-llama-cpp-encoder-decoder-waves.patch
+0005-llama-cpp-sycl-batched-mul-mat-src1.patch
+0006-llama-cpp-chat-cohere-command3.patch

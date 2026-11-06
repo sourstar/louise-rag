@@ -29,8 +29,8 @@ options the ones it received — no `/proc` matching, no LocalAI patch (vega.md
 §3). Only the card is read, from the child's DRM clients, as app/gpu_probe does,
 and the environment run.sh gave the program it started (the driver it loads).
 
-THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES, hashed at every load
-(`tree_digest`) — never the digest LocalAI's gallery wrote into
+THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES AND THIS WRAPPER'S CODE,
+hashed at every load (`engine_manifest`; the wrapper since 2026-10-31) — never the digest LocalAI's gallery wrote into
 `metadata.json`, which is the registry's word for a tag, not the bytes'
 (vega.md §4, operator 2026-10-08: no pinning; §10 finding 3). An upgrade is
 therefore a new run. The engine's driver is the one the backend loads: the
@@ -63,6 +63,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from array import array
 from concurrent import futures
 from dataclasses import dataclass, field
@@ -87,6 +88,24 @@ DETOKENIZE = "/backend.Backend/Detokenize"
 #: longest-first), so the window must be that size.
 TOKENIZER, CONTEXT_SIZE = "tokenizer", "context_size"
 CUTS = (TOKENIZER, CONTEXT_SIZE)
+
+
+def loads_an_embedder(pb: Any, raw: bytes) -> bool:
+    """Whether a LoadModel is an embedding model's: LocalAI's ModelOptions
+    `Embeddings` on and `Reranking` off. Only an embedder gets `tokenizer`'s
+    probe at load (`PROBE_TEXT`, an Embedding call) and the cut; a generation
+    model or a reranker on the same package is passed through untouched — the
+    probe killed a chat model's child (approved-encoders.md), which is why a
+    second `cuts: context_size` package (`vega-llama-cpp-gen`) once existed
+    (operator, 2026-11-02: one vega-llama-cpp, named vega-louise-llama-cpp since 11-03). Options that do not parse are
+    an embedder's, as before this check."""
+    try:
+        opts = pb.ModelOptions.FromString(raw)
+    except Exception:                                # noqa: BLE001 — protobuf's DecodeError
+        return True
+    return bool(opts.Embeddings) and not bool(getattr(opts, "Reranking", False))
+
+
 #: embedded once at load, never returned: its token count with and without
 #: the special tokens the backend adds says how many those are
 PROBE_TEXT = "VeGa counts the special tokens"
@@ -101,8 +120,8 @@ RECEIPT_TIMEOUT_S = 2.0
 #: seconds, not the receipt's two.
 TREE_TIMEOUT_S = 30.0
 #: The weights are hashed while the backend loads them; the load waits at most
-#: this long for the hash. 8 GB hash in about 5 s from a warm SSD (rage-over-
-#: localai §8.3); half an hour is a disk that is failing.
+#: this long for the hash. 8 GB hash in about 5 s from a warm SSD (model-pool-over-
+#: localai.md@c572c3b §8.3); half an hour is a disk that is failing.
 WEIGHTS_TIMEOUT_S = 1800.0
 #: A stop lets the call in progress finish within this, as LocalAI's backends do.
 GRACE_S = 30.0
@@ -464,6 +483,68 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
     return manifest_digest(tree_manifest(root, files), root)
 
 
+#: THE WRAPPER IS PART OF THE ENGINE (operator, 2026-10-31, choice A). This
+#: wrapper decides what the backend is given — the cut to a window, the pair's
+#: form — so a change to it can change a vector, and the run named only the
+#: backend's tree: #110 changed the wrapper and every run kept its identity,
+#: and its validation (München). A backend engine's `image` is now the digest
+#: of the backend's tree AND of this package's code, under WRAPPER_PREFIX —
+#: a relative path never begins with `/`, so the two cannot collide — and of
+#: the one setting of vega.json that changes what is embedded, `cuts`.
+WRAPPER_PREFIX = "/vega/"
+#: WHAT OF THE PACKAGE IS THE WRAPPER: its code alone, by an allow-list — the
+#: Python files (below the package, outside WRAPPER_SKIPPED_DIRS) and the
+#: top-level run.sh LocalAI starts. Not by an exclusion list: the package also
+#: holds what the host puts there (vega.json's socket and cards, the install
+#: record, the kept digests and their temporary file, the receipts socket's
+#: `run/`, Intel's kernel cache `neo-cache/` where a model's env names no
+#: other), and each of those, hashed, would move the run under load
+#: (München, 2026-10-31, before #116's rollout).
+WRAPPER_ENTRY = "run.sh"
+WRAPPER_SKIPPED_DIRS = ("venv", "__pycache__")
+
+
+def wrapper_manifest(package: Path, cuts: str,
+                     files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
+    """The wrapper's half of a backend engine's tree: its code (the package's
+    `*.py` files, outside WRAPPER_SKIPPED_DIRS, and the top-level
+    WRAPPER_ENTRY) as `tree_manifest` writes a file, its paths under
+    WRAPPER_PREFIX; and `cuts`, the one setting of vega.json that changes
+    what is embedded, as a `setting` entry."""
+    files = files if files is not None else FileDigests()
+    package = Path(package)
+    out: dict[str, dict[str, Any]] = {}
+
+    def walk(directory: Path, prefix: str) -> None:
+        with os.scandir(directory) as it:
+            entries = sorted(it, key=lambda e: e.name)
+        for e in entries:
+            rel = prefix + e.name
+            # the name first: nothing else is stat'ed (the kept digests' temporary
+            # file comes and goes while a load hashes)
+            if e.is_dir(follow_symlinks=False):
+                if e.name not in WRAPPER_SKIPPED_DIRS:
+                    walk(Path(e.path), rel + "/")
+            elif (e.name.endswith(".py") or rel == WRAPPER_ENTRY) \
+                    and e.is_file(follow_symlinks=False):
+                size, sha = files.read(e.path)
+                out[WRAPPER_PREFIX + rel] = {"type": "file", "size": size, "sha256": sha}
+
+    walk(package, "")
+    out[WRAPPER_PREFIX + "vega.json#cuts"] = {"type": "setting", "value": cuts}
+    return out
+
+
+def engine_manifest(backend: Path, package: Path | None, cuts: str,
+                    files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
+    """The per-file list a backend engine's `image` is the digest of: the
+    backend's `tree_manifest` and, with a package, the `wrapper_manifest`."""
+    manifest = tree_manifest(backend, files)
+    if package is not None:
+        manifest.update(wrapper_manifest(package, cuts, files))
+    return manifest
+
+
 def short_build(tree: str) -> str:
     """The build an engine names when its install record declares no
     version: the tree digest's first 12 hex digits, no prefix (09 §9.3, a
@@ -796,12 +877,15 @@ def cuda_libraries(pids: Iterable[int], procfs: ProcFS) -> list[Path]:
     return [Path(p) for p in sorted(found)]
 
 
-def weights_mib(path: str) -> float:
-    """The size of what a load reads: a file, or a directory model's files."""
+def weights_mib(path: str, files: Mapping[str, str] | None = None) -> float:
+    """The size of what a load reads: a file, or a directory model's files,
+    and the second files it names (a LoRA)."""
     p = Path(path)
     if p.is_dir():
-        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 2**20
-    return p.stat().st_size / 2**20
+        size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    else:
+        size = p.stat().st_size
+    return (size + sum(Path(f).stat().st_size for f in (files or {}).values())) / 2**20
 
 
 def declares_pairs(options: Any) -> bool:
@@ -851,8 +935,14 @@ DETERMINISM: dict[str, dict[str, str]] = {
     "rocm": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
     "hip": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
     # oneDNN picks kernels by heuristic and is not reproducible run to run;
-    # llama.cpp's own SYCL kernels are (llama-intel-arc-b70 KNOWN-ISSUES)
-    "sycl": {"GGML_SYCL_ENABLE_DNN": "0"},
+    # llama.cpp's own SYCL kernels are (llama-intel-arc-b70 KNOWN-ISSUES).
+    # GGML_SYCL_ENABLE_DNN gates oneDNN's MATMULS only: flash attention's
+    # first choice is oneDNN's fused SDPA, gated by its own
+    # GGML_SYCL_FA_ONEDNN (default 1) — llama.cpp c0fd786, the node's base,
+    # fattn.cpp `ggml_sycl_get_best_fattn_kernel`. With FA on, every input of
+    # 32+ tokens went through it: flips across loads, a NaN and a vector
+    # 0.0865 off (gutenberg's qwen3-4b, 2026-10-31). Inert with FA off.
+    "sycl": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"},
 }
 
 
@@ -898,6 +988,44 @@ NO_MODE = frozenset({"vulkan"})
 #: stopped pubmed although measured.
 MEASURED_ENV = "LOUISE_BITEXACT_MEASURED"
 MEASURED_TASKS = frozenset({"medcpt-article", "medcpt-rerank"})
+#: A vendor mode RELAXED, one setting, once MEASURED near-exact and faster
+#: (invariant 12 as amended 2026-11-01, the operator's choice B: "until a
+#: setting without it is measured, one at a time, faster and within the
+#: bound"; near-exact-runs.md §3; the operator, 2026-11-02: "both modes need
+#: to be tested. A model shall be able to produce bit exact results if
+#: needed"). The model's env names the backend it was measured on and the one
+#: setting it relaxes, "<backend name> <KEY>": the backend name ties it to the
+#: tree the measurement ran on, as MEASURED_ENV does, so a new tree is measured
+#: again. The declaration is in the stated run (another run than the exact
+#: one, which stays available under its own model), and the gate's multi-load
+#: verdict holds it to 0.99999 and the CPU reference: only a collection that
+#: opted into `exactness = "near"` admits it.
+NEAR_EXACT_ENV = "LOUISE_NEAR_EXACT_MEASURED"
+
+
+def near_exact_relaxed(canon: loadopts.Canon, backend_name: str, mode: Mapping[str, str]) -> str | None:
+    """The one setting of `mode` the model declares measured near-exact on
+    `backend_name`, or None. A declaration for another backend, or naming no
+    setting of this mode, or more than one, is refused: it relaxes nothing it
+    was not measured for."""
+    said = canon.env.get(NEAR_EXACT_ENV)
+    if said is None:
+        return None
+    parts = str(said).split()
+    if len(parts) != 2:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} must read \"<backend name> <SETTING>\": one setting, measured "
+            f"(CLAUDE.md invariant 12: relaxed one at a time), not {said!r}")
+    backend, key = parts
+    if backend != backend_name:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} names {backend}, and this run is on {backend_name}: a relaxed "
+            f"setting is measured on the tree it runs on (CLAUDE.md invariant 12); measure it again")
+    if key not in mode:
+        raise loadopts.Unstatable(
+            f"{NEAR_EXACT_ENV} relaxes {key}, which is not a setting of {backend_name}'s "
+            f"deterministic mode ({', '.join(sorted(mode)) or 'none'})")
+    return key
 
 
 def _option_values(canon: loadopts.Canon, key: str) -> list[str]:
@@ -927,7 +1055,13 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str,
                 raise loadopts.Unstatable(
                     f"{backend_name} names no vendor whose deterministic mode the wrapper knows "
                     f"(CLAUDE.md invariant 12): a card run on it is refused")
-            lacks += [f"env {k}={v}" for k, v in sorted(mode.items()) if canon.env.get(k) != v]
+            relaxed = near_exact_relaxed(canon, backend_name, mode)
+            lacks += [f"env {k}={v}" for k, v in sorted(mode.items())
+                      if canon.env.get(k) != v and k != relaxed]
+        elif NEAR_EXACT_ENV in canon.env:
+            raise loadopts.Unstatable(
+                f"{NEAR_EXACT_ENV} relaxes a card's deterministic mode, and this run is on the "
+                f"CPU, which has none to relax")
         return lacks
     if "python" in tokens:
         tasks = _option_values(canon, "task")
@@ -1217,14 +1351,20 @@ class Gate:
 
             def tree() -> str:
                 # the list is kept beside the digest: told to the receipts
-                # service once the run is, so a digest that moved can be diffed
-                manifest = tree_manifest(self.backend.directory, self.files)
+                # service once the run is, so a digest that moved can be diffed.
+                # The backend's tree and this wrapper's code (`engine_manifest`)
+                manifest = engine_manifest(self.backend.directory, self.cfg.package,
+                                           self.cfg.cuts, self.files)
                 hashed["manifest"] = manifest
                 return manifest_digest(manifest, self.backend.directory)
 
             # both while the backend loads: the weights it reads, the tree it runs
             hashers = {
-                "weights": hashing("weights", lambda: self.hash_weights(Path(canon.weights_path))),
+                # the weights file and every second file the load names
+                # (a LoRA: 09 §9.3, amended 2026-10-31)
+                "weights": hashing("weights", lambda: runs.load_weights_digest(
+                    self.hash_weights(Path(canon.weights_path)), canon.files, canon.shaping,
+                    file_digest=self.files.sha256)),
                 "tree": hashing("tree", tree),
             }
             # on WSL's /dev/dxg, what the load does to each card's used VRAM is
@@ -1270,7 +1410,7 @@ class Gate:
                         family_pids, self.cfg.cards, dxg.clients(amd_smi, self.proc_root),
                         vram_delta_mib={k: after[k] - vram_before[k]
                                         for k in after if k in vram_before},
-                        weights_mib=weights_mib(canon.weights_path),
+                        weights_mib=weights_mib(canon.weights_path, canon.files),
                         declared=declared_placement(canon))
 
                 smi = self.nvidia_smi
@@ -1305,7 +1445,7 @@ class Gate:
                     return device_on_nvidia(
                         candidates, self.cfg.cards,
                         vram_delta_mib={k: after[k] - nv_before[k] for k in after if k in nv_before},
-                        weights_mib=weights_mib(canon.weights_path),
+                        weights_mib=weights_mib(canon.weights_path, canon.files),
                         declared=declared_placement(canon))
 
                 wsl_reader = (on_dxg if amd_smi is not None else
@@ -1348,7 +1488,11 @@ class Gate:
                 context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)
             except Exception:                        # noqa: BLE001 — protobuf's DecodeError
                 context_size = 0
-            specials, token_ids = (self._probe(call) if self.cfg.cuts == TOKENIZER
+            embedder = loads_an_embedder(self.pb, raw)
+            if self.cfg.cuts == TOKENIZER and not embedder:
+                log(f"{self.backend.name}: {Path(canon.weights_path).name} is loaded for "
+                    f"generation or reranking: no tokenizer probe, no input cut here")
+            specials, token_ids = (self._probe(call) if self.cfg.cuts == TOKENIZER and embedder
                                    else (None, False))
             self.loaded = Loaded(run_id, run, declares_pairs(canon.options.get("Options")),
                                  self.child.pid, context_size, specials, token_ids)
@@ -1431,12 +1575,14 @@ class Gate:
         return list(self.pb.TokenizationResponse.FromString(
             call(TOKENIZE, q.SerializeToString())).tokens)
 
-    def _cut(self, state: Loaded, call, req, form: str, content, window: int
-             ) -> tuple[str | list[int] | None, int | None]:
+    def _cut(self, state: Loaded, call, req, form: str, content, window: int, *,
+             bounded: bool = True) -> tuple[str | list[int] | None, int | None]:
         """`(what to forward, the tokens it must be embedded as)` for an input
         whose tag names `window`: a text, or — from a backend that embeds token
         ids — the first tokens themselves. None for a pair or a backend that
-        cuts itself: the content goes as it is, and the count is not known."""
+        cuts itself: the content goes as it is, and the count is not known.
+        `(the text, None)` for a text `token_bound` keeps under the window:
+        whole, its count not asked."""
         if self.cfg.cuts == CONTEXT_SIZE:
             if state.context_size and window != state.context_size:
                 raise Refusal("FAILED_PRECONDITION",
@@ -1460,6 +1606,14 @@ class Gate:
                           f"VeGa: a window of {window} tokens needs a context_size above it — "
                           f"llama.cpp embeds at most context_size − 1 tokens, and this model's "
                           f"is {state.context_size}")
+        # A TEXT ITS BYTES KEEP UNDER THE WINDOW is sent whole without being
+        # counted (2026-10-30): the TokenizeString round trip was 10.7 % of
+        # bge-m3's embedding() for wikipedia's chunks (median 364 characters),
+        # ~4.5 ms of ~42 (München, py-spy). The text sent is the same, and so
+        # are its bytes; only the exact count check gives way to the window's
+        # (`embedding`). `bounded=False` is the by-the-book cut, always counted.
+        if bounded and token_bound(content) + state.specials <= window:
+            return content, None
         tokens = self._tokens(call, req, content)
         if len(tokens) + state.specials <= window:
             return content, len(tokens) + state.specials
@@ -1517,6 +1671,16 @@ class Gate:
         raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} cannot be cut at {window} tokens "
                                           f"exactly: no text reads back as its first {keep}")
 
+    @staticmethod
+    def _shape(req, content: str, cut) -> None:
+        """A text's request as its cut says: the first tokens and no text, the
+        text cut, or the text whole (`cut` None)."""
+        if isinstance(cut, list):                    # the first tokens, and no text beside them
+            req.Embeddings = ""
+            req.EmbeddingTokens.extend(cut)
+        else:
+            req.Embeddings = content if cut is None else cut
+
     def embedding(self, raw: bytes, forward: Callable[[bytes], bytes],
                   call: Callable[[str, bytes], bytes] | None = None) -> bytes:
         state = self.loaded
@@ -1542,17 +1706,26 @@ class Gate:
                               f"VeGa: a text pair, to {self.backend.name} loaded without "
                               f"{PAIRS_OPTION}; a pair is never flattened into one string")
             req.Embeddings = vtag.backend_pair(*content)
-        else:
-            if vtag.PAIR_MARK in content:
-                raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
-                                                  f"{vtag.PAIR_MARK!r}, which only VeGa writes")
-            if isinstance(cut, list):                # the first tokens, and no text beside them
-                req.Embeddings = ""
-                req.EmbeddingTokens.extend(cut)
-            else:
-                req.Embeddings = content if cut is None else cut
+        elif vtag.PAIR_MARK in content:
+            raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
+                                              f"{vtag.PAIR_MARK!r}, which only VeGa writes")
+        asked = req.SerializeToString()              # before the cut: the redo starts here
+        if form != vtag.PAIR:
+            self._shape(req, content, cut)
         answer = forward(req.SerializeToString())
         result = self.pb.EmbeddingResult.FromString(answer)
+        # sent whole uncounted (`token_bound`), yet over the window: the bound
+        # was beaten, so the input is cut by the book and asked again
+        if (window is not None and form != vtag.PAIR and expect is None and cut is not None
+                and result.prompt_tokens > window):
+            log(f"{self.backend.name}: an input of {len(content)} character(s) bound under "
+                f"its window of {window} was embedded as {result.prompt_tokens} tokens; "
+                f"cut by its tokens and asked again")
+            req = self.pb.PredictOptions.FromString(asked)
+            cut, expect = self._cut(state, call, req, form, content, window, bounded=False)
+            self._shape(req, content, cut)
+            answer = forward(req.SerializeToString())
+            result = self.pb.EmbeddingResult.FromString(answer)
         if result.layout == self.pb.EMBEDDING_LAYOUT_PER_TOKEN:
             raise Refusal("FAILED_PRECONDITION",
                           "VeGa: the backend answered per-token vectors, which LocalAI would "
@@ -1579,6 +1752,23 @@ class Gate:
             raise Refusal("INTERNAL", f"VeGa: the receipts service refused the receipt: "
                                       f"{e}") from None
         return answer                                # only now: the receipt is held
+
+
+def token_bound(text: str) -> int:
+    """At most how many tokens a tokenizer makes of `text`, before its
+    special tokens: the UTF-8 bytes of the text in the longest of its
+    normalised forms, plus one for SentencePiece's dummy prefix. Each token
+    covers at least one byte of the text as its tokenizer normalises it:
+    byte-level BPE, SentencePiece with or without byte fallback, WordPiece.
+    A text whose bound is under its window is not tokenized to be counted
+    (`Gate._cut`). And if a tokenizer ever beats the bound, the answer says
+    so (`prompt_tokens` over the window) and the input is cut by the book
+    and asked again (`Gate.embedding`), so a wrong bound costs a request,
+    never a vector."""
+    if text.isascii():
+        return len(text) + 1
+    return max(len(unicodedata.normalize(f, text).encode())
+               for f in ("NFC", "NFD", "NFKC", "NFKD")) + 1
 
 
 # ---- gRPC: the two methods, and everything else as bytes --------------------------------

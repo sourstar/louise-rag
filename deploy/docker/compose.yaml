@@ -30,7 +30,7 @@
 # Back the private key up offline: losing it is a new identity.
 #
 # ENDPOINTS. No model runs here (invariant 7): CHAT_URL, TRANSLATE_URL,
-# RERANK_URL and RAGE_URL point at whatever serves the models, and each
+# and RERANK_URL point at whatever serves the models, and each
 # collection names its own encoder in its file's [encoder].
 
 name: ${LOUISE_PROJECT:-louise}
@@ -50,7 +50,6 @@ x-env: &env
   TRANSLATE_URL: ${TRANSLATE_URL:-}
   TRANSLATE_MODEL: ${TRANSLATE_MODEL:-}
   RERANK_URL: ${RERANK_URL:-}
-  RAGE_URL: ${RAGE_URL:-}
   VEGA_URL: ${VEGA_URL:-}
   GPU_PROBE_URL: ${GPU_PROBE_URL:-}
   EMBED_BATCH: ${EMBED_BATCH:-1}

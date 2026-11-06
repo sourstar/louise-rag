@@ -76,7 +76,8 @@ import zipfile
 from pathlib import Path
 
 from .. import eli
-from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, LicenseClass,
+from app.backend import OriginForm, Template
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, Issue, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc,
                     UnindexableDocument)
 from . import akn, rendition
@@ -229,8 +230,20 @@ def _zip_rank(zpath: Path) -> int:
     return _ZIP_FORM_RANK.get(zpath.parent.name, len(_ZIP_FORM_RANK))
 
 
+#: The origin's inconsistencies this plugin's parse reports (06 §6.1,
+#: amended 2026-10-25; app/issues.py), from the multivigenza review.
+ISSUES = {
+    "expression-before-publication": "an ORIGINALE's FRBRExpression date precedes its Gazzetta "
+                                     "publication (a typo at the origin); validity starts at the "
+                                     "entry-into-force note or the publication date",
+    "frbr-expression-stale": "a consolidated version's FRBRExpression date is not the version date "
+                             "its member name and ELI alias carry; the name is read",
+}
+
+
 class NormattivaSource:
     source_id = "normattiva"
+    ISSUES = ISSUES
     LOCATOR_SEP = _LOCATOR_SEP
     ELI_PROFILE = PROFILE
     VALIDITY_FLOOR = VALIDITY_FLOOR
@@ -253,6 +266,8 @@ class NormattivaSource:
     chunking_profile = "akn_article"
     # The origin revises a published version in place when it corrects it.
     mutability = Mutability.MUTABLE
+    #: app/backend.py: a record is a member of an AKN zip, read from its directory
+    backend = (OriginForm("the AKN zips", Template.MEMBER),)
     protocol_version = PROTOCOL_VERSION
     #: 1 since 2026-09-14. 2 the same evening: `keys` empty — 1 wrote
     #: unregistered `eli:`/`urn:` ids, which 05 §5.2 forbids. 3 on
@@ -276,6 +291,9 @@ class NormattivaSource:
     #: wrote are unchanged; a parser-8 collection is created and carried from
     #: the parser-7 one by `dev carry --rebuilt` and `--reconcile` (A1c, RULE 1).
     PARSER_VERSION = 8
+    #: 06 §6.2: the origin keeps its history — Normattiva serves every act in each version that was in force (multivigente) —
+    #: so a superseded part version stays checkable and is kept (02 §2.3).
+    origin_versions = "history"
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first
@@ -291,7 +309,8 @@ class NormattivaSource:
             return
         guard = eli.CollisionGuard()
         held: dict[int, tuple] = {}            # nid -> (rank, zpath, member, mtime, size)
-        for zpath in sorted(root.rglob("*.zip")):
+        from .. import walk
+        for zpath in walk.files(root, "*.zip"):        # through links (walk.py)
             try:
                 with zipfile.ZipFile(zpath) as zf:
                     infos = zf.infolist()
@@ -383,6 +402,17 @@ class NormattivaSource:
         in_force = False if (repealed_in_full or "abrogati" in zpath.name) else None
         entry_into_force = _entry_into_force(act.preface_notes)
         expression_date = act.frbr.get("expression", {}).get("date") or None
+        # the origin's inconsistencies (06 §6.1, amended 2026-10-25), each
+        # one the parser already worked around in silence (review §1, §7)
+        found = []
+        if form == "ORIGINALE" and expression_date and expression_date < gu:
+            found.append(Issue("expression-before-publication",
+                               f"FRBRExpression date {expression_date} precedes the publication "
+                               f"{gu}; validity starts at {original_start(expression_date, entry_into_force, gu)}"))
+        if form == "VIGENZA" and vig and expression_date and expression_date != vig:
+            found.append(Issue("frbr-expression-stale",
+                               f"FRBRExpression date {expression_date}, the member name's version "
+                               f"date {vig}; the version is read from the name"))
 
         extra = {
             # ELI rule 5: the fixed keys (eli.EXTRA_KEYS)
@@ -462,6 +492,7 @@ class NormattivaSource:
             extra={k: v for k, v in extra.items() if v not in (None, "", [], {})},
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,
+            issues=found,
         )
 
     def relations(self, doc: CanonicalDoc):

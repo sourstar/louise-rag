@@ -1,7 +1,842 @@
 # Project status
 
-**Last updated: 2026-10-19.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-31.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
+
+**2026-10-26: the node was powered off 02:33–21:22 CET** by the operator,
+intentionally (not the heat, not the UPS); the CPU had been at 90–91 °C for
+hours under the 12-core records build. Monday's daytime queue
+(the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
+stop) did not run and moves to the next day. The rerank AFTER pass stopped
+at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
+cron 6 and 5), from 2026-10-26. THE NODE'S SCHEDULE — **amended 2026-11-02, twice: the QUIET periods SUSPEND PROCESSING (the operator: "During the day keep gpu at full power, suspend processing during the quiet time frames in the morning, at lunch time and in the evening"; confirmed with "12 CPU cores always, the rest is confirmed"; `[profiles.quiet] mode = "acquire-only"`, `cpu_cores = 12` — the worker parses, indexes and embeds nothing; downloads, seeding, searches, the records build and supervised passes go on; node-profiles-design.md decision 6). 12 cores and GPU 230 W in every period. GPU measurements go outside the quiet periods** — (operator, 2026-10-26, every day, node time): QUIET
+06:00–08:00, 12:00–13:30 and 16:30–22:30 — the records build stopped, the GPU
+power-limited (fan ≤ ~1,200 RPM) with on-demand embedding only; DAY
+08:00–12:00 and 13:30–16:30 — the build at 8 cores, the GPU uncapped and
+gutenberg embedding fully (queries keep priority); NIGHT 22:30–06:00 — the
+build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
+idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
+measured (published figures disagree).
+
+### 2026-11-02 (morning): harrier evaluation under acquire-only; the web alone on 938c525
+
+- **The node is acquire-only for the harrier evaluation** (operator: "Suspend
+  normal embedding during harrier evaluation"), set 07:26 with a `by` naming
+  it. `/root/measure/harrier/harrier-card6.sh` restores running on every exit
+  and then writes `EVAL-OVER`; the gutenberg gate, the dataset rename, the
+  BEFORE rows and lever 3 wait for that file (`after-harrier.sh`). harrier
+  measured REPRODUCIBLE (528/528 bit-identical, 3 loads × 2 passes, window
+  5120). Before 2d2cf21 the measurement tools held no encoder lease and the
+  worker unloaded harrier every minute.
+- **The web runs its own image** `louise-rag:web-938c525` (06b12213, #199),
+  recreated alone with `docker compose … up --no-deps web` and an override
+  (`/root/staged-199/web-override.yaml`) that also sets its
+  LOUISE_PLATFORM_IMAGE. The worker, governor and probe stay on 692d4ea9
+  (b7b6357). The app's stored config is unchanged, so a TrueNAS restart of
+  the app puts the web back on `louise-rag:local`. The next full deploy
+  reconciles everything.
+- **LocalAI's CPU cap raised to 12 cores, permanently** (operator, 2026-11-02:
+  "Raise localai CPU cores cap to 12 permanently"). Its container had an
+  8-core cgroup quota on the 12-thread host, shared by every backend: a CPU
+  twin (4.2–5.4 cores) beside a busy SYCL backend (~3.4) crossed it, and the
+  kernel stopped the whole container each period, the card's feeder
+  included. harrier ran 5,152 tokens/s beside gutenberg's CPU twin against
+  10,931 without it; 14.3 % of LocalAI's periods had been throttled
+  (274,263 of 1,926,425, 45,949 s). Live since 10:59:49 (`docker update
+  --cpus 12`, `cpu.max 1200000 100000`). The TrueNAS app's own
+  `resources.limits.cpus` is changed after EVAL-OVER and the CPU reference
+  (`louise-localai-cpus12` writes `LOCALAI-12-APPLIED`; gutenberg's gate
+  waits for it). Until then a LocalAI or node restart brings back 8. The
+  numbers: scheduling-log.md; the harrier note's "Speed, and what limits it".
+
+### 2026-10-31 (evening): wikidata on bge-m3; vector tables with stable row ids; two speed fixes
+
+- **wikidata's encoder is bge-m3** (#141, #142): 0.650 MRR@10 against
+  jina-v3's 0.510 on torch and 0.509 on llama.cpp, p = 0.0001. Created
+  again as `wikidata-bge`: the space is wikipedia's model (dim 1,024, ctx
+  8,191), the chunker unchanged. Its manifest and text index were carried
+  by A1h `dev carry --unembedded` (only the encoder side differs; layers
+  compared whole), saving ~23 h. The records are rebuilt from the jina
+  collection's held lines; `forget wikidata-jina` follows its check
+  (operator's yes). jina is unstaged. The llama.cpp parity design is a
+  gate before production (#143, jina-llamacpp-parity.md).
+- **A compaction after deletes re-mapped the whole vector index into new
+  files** (München's read: eight 17.8 GiB IVF_PQ generations on 10-30, the
+  twins repair). Every new vector table now has Lance's stable row ids
+  (#145): measured, the index stays. Existing tables are rewritten by
+  `dev rewrite-vectors` (#146: copy, verify, index, swap; resumable).
+  wikipedia's rewrite (operator) began 22:30 and is paused at 104/325
+  fragments: it starved wikidata-bge's build (ssd4 read latency 11 ms
+  against 0.8). It resumes after that build.
+- **Freed with the operator's yes:** 165 GB of stale index generations, a
+  278 G ZFS snapshot from 10-30 (ssd4 169 → 446 G available), and
+  simplewiki/latest. enwiki/latest was hard links to the 20260801 dump: 0
+  freed, nothing lost.
+- **A language filter scanned every row:** wikipedia 2,107 ms against 86
+  ms unfiltered. A BITMAP on `lang` (#147) is built by the maintainer with
+  book_id's; measured on 3 M rows, 178 → 15 ms. It deploys with the
+  rewrite's swap.
+- **The held records build was bound by its own process moving lines**
+  (py-spy: `_recv` 35 %, `_send` 16 %, ~6,700 rec/s on 6.4 of 12 cores).
+  The child now ships each line zstd-compressed (#148): byte-identical
+  parts, 22 → 6–7 µs per record measured here.
+- **Also:** `records fetch --profile` records its slices in the file
+  (#144; wikipedia's `slices = []` read "hand-populated"; the file is set
+  to `slices = "all"`, `acquire_enabled = false` after the repair's check).
+  A LoRA or other second file is statable, hashed into the weights (#140,
+  09 §9.3). The slice pass's UPDATE scanned the in_scope index (fixed by
+  München, 0798cf3, ~49 h → 21 min). The Library's KeyError on an older
+  counts row was fixed (aecdccd).
+
+### 2026-10-30: the records build from held lines, made multi-core — the series
+
+wikipedia-v8's rebuild from its discarded snapshot's lines (52.9 M records,
+~26.5 k parts) ran in ONE process: 75–97 % of one core of the eight the
+profile allowed (operator: "multi threading is a must, not an option";
+CLAUDE.md). Staged parts per minute, each fix deployed and the build
+resumed (München, same metric, slices differ):
+
+| step | parts/min | children each | total |
+|---|---|---|---|
+| one process | 271 | — | ~1 core |
+| #65 held lines in the pool | 301 | ~24 % (respawned per ~500 tasks) | ~2 cores |
+| PARSE_TASKS_PER_CHILD=1e6 | 206 | ~17 % | ~2 cores |
+| #67 children encode lines; one lookup per page | 255 | 23–28 % | ~3.5 cores |
+| #68 parts written by writer threads | 428 | 36–38 % | ~4.6 cores |
+| #69 slim results; children find their documents | 731 | 56–58 % | 5–6 cores |
+
+Open: ~6 of 8 cores. At +3 min the children wait again on the build's
+thread (ordering, the database rows) and the writer threads share its GIL;
+the next step is writing parts in processes, not threads (#71, not yet
+measured on a live build).
+
+**The records check, the same defect.** `hold check`'s roots, records and
+chunks walked their parts one after another in one process: wikipedia-v8's
+took 46 min on 2026-10-28. Each part's check now runs in a spawned process
+(`app/hold/check.py` `_map_parts`, the whole quota as the records build
+takes it); the outcomes are the serial run's, a failing part included
+(tests/hold/test_check.py). records-vs-origin stays serial: its re-parse is
+a closure over the plugin, not picklable.
+
+### 2026-10-30: wikipedia-v8 held 21.9 M pages twice — rglob does not enter a link; the repair
+
+**The defect.** v8's `origin/data` is a link to the archive under
+/corpora, and `Path.rglob` enters no symlinked directory (3.11–3.13; the
+image is 3.12). The archive's parts were never walked: its coverage read
+EMPTY, so the dump pass minted a second document for every page the archive
+holds — 21,888,609 of 74,811,753 manifest rows (21,983,119 archive +
+52,828,634 dump), none embedded — and every scan re-enumerated the corpus
+(1,486–3,041 s at each start and every 6 h). Snapshot 2026-09 (c6e71a2b)
+lists them; it was never served.
+
+**Fixed.** Every corpus walk goes through `app/plugins/walk.files`
+(`os.walk(followlinks=True)`, a realpath loop guard, paths as reached;
+3051ad1); a moved corpus relocates in one scan (f59cc7e). The full suite
+had been dying at 41 %: `louise.main()` reset SIGPIPE to its default inside
+pytest (exit 141); the process sets it now (f0d293a).
+
+**The repair, in order (RULE 1 — told to the operator):**
+1. `python -m tools.wikipedia_drop_twins` (dry run), then `--apply`: the
+   twins' text-index, catalogue and vector entries, then their manifest and
+   per-document rows, in batches re-checked under BEGIN IMMEDIATE; an
+   embedded twin is kept and counted. Where a twin has index entries the
+   worker must be stopped (it keeps the writers); the dry run says.
+2. `louise hold snapshot discard wikipedia-v8 2026-09 --yes`: never served,
+   so DISCARDED rather than superseded — a successor would have tombstoned
+   21.9 M records no peer ever saw. Parts kept under `<SHARD>/.discarded/`, on the
+   parts' own filesystem (a first version moved them to `state/`, another
+   filesystem on the node: EXDEV, found by München's dry run before any apply).
+3. `louise hold records build wikipedia-v8 --records-from-discarded 2026-09`:
+   each remaining record's line taken from those parts, cut afresh — the
+   bytes a build by the book makes (tests/hold/test_discard.py); a document
+   they do not list is parsed (the held path used to SKIP it — fixed).
+4. `records validation`, `snapshot create`, the hand check, then the
+   operator's resume.
+
+**Done, 2026-10-30.**
+- The rebuild gave 52,923,144 records in 26,551 parts.
+- Snapshot 2026-09 was created in 2 m 42 s, hash `e5540cc2…`.
+- The hand check passed all eight checks:
+  - records/chunks over 2,644,198 records in 1,328 parts;
+  - records-vs-origin 2,000 re-parsed, 0 differing;
+  - vectors-sample 13,496 chunks at 0.998.
+  It took 30.5 min, against 46 min on 10-28, and ran before #76/#77.
+- The ZFS snapshot `before-drop-twins-20261030` was destroyed as agreed.
+- wikipedia-v8 stays paused until the operator resumes it.
+
+### 2026-10-30: BSARD, EUR-Lex-Sum and GDPR Holdings acknowledged — the operator, for measurement
+
+The operator acknowledged the licensing on 2026-10-29 at about 07:35 CET
+("I acknowledge the licensing of the new collections"). The scope was
+confirmed to the architecture session as "both": the three evaluation
+sets and the new legal collections' origins. The sets are CC-BY-NC-SA-4.0;
+EUR-Lex-Sum's card says CC BY 4.0, but its loader says NC-SA and the
+stricter is taken. The ack is for measurement only (`tools/encoder_bakeoff.py`,
+read-only, under `/data/bakeoff/<suite>` on the node). Syntec's card states
+no licence, and Syntec is not covered.
+
+The acknowledgement is of these bytes, as `fetch` printed them at
+2026-10-29 06:27Z. `ACK.json` beside each set repeats them, with the sha256
+of its LICENCE.txt and its SOURCE.json; the log is
+`/root/bakeoff-gated-fetch.log`.
+- `bsard`:
+  - `corpus.parquet` 8,659,230 B sha256:9728e7ce26676a2ab0f5ae7b915bc64db9b4d28ebb76374cf1a2744a541e08aa
+  - `queries.parquet` 16,774 B sha256:b68e48c867453be34ded95d6770fc64ca5c024003c1095e799081ef55a40ff7d
+  - `qrels.parquet` 7,346 B sha256:e3afc706e6d8277190e95d34d73c5bc7ac1c390afe427ce9c71804c373fa632e
+- `gdpr-holdings`:
+  - `corpus.jsonl` 915,207 B sha256:cf777816b14f9ce483266c328bf1ea6f48482b032f912806e5ee6fa0bbe01af4
+  - `queries.jsonl` 690,416 B sha256:49152a77ff685bc8bb91369885b9b16be2084d99c331817f40c467473c5f7feb
+  - `qrels.jsonl` 61,578 B sha256:69b2acc4dd9f77d8eccc45802ddd91ea660566372e3c569bad113499718c6cf6
+- `eurlex-sum-en`:
+  - `raw/train.json` 93,870,083 B sha256:0912813ba1bdb99f7ea2265abbe558a2ed04da30c57bf7a3e7660d03b92cf1d1
+  - `raw/validation.json` 24,128,810 B sha256:28a35ad2ea68a835649be57ebfe7f487fce63bdd4e07ce8e6051e8265403aaf2
+  - `raw/test.json` 24,354,321 B sha256:4eda506a07280338268e482cc787759e2c8e1bb2d44a4bf2c9ad6b5eab92e0f1
+- `eurlex-sum-fr`:
+  - `raw/train.json` 107,728,616 B sha256:e49f9ab92753060a7220021865b58b10469df8b03fb7c5e5ef100bc02304143d
+  - `raw/validation.json` 28,137,474 B sha256:326386166a2051779f8b5baaafa92af328846c6ab57fb22227a5eebea9d8d97b
+  - `raw/test.json` 28,341,489 B sha256:dc2f24f78f4ff427d48681bbee2a1804f262b8a64eea004bfda1c69108068091
+- `eurlex-sum-de`:
+  - `raw/train.json` 102,280,535 B sha256:13bb0912c61846cffc01d08ba5bba8f753206f625f943911fdc458d9c4580d35
+  - `raw/validation.json` 27,104,481 B sha256:74f0ebfbad03f304bf98a306b5370ea57033945da052219dd4e2974e173d1622
+  - `raw/test.json` 27,365,476 B sha256:05e50c1197a7193e3c4f16d9e6031b38b7c19f2c0e66bd18fc2a3b601a3dea93
+- `eurlex-sum-it`:
+  - `raw/train.json` 97,379,801 B sha256:f5df911e1f61e9a08f00cdf62e397623f23ebd7e408c1de6953414cf97f31dd0
+  - `raw/validation.json` 26,497,383 B sha256:f474f310228de9cfe57793ff32270075920d92aed44ed673ec79e168e54ea89d
+  - `raw/test.json` 26,593,030 B sha256:63317951f54f0059f0b5cf5fb254466fbccde7abcfe6831cebb538496f16e145
+
+**2026-10-29 02:45 (architecture). WIKIPEDIA-V8 REPAIRED AND CHECKED; THE FIRST
+ENCODER NUMBERS FOR THE LEGAL COLLECTIONS.**
+
+wikipedia-v8 (München):
+- relocate rewrote 11,086 parts and 21,983,119 records, equal to the dry
+  run, in 36 min;
+- snapshot 2026-09 is `c6e71a2b…`;
+- the hand check passed everything, records-vs-origin included (2,000
+  re-parsed, 0 differing, against 0 of 52,440 re-fetched before);
+- the quarantine cleared itself. The collection stays per-collection
+  paused until the operator decides.
+
+The bake-off, detailed in
+[`legal-embedders-fr-de-eu.md`](legal-embedders-fr-de-eu.md):
+- **Our word leg is MTEB's BM25:** LegalQuAD nDCG@10 0.762 against 0.768.
+- **bge-m3 is out:** fused, it never beats BM25 and loses twice.
+- **Qwen3-Embedding-4B fused never loses to BM25**, and wins significantly
+  on LEMUR en, fr and de. It is the compromise for the EU languages.
+- **DAR-legal-it ties it on Italian EU acts**, so EU-it in Normattiva's
+  space stands.
+
+Four defects of the tool were found by the node and fixed:
+- untagged inputs to VeGa models;
+- a smoke run that embedded every question;
+- "bare = what this node serves", false for Normattiva's `query: `;
+- the origin probe's GET that moved 486 MB.
+
+Waiting on the operator: the licence acknowledgement of BSARD, EUR-Lex-Sum
+and GDPR Holdings (NC-SA, for measurement), and the pause of wikipedia-v8.
+
+**2026-10-28 23:59 (architecture). THE LEGAL COLLECTIONS: DECIDED, RESEARCHED,
+AND A BAKE-OFF THAT MEASURES WHAT LOUISE SERVES.** The operator decided
+legal-fr-de-eu.md's §8:
+- **D1:** Germany from NeuRIS. gesetze-im-internet's third-party archive is
+  not used.
+- **EU law is one collection per language**, English, French, German and
+  Italian first. This is the operator's named exception to invariant 11,
+  written in CLAUDE.md and 02 §2.3.
+- **D3:** a proper legal encoder for each of the four; Qwen3-Embedding-8B
+  as the compromise for the others (measured as the 4B, which the node serves,
+  until the 8B is deployed: legal-embedders-fr-de-eu.md §5).
+- **D4:** published evaluation sets, not our own.
+
+The research is in [`legal-embedders-fr-de-eu.md`](legal-embedders-fr-de-eu.md):
+- No French or German counterpart to DAR-legal-it exists.
+- AgentPublic/legi already embeds all of LEGI with bge-m3; a RULE 1
+  carry if bge-m3 wins.
+- BM25 beats every dense model on German case law (GerDaLIRSmall).
+- Kanon 2 and Voyage are API-only, so ruled out.
+- The graphs are LEGI's links and Cellar's CDM.
+
+`tools/encoder_bakeoff.py`, the harness that chose DAR-legal-it, now:
+- reads the BEIR layout;
+- has suites for BSARD, Syntec, LegalQuAD, GerDaLIRSmall, GDPR, and
+  EUR-Lex-Sum and LEMUR in every EU language;
+- measures BM25 through `app/fts.py` itself, and the hybrid through
+  `retrieval._merge_rrf`.
+
+**An encoder is chosen on its hybrid MRR@10.** The origin probes are
+scripted (`tools/measure/probe_legal_origins.sh`). Owed from the node:
+the probe log and LegalQuAD, then GerDaLIRSmall.
+
+**2026-10-28 23:00 (architecture). A LATER SNAPSHOT'S DELTA SAID NOTHING
+CHANGED; FIXED BEFORE THE FIRST ONE.** `snapshot create` read the previous
+snapshot's parts at their paths, after the build had promoted the new
+versions over them, so both sides were the new bytes. A revised gutenberg
+book gave `changed = []`; a withdrawn record or one added to an existing
+part was missed the same way, while every check passed. Consumers: as-of
+answers (`app/ask/asof.py`) and `hold chain delta`; `vectors --delta` uses
+roots and was not affected. SCOPE ZERO (München's probe): every collection
+on the node holds one snapshot, and the published ones (gutenberg 2026-09,
+pubmed 2026-08) are first snapshots. FIX: the previous version is read where
+it is held — its superseded name, or its path when nothing replaced it —
+and is that version only if its `records_root` is the listed one; one not
+held is refused by a stat, before anything is read. Where the origin
+replaces in place (gutenberg), the producer's build now keeps the replaced
+version until the next snapshot is frozen and the snapshot drops it, as 01
+promise 7 already said; 02 §2.3 amended (it said the promotion overwrites).
+Only parts whose root changed are read, and the two sides are Arrow tables
+(uid, 16 hash bytes) compared by Arrow's hash join, not two Python dicts
+(~43 GB for wikipedia-v8's 74.8 M records, task #48). A re-run for an
+existing id takes that file's delta: it is fixed by the `previous` and the
+roots the bytes compare. The previous snapshot is loaded with its container
+(as JSONL, a Parquet collection's parts had paths that did not exist).
+
+**2026-10-28 21:30 (architecture). WIKIPEDIA-V8'S ARCHIVE RECORDS LOCATED
+NOTHING; FIXED IN CODE, REPAIRED BY RELOCATION.** The scheduled check
+(18:40–19:09Z, 1,785 s) passed everything it could run — roots, records and
+chunks on 3,741,872 records, calibration 16/16, vectors-sample 8,805 of
+8,805 at median 0.99999 — but `records-vs-origin` re-fetched none of
+52,440 sampled records, and the copy stays in quarantine. München's probe:
+every record of the archive layer (layer 1, the Upstash parquet) carries
+`origin` = `000.parquet#0::15`, a bare file name — ambiguous across the
+archive's ten languages and locating nothing; the dump layer's origins
+(`enwiki/20260801/…multistream.xml.bz2#a::b|…page_props.sql.gz#c::d`)
+resolve. CAUSE: the archive documents' manifest paths sit outside the
+origin base (`/corpora/wikipedia/data` is a link to `/corpora/wikivec/data`),
+and `plugin_io._origin_one` fell back to the file's NAME for any path
+outside the base — 09 §9.5 wants the archive's URL there. The dump half
+was never compared because a missing unit weighs nothing under the 256
+MiB bound and the first dump file drawn (19 GB) ended the selection —
+which 03 §3.2 specifies; once the archive records locate, the bound works
+as written. FIX: `plugin_io.relative_to_base` reaches the base by the
+path, the resolved path, or a link the base holds, and otherwise the
+build STOPS (`OriginOutsideBase`, like a missing `origin_hash`), never
+writes a name. REPAIR, RULE 1: `hold records relocate` recomputes every
+record's `origin` from the manifest with the build's own function and
+rewrites the parts that change with the build's own writer — byte for
+byte what a rebuild writes (test: a built collection, its origins
+corrupted, relocated, equals the build's parts and rows exactly), instead
+of re-parsing 74.8 M records over days. Refused while a snapshot lists the
+parts: the 2026-09 snapshot, never shared (quarantine), is moved aside
+first, then re-created, then checked by hand — by hand because the
+worker's scheduled check keyed on the snapshot ID and would take the
+re-created 2026-09 for the one it checked. Fixed beside it: the record
+keeps the snapshot's HASH, and a different hash under the same id is due
+(a record from before compares by id, as it did, so this once the check
+is run by hand). MERGED 3e9b198 (PR #43); München: deploy, move 2026-09
+aside if never shared, dry run, relocate at 22:30, snapshot, check by hand.
+The NAS went down mid-dry-run (21:2x CET), which showed the real run could be
+cut too: relocate now commits a part's row BEFORE the file takes its place
+(the other order left a corrected file under the old row, which a re-run
+skips and the snapshot would list), and SIGTERM/SIGINT finish the parts in
+hand and exit 130 (invariant 2). Tested: a crash at either step and a stop
+are repaired by a re-run; the old order fails the test.
+
+**2026-10-28 21:00 (architecture). FRANCE, GERMANY AND THE EU: A DESIGN.**
+The operator asked for "the equivalent of normattiva collection for french,
+german and European laws". The note is
+[`legal-fr-de-eu.md`](legal-fr-de-eu.md), a proposal on the template.
+France (DILA LEGI + JORF) has every version, per ARTICLE, so the record
+there is one version of one article. The EU (Cellar) has every version
+of every act, per language, as Normattiva does. No origin publishes
+German federal law's past versions today. NeuRIS's model holds them and
+lists them as planned. Four decisions are the operator's: Germany's
+origin, the EU languages embedded, one shared space, and how the encoder
+is chosen when no expert questions exist in French or German. This
+session's network reaches none of the origins, so the probes are owed
+from the node before anything is pinned.
+
+**2026-10-28 20:40 (München, relayed). WIKIPEDIA-V8'S FIRST SNAPSHOT EXISTS.**
+`[snapshot create] wikipedia-v8: 2026-09 — 74811753 records, 267178070
+chunks, 37501 shard(s), hash sha256:0100e7b9736ca41f53f2f00780f696ab0c541122f636b8233190fd25626b83af`,
+signed by the node's key. Exit 0, 39 min 15 s (17:54:10–18:33:25Z), peak
+7.6 GiB under the 16 GB cap, on ef7b6f7 (the uids-only delta). The file is
+1,896,867,042 bytes (2026-09.json; its delta lists every record), the
+signature beside it, no temporary left. Next: the worker's scheduled check
+(gated by the node's mode, not the cpu profile: within one 600 s beat),
+then `hold collection show`, then the deploy of 5d01178. The old
+`wikipedia` is untouched. ALSO this evening (the operator's question,
+"gutenberg is 23 seconds from the end … only 3 entries"): nothing stuck —
+the mirror changed book 36037 and added 79875 and 79876 at ~17:00 CET; they
+wait for parsing, which the quiet profile pauses until 22:30, and then
+embed. The Library's "23 s" is the embedding of their chunks, which cannot
+start before the parse: a display defect, offered to the operator.
+
+**2026-10-28 20:00 (München, relayed). WIKIPEDIA-V8'S SNAPSHOT, SECOND TRY.**
+The operator chose the leaner code and a running node: ef7b6f7 deployed
+16:47–16:50Z, the node resumed 16:50:51Z (quiet profile to 22:30), 35 GB
+available. The snapshot (own container, 16 GB cap, 2 cpus, nice 19) READ
+THE WHOLE SHARD — 37,501 parts, 102,466,066,566 bytes, 36–39 MiB/s, peak
+5.1 GiB — and was then refused after 42 min 42 s: `validation.json is
+missing from the SHARD … run hold records validation`. Nothing was written.
+Two findings: the step `hold records validation` had not been run for
+wikipedia-v8 (it writes the Codex's validation block, 265 bytes; run at
+17:54Z); and THE DEFECT, ours: `snapshot create` checked its members AFTER
+the delta, so a missing file cost the whole read. Fixed: the members are
+checked first (test: a missing member is refused before a record is read).
+The peak, 5.1 GiB with the uids sorted, is under half the ~11 GB estimated
+from synthetic uids — wikipedia's are shorter. Third run since 17:54:10Z,
+the same way, ETA ~18:40Z plus the sort and the write.
+
+**2026-10-28 19:30 (architecture). THE ASK PAGE ASKS THROUGH A RELAY.**
+Operator: "Prepare a web proxy so that the web gui session is not reset by
+the browser dropping a query. Also if the query is stuck or dropped I
+should see a notification in the gui." Before: a search lived as long as
+its request (`cancel.while_connected`; 12:05Z that day: "/ask/query: the
+caller left after 43.8 s; the search is cancelled"), so a dropped
+connection, a sleeping phone or a reload lost the question. Now the page
+starts the search and the answer as jobs in the web process
+(app/relay.py; `POST /ask/relay`) and listens to them as Server-Sent
+Events (`GET /ask/relay/<id>/events`): the browser's EventSource
+reconnects by itself and names the last event it saw (`Last-Event-ID`,
+the standard's own resume), a reload finds the question again
+(sessionStorage, per tab), and a notice bar says when the connection is
+lost (and toasts its return), when the question has made no progress for
+60 s and at which step (every `cancel.checkpoint` is progress now, and
+every word of an answer) — with Cancel — and when the node dropped it —
+with Run again. Kept: no search runs for nobody (2026-09-21) — a job nobody
+listens to for 120 s is cancelled through the same token; a new question
+cancels the page's running ones; a job is its owner's alone; a finished
+one is kept 10 minutes. `/ask/query` and `/v1/chat/completions` are
+unchanged for other clients; the answer's model loop is one function for
+both (`api.answer_parts`). Spec: 07 §7.4's paragraph on the Ask page
+(amended). Tests: tests/test_relay.py (replay after a drop, the grace,
+stuck/moving, expiry, owner, replace, failure, the routes and an answer
+job end to end), tests/browser/ask_relay.js (19 checks: the reconnect
+names Last-Event-ID, stuck and lost said, results and answer kept through a
+reload, a dropped question said with Run again, a restarted node said, an
+expired finished one silent). Deploys with the next change; the web
+service alone carries it.
+
+**2026-10-28 18:45 (architecture). WIKIPEDIA-V8'S SNAPSHOT: the operator's
+go ("Do it now and do it yourself"); this session drives, München runs.**
+Two guards first. (a) `/root/hold-wikipedia-build` is set ("built
+2026-10-28 13:26Z … Do not rebuild"): after a snapshot the next `records
+build` plans afresh (`mark_frozen`), so a start would rebuild 75 M records;
+`wikipedia-build.sh start` now logs "held". München found NO build cron
+armed (the 10-24 windows' jobs are gone; today's runs were started by hand).
+(b) Memory: STOPPED before anything was created — the node has 61 GB, 18 GB
+available at 17:26 CET (the worker 15.6 GB, the ARC 15.7 GB, LocalAI 3.3,
+the web 2.7), and `snapshot create` held a uid → content_hash map of every
+record: measured here at 0.29 GB per million records, ~22 GB for 74.8 M.
+FIXED: a first snapshot's delta (every record added) is built from the uids
+alone, the same bytes (`_first_delta`; test: the delta equals the map's,
+the content hashes never read) — 0.15 GB per million, ~11 GB. OPEN, to fix
+before wikipedia-v8's next snapshot: a later snapshot holds two such maps
+(~43 GB at 74.8 M); the fix written beside `_previous` (Arrow tables and
+Arrow's hash join; parts both snapshots list by the same root skipped).
+Next: deploy, then `snapshot create` in its own container capped at 16 GB
+(never inside the worker), then the worker's scheduled check (within 10 min,
+3 h bound), `hold collection show`.
+
+**2026-10-28 18:00 (München, relayed). EVERY CHECK CLOSES.** pubmed's LAST
+facets pass ended 15:23:19Z: `[pubmed info:ask] facets counted for snapshot
+2026-08: creators, date, lang, subjects (2352s)` — 39.2 min on the busy
+node (16.5 min this morning on a paused one); the marker
+`collections/pubmed/index/facets/snapshot.json` (143 B: hash, indexed_at,
+snapshot_id 2026-08) written at that second; gutenberg's after its 15 s
+pass. Then the deploy of ce64954 (15:23–15:27Z, image 19883176, the same
+identity): the worker started 15:26:20Z and in its first 4.5 min NO
+ask/facets line for any collection; the shares line reads `pubmed: 32% in 1
+turns (1s, 0 units …)` — pubmed's start cost went from 2,352 s to 1 s.
+Three deploys a day used to cost three passes of the index resource. The
+glue: the 3-paragraph text via `/ask/translate` glued 0 in en→fr, en→it,
+en→de ("…de la période Heian [1]. Les premiers forgerons…" at the former
+spot). Both days' defects of the Ask page's translation (the refused
+answer, the silent miss, the glued sentences) and the maintainer's
+per-start recount are closed, deployed and measured.
+
+**2026-10-28 17:40 (München, relayed). WIKIPEDIA-V8 RECORDS BUILD DONE, 14:26
+CET (13:26Z).** /root/wikipedia-v8/build-night.log: `[pack build] manifest:
+188 slice(s), 37501 shard(s), 74811753 records, 267178070 chunks, unsigned
+(the snapshot carries the signature)`, `[records build] wikipedia-v8:
+74811753 records in 37501 shard(s), 37501 promoted into the SHARD`,
+`WIKIPEDIA BUILD DONE`. The build spanned images: its last run (12:53, 12
+CPUs) on 0ef4e4a, earlier runs on d793c72 and before. 03 §3.4 (RULE 1
+amendment, equivalence by version): images running the same parser and
+chunker versions ARE equivalent, and nothing needs checking by hand — `hold
+records build` refused every run whose image was not (`equivalence.
+require_reference`), and `hold snapshot create` asks again (corrected 18:20:
+an earlier line here asked for a manual check of the older images). Then:
+`hold snapshot create`, `hold check --origin` (roots, chunks,
+records-vs-origin, vectors-sample: the vector proof of wikipedia-qids.md
+§3 step 7), `hold collection show` for what is left before use; the old
+`wikipedia` paused and kept. The operator's go; München starts nothing; no hold file set, the
+build container gone (`--rm`). ALSO: pubmed's last facets pass (the one
+that writes the marker) runs since 14:44:30Z on a BUSY node (wikidata's
+parse, gutenberg's embedding; the worker at 227 % CPU, 4.7 GB) — this
+morning's 16.5 min were on a paused node — not done at 15:17Z; the `[sched]`
+line shows 0 units for it because a unit counts when it ends. München
+waits for the marker before any restart (the deploy of ce64954 waits with
+it; a restart mid-pass would run the pass again).
+
+**2026-10-28 17:15 (München, relayed). THE ANSWER TRANSLATES AGAIN.** PR #32
+(b7a0324) deployed 14:42Z (image 67009223, the same identity; the deploy
+script's first attempt stopped on its own check for the stage YAML's removed
+f32 lines, fixed node-side). Checks: the 3,300-character answer-sized text
+via `/ask/translate` into Italian 7.7 s, markers EQUAL 36/36 (the Meiji
+paragraph's `[8]`, `[8][9]` kept), paragraph breaks 11/11, the six `- `
+lines each on its own line, nothing glued after a marker; into English
+4.9 s, 36/36, no renumbering. The operator's question replayed through the
+page's own calls (search 17.0 s, answer 2,049 characters with 6 markers in
+14.3 s, the answer alone into Italian 5.2 s): markers 6/6, breaks 5/5; the
+web log now reads `[gutenberg info:translate] stream into it: 1 items — 1
+translated (0 cached), 0 missed, 5.2 s`. ONE DEFECT LEFT, not the
+citations': now and then the model writes two sentences of one segment as
+one word ("…fonti storiche e letterarie.Le prime spade…"; en→fr "…s.Les"
+once in three paragraphs, it and de clean) — the output drops a space the
+input had. Fixed in `clean_up` (`_unglue`: a stop between two lowercase
+letters and an uppercase letter gets its space back; abbreviations, numbers,
+lowercase continuations untouched), tested; deploys once pubmed's marker
+has landed. pubmed's facets pass (the last one) runs since 14:44:30Z;
+gutenberg's took 15 s and logged its duration.
+
+**2026-10-28 16:45 (architecture). THE ANSWER THAT WOULD NOT TRANSLATE.**
+Operator: "I made a search on all languages, then I chose to translate the
+results, everything has been translated but the answer." Cause, from the
+web log and two measurements on the deployed engine (München): the page
+sends the answer to MADLAD first and alone, and REFUSES a translation whose
+`[n]` differ from the original's (the links would open the wrong entries).
+MADLAD does not keep them: on a 3,300-character answer with 36 markers, six
+dropped into Italian (a whole paragraph lost its `[8]`, `[8][9]`), all back
+but renumbered into English (`[8]` → `[10]`); its `- ` list lines collapsed
+into one sentence; a cited sentence glued to the next. The operator's
+3,913-character all-languages answer had many citations, so the guard
+refused it, and the page said so only in a small note (a plain MISS said
+nothing at all — a defect). The same model on torch had the same exposure
+(translator-choice.md, "[n] citations at risk"); the switch did not cause
+it. FIX on main: the citations never reach the model (taken out of each
+segment, put back inside its sentence's final stop; a cited sentence closes
+its segment; a run written after the stop stays with the sentence it
+follows), list and heading markers are kept out the same way and their
+line breaks kept, a missed answer is said on the page, and every translate
+stream request logs its outcome (`[… info:translate] stream into it: 13
+items — 12 translated (3 cached), 1 missed, 7.0 s`) so the next report
+reads off the web log. Tests: tests/test_translate_t5.py (three),
+tests/browser/ask_translation_order.js step 5. Record:
+[translator-choice.md "The [n] citations never reach MADLAD"](translator-choice.md),
+[madlad-bugs-report.md row 15](madlad-bugs-report.md). Deploy: with the
+next deploy (the web alone would do; the worker's restart pays pubmed's
+facets pass once more and writes the marker, then never again).
+
+**2026-10-28 16:00 (München, relayed): THE NODE RUNS AGAIN since 12:53.** Node
+resumed, wikidata's per-collection pause lifted, normattiva keeps its day pause
+(the 22:30 cron lifts it), the records build restarted with PARSE_PROCESSES=12
+(profile night with 12 cores until 17:00 by the operator's TEMP line, then
+quiet, where the build pauses itself until 22:30), writing zh/pages=6M. The
+corpus embedders load on demand (gutenberg 12 docs / 612 chunks at 12:55).
+First `dev schedule-report` (13:05–13:14): wikidata rdf 2,122/s, fts 1,858/s;
+gutenberg embed 759 docs remaining (ETA 12.7 h); wikipedia-v8 41,174,362
+waiting for embedding (quarantine); parse pool 11 processes, 0 failures,
+3.1 of 11 slots in flight; gate corpus 5,827 admitted, waited 899 s, served
+1,255 s. **pubmed's 1,067 s index unit — FOUND AND FIXED (München's log, architecture's
+fix).** Not per round: the `[sched]` shares line is CUMULATIVE since the worker
+start (36 turns, 1 unit, 1,067 s = one unit in 36 turns; the line now says
+"since start"). The one unit is the facets/edges/content-hash pass of
+`_maintain_ask_indexes` for pubmed's unchanged snapshot 2026-08 — three
+streamed passes over 40M rows, 16.5 min — run after EVERY WORKER START, because
+the "indexed for snapshot X" marker was `worker._ask_indexed`, an in-memory
+dict; today's three deploys cost three passes (09:30, 10:20 and the night's).
+And `_fill_content_hashes` loaded every record hash of the snapshot (40M) into
+memory before checking whether any row lacked one. Fix: a durable marker
+(snapshot id + hash) under the collection's index/facets, consulted at start
+and written only after a pass that raised nothing; the missing-row check
+before the hash load; the pass's duration in its log line
+(tests/ask/test_maintain.py). Deployed with the next change — never alone,
+since a restart is what costs the pass.
+
+**2026-10-28 15:30 (operator): THE HOLD IS LIFTED (choice A).** The 09:51
+"MADLAD only" order is over: the node resumes, wikidata's per-collection pause
+lifts, the records build restarts by hand (8 cores in the DAY band), the
+corpus embedders load on demand. MADLAD stays as switched. What is left for
+MADLAD, none of it serving today's translator: the staged stages 1–2
+(0006 memory / 0007 store — one card build and the gates, ~90 min, in a quiet
+window; their gain is unproven for our traffic, no wave was split in A1), the
+upstream PR for P5 (the operator files; then the kq image and logs on the
+node go), and the shared engine's next rebuild carrying P5. The wave-window
+env (`LLAMA_ENC_DEC_WAVE_MS`) is dropped: not needed at the default. The
+embedder history probe stays deferred to a quiet window.
+
+**2026-10-28 15:00 (München, relayed). MADLAD SWITCHED TO llama.cpp, AND IT
+STAYS.** The third A1 (12:21–12:43; the same 60 questions through /api/search,
+gutenberg one at a time, the gutenberg corpus embedding on the card in both
+passes — MORE load during the GGUF pass, 1,168 embedding calls against 970):
+translation median 1.44 s against torch's 1.85 (−22 %), p90 2.21 against 2.57
+(−14 %); search total 10.07 against 11.08 s; 60/60 answered; 342/381
+translations identical to torch, 59/60 the same top hit, 56/60 the same
+twelve; waves 6 slots ×43, 7 ×21, none split. Criterion (a median gain, p90
+not worse) met. `louise-translate-madlad` = the GGUF F16 on
+`vega-llama-cpp-t5` (engine c68167b65cb0, P1–P5), the deployed YAML
+byte-identical to main d372ba5's stage file; the torch model kept as
+`louise-translate-madlad-torch` (backout = one copy and a reload). The node
+stays paused (MADLAD only, operator 09:51) until the operator lifts it.
+Cleanup DONE 13:0x (München, on architecture's decision): the three test
+backends (f8b4 t5, t5diag, p3test; 438 MB each) and their tars removed through
+LocalAI, ~2.2 GB freed; the five test-model YAMLs and the two GGUF YAML backups
+MOVED to `/root/madlad-gguf/removed-test-models-20261028/` (LocalAI's
+`/v1/models` lists them until its next restart — harmless, nothing names
+them); kept: the live T5 engine and tar, the torch model and its .bak, every
+recorded output under `/root/madlad-gguf`, the `kq-rt2635` image and
+`/root/kq/*.txt` until the upstream PR is filed, the GGUF weights.
+
+**2026-10-28 14:30 (München, relayed).** P5 TAR GATED GREEN ON THE F16 CACHE:
+`louise-llama-cpp-sycl_f16-c68167b65cb0.tar` (P1–P5) installed as
+`vega-llama-cpp-t5`; MADLAD with the default F16 cache: T4 379/379 = P3's
+bytes, T3 626/626 and 616/626, retrieval paired-equal to torch, 16.3 ms per
+token (f32 29.2), **0.68 s per question in waves, p90 0.96** (f32 1.12; torch
+3.2). The F16 cache is cleared for MADLAD on this engine; the stage YAML
+drops its two `cache_type_*` lines (localai-bugs.md P5). Step 4 running: A1
+through Louise under gutenberg sharing, torch first, then the GGUF F16 under
+the live name; switch only on a median gain with p90 not worse.
+
+**2026-10-28 13:30 (München, relayed).** A1 ON THE FIXED CLIENT (0ef4e4a
+deployed 10:17Z): the GGUF with the f32 cache works through Louise with
+torch's quality (60/60 answered, 341/381 translations identical, 59/60 the
+same top hit) but is NOT faster under gutenberg sharing — translation median
+1.95 s against torch's 1.68 s (+16 %), p90 and search total equal. The
+switch condition is a gain, so München BACKED OUT to torch at 11:42; the
+node is paused again (MADLAD only). The f32 cache's +79 % per token eats the
+idle 2.9×. The way to a gain is the F16 cache, back with P5 (below). The
+GGUF YAML is kept on the node (`…yaml.gguf-20261028b`), the T5 backend
+stays installed, 0ef4e4a stays deployed (both shapes).
+
+**2026-10-28 13:00 (architecture).** ROOT CAUSE OF THE CARD FAULT FOUND, by
+code reading, after the attribution test ruled the runtime out: ggml-sycl's
+`ggml_sycl_mul_mat_batched_sycl`, in a build with oneDNN compiled in (ours),
+converts src1 with oneDNN's flat copy and then, when oneMKL runs instead
+(`GGML_SYCL_ENABLE_DNN=0`, invariant 12's mode), reads it with contiguous
+strides — every non-contiguous src1 wrong: the permuted queries of two or
+more decoder tokens (the wrong text in waves), and upstream's own suite's 32
+strided cases with ne13 > 1, exactly the set München's log holds. Not the
+card, not the driver, not oneMKL. FIX = **P5** in the series
+(deploy/localai/patches/0007-…; localai-bugs.md P5), an upstream PR to file
+(upstream-reports/ggml-llama-cpp-sycl.md, second section). Confirmed 11:43:
+the same binary with GGML_SYCL_ENABLE_DNN=1 passes everything (223/0/60;
+272/0). Gate (1) PASSED 11:55: test-backend-ops on c0fd786 + P5 → 226/0/60, 272/0,
+the whole MUL_MAT suite 2276/0/592 — then, then the tar
+with P1–P4 + P5 and MADLAD on the F16 cache through t5waves.py; then the
+second switch (−44 % per token). The f32 switch in flight stands.
+
+**2026-10-28 12:30 (architecture).** ATTRIBUTION TEST DONE (München, 11:03):
+runtime 26.35 (39758.17, IGC 2.41.15, loader 1.32) fails the IDENTICAL
+`test-backend-ops` case sets as the bundled 26.27 — the KQ matmul fault is
+NOT the GPU runtime's or IGC's (upstream-bugs.md S1). Consequences: the tar
+rebuild on 26.35 is off the table for this fault (the F16 kernels do not
+come back by a runtime step; the f32 cache stays); the upstream report is
+READY TO FILE with both results, second section of
+upstream-reports/ggml-llama-cpp-sycl.md — the operator files it. What
+remains above the runtime: oneMKL's pointer-array `gemm_batch` (oneAPI
+2025.3.0 in the backend) or ggml-sycl's pointer/stride setup, or the xe
+kernel driver; a discriminator (route the non-contiguous case through the
+strided `gemm_batch` after a contiguous copy, in the diag build) would
+need another card window. The deploy of 2c7ab36 stopped on a test PR #22
+had not run (test_localai_backends pins the upstream-route body to the
+prompt); fixed by PR #23 (main 0ef4e4a); München redeploys and runs A1.
+
+**2026-10-28 12:00 (architecture).** DRIVER UPDATE, operator's decision on
+the one-shape question (approved-encoders.md "Known limits", upstream-bugs.md
+S1): the ATTRIBUTION TEST FIRST — the same test-backend-ops reproducer binary
+under compute-runtime 26.35.39758.10 (kobuk-team PPA) in a throwaway
+container, no host change, München runs it after A1, never beside it. Then,
+only if 26.35 passes: the SYCL backend tars rebuilt on 26.35 (a new engine:
+every llama.cpp model re-gated; loader ≥ 1.32 per compute-runtime #972);
+if it fails the same: the upstream report S1 with both results. The torch
+runtime (the app image's 26.05, softmax fault V2) is updated later, in a
+quiet window, through a louise-python image on the same PPA recipe, and
+re-gated. The kernel driver (xe) is TrueNAS's and carries none of our bugs.
+
+**2026-10-28 11:30 (architecture).** The MADLAD switch to llama.cpp was
+tried at ~10:40 and BACKED OUT at 10:47 (torch live, node paused, records
+build held — operator 09:51, "MADLAD only", until lifted). The fault was the
+client's: `translate.shape()` took the GGUF server for the torch backend
+because LocalAI's `/v1/tokenize` splits `<2en>` into two pieces; the warm's
+unbounded JSON prompt ran 92 s under the operator's paired test. Fixed in
+app/translate.py (the shape read off the vocabulary; every batch request
+bounded; the test fake answers the recorded `[805, 38]`) — localai-bugs.md P4
+"Backed out". Next: München redeploys the client, reruns A1 (60 questions
+through /api/search under gutenberg sharing, torch vs GGUF), then the switch
+with the one-minute backout. The server-side numbers (1.12 s per question
+against 3.2 s) stand.
+
+**2026-10-28 07:45 (München).** The exclusive window for MADLAD on llama.cpp
+(operator, via the architecture session) ran 06:46–07:20. The node is
+paused only while gates run, and is running again since 07:20. The records
+build restarted with 12 parse processes; no cron starts it, so a stop needs
+a manual start.
+- **P4 (waves) FAILS on the card.** One slot is right. A slot decoding
+  beside another gives corrupted, deterministic text: two identical requests
+  at once already differ from alone. T4 passes (379/379 = P3's bytes, 0.43 s
+  per translation). T3 "twice" passes (626/626) but in-wave == alone 0/626.
+  The strict SYCL env (FUSION/GRAPH/OPT=0) changes nothing; on CPU the same
+  backend is right. So it is a SYCL fault at small n_tokens, not P4's
+  logic. The architecture session has it. Nothing live changed; the test
+  backend `louise-sycl-f16-llama-cpp-t5` and the models
+  `louise-translate-madlad-gguf` and `madlad-waves-cpu` stay installed.
+- **P4 rebased (1062ba80).** The build failed first: P4 was written without
+  LocalAI's own llama.cpp patches 0001/0002. Series digest f8b4acdcdcb8.
+- **Rerank AFTER, complete (pass 3, 22:30–04:14):** 0.21 % of calls refused
+  against 2.2 %, and 1.8 % of first searches lost their rerank against 19 %.
+  Numbers and the scenario are in scheduling-log.md, "query processing
+  highest", AFTER.
+
+**2026-10-28 07:00 (architecture).** MADLAD on llama.cpp, the night's
+work (operator, 2026-10-27 21:40: review the llama.cpp improvements, implement
+what fits without breaking the interfaces, exclusive node use tonight).
+- **Built:** P4, the wave scheduler (localai-bugs.md): the slots about to
+  start are encoded together and decode in one batch; a lone request is
+  byte-identical to P3 (CPU, random-weight T5); the same group in any
+  arrival order gives the same bytes. Louise's client, the t5 shape of
+  app/translate.py: one raw `<2xx> segment` prompt per segment, the torch
+  backend's cut, a call's segments sent at once, the model's target codes
+  read off its vocabulary, the shape determined from the server.
+- **Decision:** the model runs on its OWN backend
+  (`vega-llama-cpp-t5`, series f8b4acdcdcb8 after München's
+  rebase onto LocalAI's own llama.cpp patches); the shared embedder backend
+  was not rebuilt, so no embedder became a new engine.
+- **The window slipped:** this session was restarted several times during
+  the night; the "ready" reached München at 06:45, the gates
+  (tools/measure/t5waves.py: T4 against P3's one-slot bytes, T3 same group
+  twice, seconds per question; then the 451 + 39 retrieval comparison) run
+  in the morning with the node paused, the wikipedia build held and the
+  rerank AFTER pass finished (04:14). Nothing live has changed; the switch
+  (YAML swap under the same model name, a Louise deploy) comes only after
+  the gates, then regular activities resume.
+
+**2026-10-28 09:00 (architecture).** P4 FAILS on the card: T4 and T3 pass
+(379/379 = P3's bytes, 0.43 s a translation; 626/626 the same twice) but a
+wave decodes WRONG text — in-wave against alone 0/626, the first tokens
+right then divergence, the wrong text following the slot. The same backend
+and weights on the CPU are RIGHT (E2), so it is a SYCL kernel at two or
+more decoder tokens; the strict SYCL env (E1) and fp32 weight gemms (E3)
+change nothing. Diagnosis by instrument, not by guess: R0 (an f32 KV
+cache, no build) and the diag patch `deploy/localai/patches/diag/0005…`
+(`GGML_SYCL_CPU_OPS` sends an op class to the CPU; one build, one load per
+class) — localai-bugs.md P4 "Measured on the card". **The switch is on
+hold; nothing live changed**; the torch translator serves. Online check of
+the B70's known limits (operator's ask): none matches; the list is in
+approved-encoders.md "Known limits of the Arc Pro B70".
+R0 (09:05): CORRECT with `cache_type_k/v: f32` — the fault is in the F16-cache
+path and the f32 cache is the workaround. NAMED (09:40, diag build): the KQ
+product over the F16 K cache at N ≥ 2 (`ggml_sycl_mul_mat_batched_sycl`);
+upstream-bugs.md S1 drafted for the operator; the gates re-run on the f32
+cache (both K and V), then the switch.
+**Stage 1 BUILT (operator 2026-10-28: "once this stage is consolidated implement
+stage 1 and 2")**: the per-sequence encoder memory (`llama_memory_enc_dec`,
+localai-bugs.md P5 staged) passes its CPU tests (library T1 a–h, the store
+unit test, P4's server checks; a late request answered in 0.06 s instead of
+after the wave). It is STAGED, not in the series: it goes to the card only
+after the switch and the regular activities have resumed, then its own
+gates. **Stage 2 BUILT too** (P6 staged, `staged/0006…`): the store on the
+device, written by the encoder graph and committed after the compute, read by
+the decoder's `ggml_get_rows`; the same CPU tests pass, a lone request stays
+byte-identical to P3. Both stages go to the card in ONE rebuild after the
+switch, with `test-backend-ops -o SET_ROWS,GET_ROWS` beside the gates.
+**Operator, 09:xx (to München): "Keep working on MADLAD only."** So today: T3 →
+the paused timing sample → the retrieval gate → the merge → the switch, plus the
+KQ-shape reproducer (MADLAD's own fault). DEFERRED until the operator says
+otherwise: the vega-qwen3-embedding-4b history probe for llama.cpp #30892's
+window (a ≤ 8-token text, then the 16 calibration texts again; by the code
+the plain fused GEMM refuses K-quants, so nothing is expected) — the script
+is ready on the node, `/root/madlad-gguf/emb_history.py`. Stages 1–2 wait
+for after the switch, as planned.
+**10:30: the f32-cache GATES PASS** (München, card idle from 09:51): retrieval
+paired-equal to torch on both sets, in-wave vs alone 614/626, waves 1.12 s per
+question against torch's 3.2 s (2.9× faster), one twice-mismatch in 626 from a
+group split into different waves under load, the f32 cache's price +79 % per
+token (localai-bugs.md P4). **The switch proceeds**: branch merged to main,
+the tar as vega-llama-cpp-t5, the YAML swap, the Louise deploy.
+
+**2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
+period crons 6/18–21 disabled (not deleted).
+- **The node's platform.toml:** full = "230W" absolute (the B70 has
+  power1_cap and no rated max), quiet = "110W".
+- **The build:** it stopped in 2 s on the new tree; the old one was
+  SIGKILLed after 15 min. It runs again under a fixed 12-core ceiling, and
+  the profile limits it to 8 by day.
+- **Wikidata (re-created, parser 2):** the worker kept the deleted
+  collection under its name until 8e22177 (identity by collection_id). Its
+  stale catalog was moved aside. Discovery runs at ~9,600 docs/s (~2 h),
+  parse at ~120 docs/s. The forgotten 37 GB stays on ssd4 until the 09:00
+  snapshot expires.
+- **Space freed, with the operator's yes (2026-10-27 22:10).**
+  - `ssd4/apps/louise-rag@auto-2026-09-21_08-00` (297 GB, the pre-migration
+    state under a `truenas` hold) was released and destroyed. ssd4 went from
+    327 GB free to 620 GB.
+  - Its replica `tank/backup/ssd4/apps/louise-rag@auto-2026-09-21_08-00`
+    (272 GB) keeps its `keep-20260921` hold, so replication's SOURCE
+    retention cannot prune it: it is the backup of that state.
+  - `/root/wikidata-catalog-stale-20261027` (206 MB, the re-created
+    wikidata's stale catalog) was deleted.
+- **The 12:00 boundary check passed (checked 21:50).** The build is no
+  longer stopped. It paused itself at the end of its unit at 12:00 ("profile
+  quiet: paused until 13:30") and resumed at 13:30 on the next part (ja/3M:
+  part 139 before, 143 one second after). The same happened at 16:30, until
+  22:30. No exit, no part cut twice.
+- **Rerank AFTER, partial (the 2026-10-26 pass, 50030dc).** 214 of the 496
+  queries ran before the 02:33 power-off:
+  - 1 query lost its rerank (0.5 %), to a timeout, not a 500. BEFORE: 117 of
+    613 rows (19 %).
+  - No refused call in the harness log.
+  - Median 8.5 s per arm search (BEFORE 6.9 s).
+
+  A complete fresh pass runs on today's image from 22:30 to 06:00
+  (/root/campaign-after3.sh). The scenario differs from 10-24: gutenberg
+  embeds "all" at 230 W, not on demand.
+
+**2026-10-27 08:30 (München, read-only counts).** Deploy 16a4349 done:
+the node key and the admin token are read from a secrets dataset by path;
+the web holds no private key. gutenberg 96.4 % embedded (2,850 waiting),
+its 762 drift ids re-indexed today; normattiva and pubmed 100 % embedded;
+wikidata in quarantine until its re-creation (no snapshot yet);
+wikipedia-v8 ~55 M of ~75 M records built (upper bound by shards), ~540
+rec/s at 8 cores. The 06:00 build stop did NOT finish in 15 minutes and was
+SIGKILLed (old tree; part 119 committed, nothing lost); the 12:00 stop is
+the first on the deployed tree with the bounded stop. A test touched the
+real `/data/state` (model-pins.json) during the node's suite: being found.
+
+**Where things stand (2026-10-25).**
+- **wikidata** is re-created on Monday 2026-10-26 on family map
+  `sha256:78399d60…` (approved, 29398cf). It keeps the version-3 pack and
+  brings parser 2, the history section and parts cut by content; its
+  records build follows.
+- **wikipedia-v8** (parser 5, token cut) is mid records build, in cron
+  windows. Its pool now keeps its children and takes the whole cpu quota
+  (c3dcb4c, 6694b19).
+- **pubmed** is the Codex-8 collection (renamed 2026-10-20), paused.
+- **gutenberg** is on-demand on the node. Perugia, the second GPU peer, is
+  shut down (2026-10-25 10:23 CET) after handing its vectors over.
+- **Search:** query steps take priority over corpus embedding (7cc6975,
+  deployed). The entity boost is removed and an identifier restricts only
+  as the reader's `keys` filter (05 §5.2 amended; deploys after tonight's
+  measurement).
+- **Secrets by path (invariant 8), deployed 16a4349 (2026-10-27):** the
+  node key moved by rename to `secrets/private/node.key` (worker only,
+  read-only; same key text and signature before and after), the admin
+  token to `secrets/admin/admin-token` (`ADMIN_TOKEN_FILE`), no token value
+  in either container's env (deploy/16f/move_secrets.py@c572c3b). The key's backup
+  `/mnt/tank/homes/alanari/louise-node.key` is on the same machine: an
+  off-machine copy is the operator's to keep.
+- **Open defects:** the reranker's HTTP 500s under load (cause not found);
+  tests/verify/test_writer_streaming.py reaches the real
+  `/data/state/model-pins.json` through `model_pins.release` (an earlier
+  test's pin collected), unguarded by the node-store check;
+  the 06:00 cron stop of the wikipedia-v8 build took over 15 min and was
+  SIGKILLed after a committed part (2026-10-27, old build tree; the
+  deployed tree's bounded stop is timed at 12:00);
+  the 127-part gap (stale counts and text index): `louise dev index-drift`
+  names the documents, `dev reindex` fixes them, on the node 2026-10-26.
+- **Parked:** arXiv and the knowledge-base pipelines.
+- **Counted on the node (2026-10-25):** how many records have no date is
+  NOT known: the build databases hold no skip for it, but `hold records
+  build` never passes a cutoff, so that exclusion has never run; the
+  `cutoff-undated` flag gives the number at the next gutenberg and pubmed
+  build (docs/notes/corpus-inconsistencies.md). A sample of 120,000 pubmed baseline citations
+  holds none without DateRevised or DateCompleted. gutenberg's one build
+  skip is book 673, whose encoding the origin declares broken. The census
+  of the mirror (2026-10-25): 73 of 79,753 book directories have no
+  `pg<N>.rdf`; every one present parses and carries `dcterms:issued`
+  (corpus-inconsistencies.md).
+  gutenberg holds no superseded part versions. LocalAI's watchdog kills a
+  model busy for more than 10 min (`busy_timeout`); its idle timeout is
+  disabled. The ZFS ARC is capped at 16 GB.
 
 **The specification moved.** `docs/README.md` and the nine numbered
 documents it lists are now the design; `architecture-v2.md` and its §17
@@ -12,13 +847,88 @@ it left open is below.
 
 ## Open after the migration
 
+- **BEFORE PRODUCTION — the operator's list** (to clear before switching to production):
+  1. jina-style encoders on llama.cpp, implemented and tested at f16 (operator, 2026-10-31; below).
+  2. **ON HOLD (operator, 2026-11-01): RAGE settings exchanged between peers** — the `rage-settings` member in the digest and its fetch (09 §9.16, §9.9, §9.19). Until then a node reads only the files in its own SHARD.
+
+- **Retired code removed (operator, 2026-11-01: "remove any retired code, it will survive only in the github past commits")** — read it at `@c572c3b`:
+  - **Gone:** `attic/`; `app/coordinator/` and `app/contribute.py` (architecture-v2's work leases; 04 §4.5 hands work out by rendezvous) with their tests and the two-node compose flow; the model pool's four notes; `PACK_MOUNTS_DIR`; the per-model and DNA app files, `dnabert2*`, `bakeoff-st` + `tools/bakeoff_local.py`, `localai-wsl`; 23 dated one-shots in `deploy/16f/`, `deploy/vega/switch/` and `deploy/scheduled/`; the one-shot tools `clean_titles`, `backfill_pubmed_authors`, `wikipedia_drop_namespace_pages`, `vector_sweep`, `endpoint_vectors`. Every old name of the model pool is out of the tree, guarded by `tests/test_rage_name.py`.
+  - **Kept, live or in doubt** (each says why): what the deploy runbook runs or checks (`deploy-louise-madlad-t5.sh`, `set_mem_limits`, `set_platform_image`, `flatten_mounts`, `rename_mounts`, `wikipedia_drop_twins`, `encoder_bakeoff`, …); `create-normattiva-archive.sh` (not created yet); `vega/switch/{backend_files,backends-20261017,rollout-p2}.sh` (the pattern for the next rollout); `pack build/verify` (invariant 11's test builds through them); `jina-embeddings-v3/` (the jina gate before production); `vector_compliance`, `build_space_artifact` (still named by measuring.md and the importer); `wikipedia-keep-night.sh`, `madlad-translate/to_bf16.py`, `vega/stage/{convert_article.sh,article_reference.py}`, `power_steps`, `gutenberg_plates_recon`, `medcpt_text_compare`, `pubmed_other_abstract_rows`, `localagi_check/`, `measure/one_language_*` — each waits on a record that it is done.
+  - **Node:** the model pool's dataset on ssd5 becomes `louise-vega` (only VeGa's `state/vega`, 9.9 MB, is live in it; München, after the night's BEFORE rows). ≈218 MB of the model pool's leftovers in it wait for the operator's yes.
+
+- **RAGE, the RAG Engine (operator, 2026-11-01)** — the name of Louise's own engine, which every collection's embedding goes through ([rage.md](rage.md)). The name was the model pool's until then; every file now calls that "the model pool" (`model-pool.md`@c572c3b). Code: `app/rage/` (`dispatch`, `card_record`, `settings`).
+
+- **Recommended RAGE settings, part of a collection (operator, 2026-11-01: "A recommended, non binding, setting shall be part of a collection"; choice B)** (09 §9.19).
+  - **Built:** the signed file `rage-settings/<key hex>.json` in the SHARD, one entry per card type (`app/hold/rage_settings.py`); a node takes the entry for its own card type in the `[encoder]` keys its file leaves unset, through `collections.recipe_for`, so the gate measures it first (`app/rage/settings.py`); `hold rage-settings show|record`. No file, no change.
+  - **Open, on hold (before production):** the exchange between peers, above.
+
+- **BEFORE PRODUCTION (operator, 2026-10-31): jina-style encoders on llama.cpp, implemented and tested at f16.** The design is kept for the future (docs/notes/jina-llamacpp-parity.md §3). It is built and passes §4's tests on the node before production. Measured so far, by the f16 merged GGUF against torch: median cosine 0.999987, the same MRR@10, 5× faster, bit-exact to itself.
+
+- **DEFECT (invariant 11), wikipedia's archive-layer records lack their QIDs** (München, 2026-10-31). The 10-28 records build cut archive-layer rows from locators discovered before parser 5. Those locators had no page_props segment, so the records hold no `extra.wikidata` and no `extra.page_props`, which today's origin unit gives.
+  - The SHARD is consistent: records-vs-origin reproduces each record from its own locator, 5 of 5, and the sections are equal. But it holds less than the origin.
+  - Found because one parse's freshness test (#133) saw 1,310 of 2,000 embed candidates as origin-differs.
+  - **Root cause guarded:** a records build now stops on a row whose locator names only part of its unit (`plugin_io.StaleUnit`, wikipedia's `stale_unit`). A scan re-locates the row.
+  - **Repair:** count the affected parts (`louise dev index-drift wikipedia`, origin hashes); re-cut them with the page_props segment into a new snapshot (re-issued parts only, #48); carry each record's vectors where its content_hash is unchanged (sections are equal, so the chunks are identical, RULE 1). Then one parse deploys, and its freshness test (origin_hash = txt_hash) holds.
+
+- **Invariant 4 rewritten (operator, 2026-10-31): "nothing boosts" replaced by five rules for a weight** (attributed source; every moved result shows it; reader's choice or a measured, approved default; reorders, never removes; reproducible by versions). Point of view: reader's choice only. The catalogue-first default now marks the record it moved (`moved_by`, a badge on the Ask page). Weights come through annotations (reliability first; point of view later). The literary-form facet uses the library standard (MARC 21 008/33 + LCGFT; task: form facet).
+
+- **Several collections merged on calibrated relevance (operator, 2026-10-31: B; A kept to evaluate)** (docs/notes/federated-merge.md).
+  - **Built:** `[reranker] calibration` (Platt), `retrieval._merge_by_relevance`, `merged_by`/`merge_withheld` in the result; the measuring tool `tools/measure/fusion_calibration.py` (collect, judge with UMBRELA, agree, score). Off until a collection file carries a calibration.
+  - **Gap:** only gutenberg and pubmed rerank; wikipedia, normattiva, wikidata have no reranker (RERANK_URL empty), so a search including one stays merged by rank. The measurement lends them gutenberg's reranker and reports each list's own MRR before/after.
+  - **Next:** München runs collect/judge/agree/score on the 243 logged queries; B goes on if it beats today on MRR@10 and nDCG@10 (p < 0.05) with the judge checked; a reranker for the three goes to the operator with its numbers and latency. A (query-class prior) measured on the same set after.
+
+- **Flash attention on SYCL is not reproducible across fresh loads; turned off, it costs speed** (2026-10-31, München; approved-encoders.md).
+  - **Measured:** vega-medcpt-query and gutenberg's vega-qwen3-embedding-4b flip a vector now and then after a reload with FA on (medcpt-query in 3 of 8 runs; qwen3-4b in 4 of 8, a short text included). bge-m3 with FA on: 0 flips in 8 runs.
+  - **Control so far:** FA off. medcpt-query is live FA off (run 71d129c3).
+  - **qwen3-4b with FA off was bit-exact but WRONG.** The gate measured a median cosine of 0.126, so it was backed out. The cause is almost certainly P5, the ggml-sycl batched F16×F32 matmul on a non-contiguous operand, reached by Qwen3's GQA KQ without FA. **Fixed by the engine:** since 2026-10-31 08:42, qwen3-4b runs FA off on the P1–P5 engine (`vega-llama-cpp-p5`, MADLAD's). That is bit-exact (8 of 8 runs plus the 2,048 sweep) and correct (gate PASS, run ac7d01ea, worst 0.999737). gutenberg is resumed. Still open: the same engine with FA on, measured next.
+  - **The cost:** FA off ran gutenberg's chunks ~2× slower (2.0–2.3 chunks/s against 4.0–5.4).
+  - **The lever:** find why the SYCL FA kernel is not reproducible across loads (consistent within a load, intermittent across loads, on long inputs). A fix gives FA back to every encoder, with its speed. To be started once gutenberg runs again on a correct run.
+  - **FOUND (2026-10-31): oneDNN's fused SDPA.** `GGML_SYCL_ENABLE_DNN=0` never covered flash attention; `GGML_SYCL_FA_ONEDNN=0` does.
+    - qwen3-4b on P5 with FA on, oneDNN's SDPA: 4 of 8 runs varied, with a NaN and a 0.0865 wrong vector.
+    - The same + FA_ONEDNN=0: 8 of 8 bit-exact, no NaN, 23–45 % faster than FA off (approved-encoders.md).
+    - #124 makes FA_ONEDNN=0 the wrapper's Intel contract.
+  - **Rolled out 12:38 (rollout-116, #116/#117/#124):** the wrapper is part of the engine, and FA_ONEDNN=0 is in every SYCL model.
+    - Every collection was gated anew by the multi-load gate (#120): exact over 3 fresh loads, version-5 statements.
+    - gutenberg b36c5912; wikipedia 92775442 (its fingerprint moved: bge-m3 runs FA on, now without oneDNN's SDPA; worst 0.999939); pubmed 90105522 / 0df07afc; normattiva 7c990c09; wikidata dfcae2d9 / 7174aea8.
+    - Every other fingerprint stayed bit-identical.
+  - **Done (2026-10-31, München):**
+    - gutenberg on FA on + FA_ONEDNN=0 (run 0a80405f): exact multi-load gate, sweep clean; speed on real chunks about equal to FA off.
+    - louise-rerank-bge on FA on + FA_ONEDNN=0 since 14:06: 0 NaN, bit-exact across loads, 16–36 % faster (near-exact-runs.md).
+    - medcpt-query stays FA off: exact either way, not faster.
+  - **Next:** the CPU references tonight.
+  - **Decided (operator, 2026-10-31): KEEP** gutenberg's 10,476,253 chunks written with FA on (runs 94f8b022, 203479bf). They are valid at tolerance, and only their bit-for-bit reproduction is lost. A re-embed (~7.82 B tokens, ~35 card-days) stays possible at any later re-creation.
+
+- **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,
+  09 §9.5, 05 §5.3, 07 §7.4 amended). Invariant 11 wins over 08's
+  refusal: every image an epub has is carried in the figures container
+  as opaque bytes — SVG, GIF, anything over the caps — `carried: true`
+  where parser 10 wrote `false`. The closed list (jpeg, png) and the caps
+  (16 MiB, 64 MP declared) bind DISPLAY: the page says "not displayable"
+  with type and size and offers the file as `application/octet-stream`,
+  `attachment` (app/ask/figures.py, app/ask/api.py). What moves: the
+  record LINE and the figures container of the books that had such an
+  image (2,407 SVG and 46 GIF images; ten books for the SVGs). What does
+  not: `sections`, `content_hash`, `origin_hash`, every chunk — so every
+  vector carries. The live gutenberg collection takes it by RULE 1
+  re-creation carrying what is identical (02 §2.4 A1c, `louise dev carry
+  --rebuilt`), as parser 9 was; nothing has been run against a
+  live node. 4,096 figures per record stays in 08 as a cap on what a
+  record may name: enforced since 2026-10-25 (the build aborts over it,
+  `hold check`'s `figures` row fails it; it never was before).
+
+- **MADLAD on llama.cpp — DEFERRED to a separate session (operator, 2026-10-27: "keep things as they are, record the llama.cpp improvement, I will do it in a separated session").**
+  - **Live:** MADLAD stays on torch. The live backend and every validated run are untouched.
+  - **Done:** P3 is in deploy/localai/patches. llama-server now runs the encoder of T5 models (localai-bugs.md B16/P3).
+  - **Measured on the card:** a P3 test backend runs MADLAD in 6.29 GB, cold 9.5–11 s. One slot gives 3.03 s per translation (~18 s per question); 91.5 % of 3,078 translations are identical to torch's. Torch: 17–38 s cold, 3.2 s per question batched.
+  - **The two ways forward, both recorded:**
+    - "Waves" (P3b), server only, T5 only: translator-choice.md, "Waves".
+    - The interface-conformant per-sequence memory, staged with gates: [llama-cpp-encoder-decoder.md](llama-cpp-encoder-decoder.md) §9.
+    - The gates before torch is replaced: translator-choice.md, "Waves", "Gates".
+  - **Left in place for that session:** the test artefacts, listed in translator-choice.md, "Waves", "Where the work stands".
+  - **2026-10-28: P4 (waves) built and gated on the card, FAILS** (the top of this file). In-wave output is corrupted on SYCL and correct on CPU. The switch is on hold.
+
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 
-- **The DHT is back ON at the node** (2026-10-19 10:35, [dht-flood.md](dht-flood.md)):
-  libtorrent had announced each of 3,170 seeded member torrents by its own
-  infohash, and ~10k UDP flows filled the router's NAT table. The fix — the
-  swarm key, member torrents off the DHT (04 §4.2, amended) — is deployed
-  (f85a606); 49–110 conntrack flows since, against 14,194 before.
 - **The P2P review** (2026-10-19,
   [p2p-review-open-issues.md](p2p-review-open-issues.md), "The review"):
   seven gaps found when the second GPU peer joined, five fixed on the
@@ -36,33 +946,25 @@ it left open is below.
   and served a day longer, never offered for a new fetch, the fallback
   when the current copy is gone (operator's design, 2026-10-19). Perugia's first
   pass re-embedded led parts the node already offered (note §12, fixed).
-  Still open there: vector convergence (measure first), a leecher's
-  `records-vs-origin`. `share contribute` under the worker's lock is
-  BUILT (2026-10-19 night, 56b8a50: the PUBLISHER, scheduling-log.md):
-  the operator's decision is that both peers switch gutenberg to
-  `embed = "p2p"` once it is gated — Perugia runs everything instead of
-  the CLI loop, the node retires its nightly cron — each measured against
-  its CLI pass first.
-- **Wikidata, built to the create** (2026-10-19 night, [wikidata-build-plan.md](wikidata-build-plan.md)):
-  the plugin `wikidata` is registered — the dump reader, the pack and
-  label table in one resumable pass, the vendored textifier with our own
-  value formatter (D4 revised: Python, no service), the chunker
-  `wikidata-text` at the tokens of a pinned tokenizer (D6:
-  `tokenizers==0.22.1`), the slicing `range=`, the acquisition spec of
-  the dated dump. The recipe is a template with four values only the node
-  can give (the tokenizer's sha256, the weights digest, the stated run of
-  the jina-v3 task, `work.tokens`), asked of München; `hold collection
-  create wikidata` runs on the node once they are in, then the 103 GB
-  fetch and the pack pass (hours, resumable).
-- **`hold embedder calibrate`** is a stub: it wants two builds of one model
-  to compare (step 3).
+  Still open there: vector convergence (measure first; not decided). A
+  leecher's `records-vs-origin` is done (Perugia PASSED, 2026-10-24). The
+  PUBLISHER is built (56b8a50); the node's gutenberg stays on-demand
+  (operator, 2026-10-20), and Perugia is shut down (2026-10-25).
+- **Wikidata, re-created Monday 2026-10-26** on map `78399d60…` (29398cf):
+  parser 2, the history section, parts cut by content (RULE 1: the
+  version-3 pack kept, `--calibration-from`). Then the records build and
+  the text index. Scholarly articles, lexemes, niche languages and the
+  map's small misplacements go into ONE later re-creation. The 99 GB
+  version-1 pack is deleted after the build. Build plan:
+  [wikidata-build-plan.md](wikidata-build-plan.md).
 - **Normattiva, what the second part left** (2026-10-12,
   [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
   §7): the measurement before `shard_records` is fixed (a second archive
-  listing a month on), the Constitution's on-demand query, and no
-  collection created yet — the next collection is the quarantine's
-  guinea pig (never listed; the tooling it finds missing gets fixed).
-  Built the same day: the vector carry, `relations()`, the
+  listing a month on) and the Constitution's on-demand query. `normattiva`
+  is live (2026-10-14); its DAR-legal-it vectors are re-embedded bit-exact
+  in quiet hours (77148be, b2f3dd6); `normattiva-archive` is not created;
+  its `records-vs-origin` re-run is still owed.
+  Built on 2026-10-12: the vector carry, `relations()`, the
   central-directory delta, the member as origin unit, the `urn`/`eli`/
   `akn` reference source with the citation resolver
   (`app/refs/normattiva.py`; `keys` written at parser 6), the original's
@@ -71,7 +973,9 @@ it left open is below.
   repeal (`closures`, `validity_closures`; review §3.2 case 2).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
-- **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
+- **`backend_gate`** stays while any live Codex is version 1 or 2 (today:
+  wikipedia's parser-4 Codex, until wikipedia-v8 replaces it; re-count on
+  the node). History:
   Moving one to version 4 is a new collection AND a new space (09 §9.3), so
   its vectors would be recomputed — unless RULE 1 carries them. Measured
   2026-10-08 (32 random chunks re-embedded now vs stored, f16): gutenberg
@@ -79,19 +983,9 @@ it left open is below.
   — carryable; wikipedia by 1.5e-3, four times it (its first layer is the
   wikivec archive's engine); pubmed materially (cosine 0.958). So pubmed and
   wikipedia would be re-embedded in full, and `backend_gate` cannot go yet.
-- **The code follows the SHARD/parts vocabulary** (operator, 2026-10-08):
-  `app/pack/`, `KIND = "louise-pack"`, `shard_of`/`shards_of`, … — bytes
-  already written keep their names. *drag* is done (2026-10-11): code,
-  `shard/`, `source = "shard"`, the node's mounts and folders
-  (09's opening note lists them). The specification already speaks it;
-  the dated entries below keep the words of their time (pack, drag, shard).
-- **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
-- **Part deltas** (operator, 2026-10-11): a re-issued part is downloaded
-  whole, so one revised book costs its part (gutenberg: ~5 MB, plus up to
-  ~100 MB of plates if their container's bytes change). Options and a
-  recommendation (a patch packed on request by any peer holding the new part,
-  rebuilt by the platform's writer, the root still the proof) in
-  [part-deltas.md](part-deltas.md). Not decided.
+- **Operator**: file upstream [`localai-bugs.md`](localai-bugs.md) (step 15),
+  [`upstream-bugs.md`](upstream-bugs.md) (V1/V2) and
+  [`upstream-reports/wikidata.md`](upstream-reports/wikidata.md); none filed yet.
 - **The character cut** (2026-10-18, [char-cut-truncation.md](char-cut-truncation.md)):
   the platform cuts long inputs by characters, not to `ctx` tokens. Pubmed
   fails its own `vectors-sample` on it (74 of 1,088 sampled chunks, all
@@ -122,17 +1016,17 @@ it left open is below.
   abstract is an OtherAbstract, cut to their title
   ([pubmed-other-abstracts.md](pubmed-other-abstracts.md), a decision for the
   operator) — dropped with `dev drop-rows`, and 5 single misses; two fresh
-  seeds then PASS (1 and 3 rows under the tolerance, below the quorum). ~900 k
-  documents re-embed at night (cron jobs 7/8); old `pubmed` paused and its file
-  set aside, nothing deleted. **Open, first:** those residual misses (~0.2 % of
+  seeds then PASS (1 and 3 rows under the tolerance, below the quorum). Since
+  then all 39,994,988 documents are done, the collection is renamed `pubmed`
+  (2026-10-20), v6 is retired, crons 7/8 are disabled, and it is PAUSED. **Open, first:** those residual misses (~0.2 % of
   sampled rows, 2022 PMIDs: records revised after NCBI embedded them?) —
   compare every imported row with the title/abstract NCBI ships beside its
   embeddings (`pubmed_chunk_N.json`) once the internet is back, and drop the
   ones that differ.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
-  --resign` (A1d); the node still runs parser 4's Codex, and the switch's
-  order is in the note's §3 (after the character cut, a measured tolerance).
+  --resign` (A1d). The switch is under way: wikipedia-v8's records build
+  (2026-10-24 entries below).
 - **Vector writes stop below the disk floor** (2026-10-18, operator):
   `app/disk_guard.py`; `node show` lists the filesystems. ssd5 (LocalAI's
   models, ComfyUI's, Ollama's) stood at 94 % that day, 26 GB free.
@@ -192,7 +1086,7 @@ it left open is below.
   Still open:
   - **the robust layer is a watchdog, whatever the cause — now needed, since
     the cause is not the wake alone — and LocalAI has one**: the busy watchdog (`watchdog_busy_enabled`; ON since 2026-10-12 at 10 min, operator — its first second killed a pubmed encoder hung for 8 h, and LocalAI reloaded it on the next call with no hand;
-    `watchdog_busy_timeout`, 5m). It times each backend from its OLDEST
+    `watchdog_busy_timeout`, 5m — two values on record; confirm the live one on the node). It times each backend from its OLDEST
     in-flight request, covers every backend (VeGa or not, pinned or not),
     and force-kills (SIGTERM, SIGKILL after the grace period); the next call
     loads the model again. 5 m matches the worker, which abandons a call at
@@ -207,10 +1101,6 @@ it left open is below.
   - throughput the OpenVINO way: true batching (several items per
     `infer`) or an `AsyncInferQueue` with the plugin's own streams, instead
     of one item per gRPC call;
-  - a wedged backend is invisible until the worker's 300 s timeout, and
-    LocalAI's recovery does not kill it (localai-bugs.md). A watchdog that
-    ends a backend whose call outlives its bound would turn 7 h into
-    minutes.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -237,7 +1127,11 @@ Everything except two items travels through this repository.
    host/tunnel for the LAN address in every DEPLOYMENT.md command; nothing
    else changes.
 5. No local Python is assumed anywhere: `docker build --target dev -t louise-rag:dev .`
-   recreates the test image, and tests run as in Conventions below.
+   recreates the test image, and tests run as in Conventions below. The
+   dev image (with requirements-dev.txt) is not the deploy gate: the gate
+   is the image built from requirements.txt alone.
+6. The agent container (a Claude session beside the node) is described in
+   `deploy/agent/README.md`.
 
 ---
 
@@ -246,9 +1140,186 @@ Everything except two items travels through this repository.
 | phase | state |
 |---|---|
 | **Phase 0** — generalize, no network | **done.** CorpusSource + collections + `space_id`, five plugins, ReferenceSource/EntityResolver/`doc_keys`, query federation, acquisition layer with profiles, transfer manager. |
-| **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
-| **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
-| **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+| **Phase 1** — bundles + community | **built and exercised** between two peers on gutenberg (2026-10-19→25: bundles both ways, a SHARD fetched and checked). The *deliverable* — publishing a revived PubMed corpus — is still not done (after the wikidata work). |
+| **Phase 2** — swarm | **built** per 04 §4.2: BitTorrent v2 via libtorrent, digests, neighbours, the peer list and the offer (`app/share/gossip.py`, `peers.py`, `offer.py`). [`p2p-discovery.md`](p2p-discovery.md) is the earlier design. |
+| **Phase 3** — decentralize | no DHT of our own; libtorrent's mainline DHT finds swarms by the collection's swarm key (04 §4.2). |
+
+### 2026-10-25: the operator's decisions on the spec audit — every plate, keep all, the catalogue exception, CLAUDE.md aligned, a run gives back its own bytes, no silent dateless records
+
+From the audit of docs 01–09 against CLAUDE.md (2c6642e), the operator decided:
+- **"Every plate."** Every image the origin has is carried as opaque bytes, SVG and over-cap ones included. Only display decodes, and it admits only JPEG/PNG within the caps; any other plate is offered as a download (being built: a gutenberg parser bump, re-created under RULE 1).
+- **"Keep all."** A web page subscribed to a deposit is kept byte-exact, and its record is parsed from it (being built).
+- **"The final goal is the quality of the information retrieval."** The catalogue's first record after the reranker is kept, named as invariant 4's one exception (05 §5.6).
+- **"Align claude to the code."** Invariants 1, 4 and 10 updated.
+- **Batching, choice A.** The gate fails a run whose single-text passes differ (invariant 12, now measured). Batched answers must equal the single-text bytes, or the run is limited to one-at-a-time work (the 2026-10-12 band is gone).
+- **Dateless records, choice A.** A record a dated snapshot cannot place is a defect to fix, never a silent exclusion. Gutenberg's cause is a missing or damaged pg<N>.rdf in our copy. PubMed's record parser already falls back to MedlineDate and ArticleDate, so a dateless PubMed record means NCBI gave no date of any kind. Counts are asked of München before the fix.
+- **RULE 2.** The Library's dialogs ask only a name; the node resolves the encoder from the Codex's weights (being built).
+- ~~**Invariant 5.** A deposit source's git clone draws from the bandwidth budget~~ — as it lands, git paused while each increment is drawn (2026-10-25).
+
+### 2026-10-25: the origin's inconsistencies, logged and flagged (operator; dateless records, choice A)
+
+"Add any inconsistency found in the corpora in a report. Make the parsers such that on a regular basis any inconsistency is logged and flagged." The report: [corpus-inconsistencies.md](corpus-inconsistencies.md). The mechanism (06 §6.1 amended, `app/issues.py`): a parse returns `CanonicalDoc.issues` beside the record, never in it (no record byte, hash or PARSER_VERSION moves; nothing is rebuilt); `hold records build` records them for every record it parses, the worker's rdf stage for the codes its read checks; per document the checked codes are replaced, so a fixed origin clears them; each is logged once with the collection's name; `hold collection show`, `node health` and the Library's card count them, `hold issues list` lists them. Wired: `cutoff-undated` (the platform's, every gutenberg and pubmed record on every build, cutoff or not); gutenberg `rdf-missing`, `rdf-unreadable`, `rdf-no-ebook`, `epub-unreadable`, `epub-image-missing`, `epub-document-missing`; pubmed `no-publication-date`, `no-title`, `other-abstract-only`; normattiva `frbr-expression-stale`, `expression-before-publication`. The manifest gains the table `issues`, created on open (07 §7.3 `dev migrate schema` amended). Found on the way: `hold records build` passes no cutoff to the builder, so the build databases' 0 "no cutoff date" skips (München) count nothing; the first build with the flag gives the real number.
+
+### 2026-10-25: the records build A/B — every part byte-identical; the build takes the whole cpu quota
+
+München ran en/2M's first 250,000 records of wikipedia-v8 (2,096,112 chunks, 125 parts, a 4-cpu quota) under four trees. The 125 parts were byte-identical in all seven runs. Wall time:
+- the old pool, 11 children: 761 s;
+- a833c1e, 3 children: 630 s;
+- 4 children: 544 s, 1.16× faster than 3 at +3 % CPU per record;
+- c3dcb4c (the exit fix), 3 children: 623 s.
+`hold records build` now takes the whole quota (6694b19); the worker keeps quota − 1. The live build runs on c3dcb4c since 13:37 CET and takes 6694b19 at its next restart. Table and decision: [scheduling-log.md](scheduling-log.md), 2026-10-24 row.
+
+### 2026-10-25: the wikidata family map approved — `78399d60…`
+
+The third revision's report under 41e3112's roots (legislation a work root, cell line a molecular root) was approved for Monday's `create` (29398cf; [wikidata-family-slices.md](wikidata-family-slices.md)). Small misplacements (railway station, tram stop, park, ship, facilities) wait for the one later re-creation, with scholarly articles, lexemes and the niche languages.
+
+### 2026-10-25: a stopped records build never exited — the parse pool fixed (München's find, invariant 2)
+
+wikipedia-v8's build committed its part on SIGTERM, returned from main, then hung in the interpreter's exit for 15 minutes until it was SIGKILLed. Nothing was lost. The causes, both reproduced on Python 3.12.3 (the node's interpreter):
+- CPython gh-115634: a pool loses the children that retire at their task limit and is left with none, with parts queued;
+- a pool thrown away by the watchdog is joined at exit for as long as its children never answer.
+
+Fixed in `app/parallel.py`:
+- the upstream fix is backported;
+- a pool that is thrown away has its children terminated until its manager ends;
+- the exit stops the pool first.
+
+Also: a hung wikidata pack pool is stopped the same way, and the build's log lines are flushed. Tests: tests/test_parallel_exit.py, under 3.13 and 3.12. Measurement row: [scheduling-log.md](scheduling-log.md); pitfall 19 in [scheduling.md](scheduling.md) §5.
+
+### 2026-10-25: the entity boost removed — 05 §5.2, "nothing boosts", measured; an identifier restricts only as a filter (operator: A)
+
+The search added 1/60 to the fused score of a candidate the query's entity tags. 05 §5.2 forbids it (task #33, found by PR #4). Measured on TREC Precision Medicine 2017–18 (80 topics, NIST's judgements, [query-campaign.md](query-campaign.md)), NDCG@10 was:
+- no boost, no restriction: 0.3143;
+- the boost: 0.3073 (won 16, lost 27);
+- the spec's restriction to records tagged with any named identifier: 0.3002; with all of them: 0.2983. Both are ~2 s slower.
+
+None of the differences is significant. The boost is removed, with its lookup; the tests now check that a tag moves nothing. Deployed after tonight's priority measurement (one change per deploy).
+
+DECIDED (operator, "I agree with A"): 05 §5.2 amended. An identifier the query names pins its facts and restricts nothing; a reader who wants the tagged records alone asks with `--filter keys=<id>` (`filters: {"keys": …}` in the API), bounded and refused when too broad as a facet value is. Built in `app/ask/filters.py` and `query_service.TAGGED_SQL` (driven by the entity index, plan-checked); tests in tests/ask/test_filters.py. Timed on pubmed's manifest (München, c14af77, beside the A/B on 4 cpus): a refusal (TP53, EGFR, HGNC:5172, each over 20,000 tags) reads the entity index only, 9–83 ms cold and 1 ms warm (6.4 s before c14af77). BRCA2's 12,053 records take 0.57 s, of which the uid fetch is ~47 µs a row (12.8 s cold before). A covering index on doc_keys(entity_id, uid) would cut that 0.57 s further; it is not added, because 0.57 s for a filter the reader asks for does not pay for a second copy of doc_keys on a 40 M-document manifest. Revisit if the filter becomes common.
+
+### 2026-10-25: Perugia's hand-over, and the coverage count that lied (Perugia, München)
+
+Perugia shuts down for a long time (operator). Its 1,008 bundles (336,586 chunks) were already on the node. 848 chunks of 9 books (lang=en/00872–00875), held only there, were bundled (4 bundles, 1,168 chunks) for the node to take in. The 13 München-key bundles it held cover parts the node covers fully. Perugia stays up until München's per-part confirmation.
+
+Found on the way:
+- **a race** (f386934, Perugia): two writers of one possession cache entry shared a temp file;
+- **a silent fallback** (5863f81): `counting.view_kwargs` caught the race's error and counted the rows. For a re-minted collection that is only its own bundles: 114,154 covered for 10,164,506. A failed count is now `CoverageUnknown`, never the undercount. The publish pass defers, leading's "every doubt embeds" stands by name, and the CLI and card show no figure.
+
+**The 127-part gap is stale manifest counts, not data** (München, coverage_explain and a re-cut of the records, 2026-10-25):
+- every bundle is credited, and cutting the records gives exactly the snapshot's part totals (7,714 / 8,820 / 7,085);
+- the live parse agrees with the records (gutenberg:52478 108/108, manifest 105; 52483 69/69, manifest 82), so invariant 3 holds;
+- `documents.chunks`, and the text index it was counted from, were written by an earlier index pass under an earlier parse and never refreshed, because `fts_version` stayed 1. Possession converts covered records to chunks through that column, hence the undercount. Whoever changed the live parse back then did so without a version bump.
+
+Remedy, targeted (RULE 1, not a whole-collection FTS_VERSION bump): `tools/measure/chunks_drift.py --all --ids-out` lists the drifting records, and `louise dev reindex --ids` (new) queues exactly those for the text-index stage (fts_done = 0, embedding untouched). Runs by day after tonight's measurement.
+
+CLOSED by `louise dev index-drift` (07 §7.3, app/hold/drift.py): the manifest's counts, the text index and, on a seeded sample of parts, the index's stored chunks, against the records. `hold check --checks chunks` still re-cuts against the snapshot only.
+
+Its cost, MEASURED at two scales on a synthetic agreeing collection (3 chunks a record, ~500 characters a chunk, parts of 5,000, built straight into parts, manifest and text index; this container, 2026-10-25):
+
+| records | full walk, `--sample 0` | default `--sample 0.05` |
+|---|---|---|
+| 20,000 | 0.84 s (41.9 µs a record) | 1.26 s (63.0 µs a record) |
+| 300,000 | 17.3 s (57.7 µs a record) | 19.5 s (64.9 µs a record) |
+
+NOT MEASURED at 2 million: that fixture's build filled the shared disk at 1.6 M records and was stopped. Extrapolated LINEARLY from the 300,000 rate, 2 M records take ~115 s unsampled and ~130 s at 0.05. Two points do not prove linearity: the unsampled per-record cost rose 38 % from 20 k to 300 k (the sampled cost 3 %), and the cause is not isolated (page cache or the index aggregation's growth with the index). A run on a real node's collection settles it.
+
+### 2026-10-25: the gap between the corpus and Wikidata is recorded — "rumors" (operator)
+
+"'The gap' shall be recorded, it is an additional pillar that can be optionally used for searches, the 'rumors'. Review over review of wikidata the current 'rumors' shrink, but they are part of the collection." Design in [rumors.md](rumors.md):
+- a rumor is a corpus-derived claim (a new entity, connection, conflicting value or tag) above a measured confidence floor, which the current wikidata snapshot does not state;
+- its state (open, confirmed, rejected, known) is recorded per snapshot in its own member, keyed by claim uid, and closed rumors stay in the collection;
+- in a search, rumors are an optional pillar, off by default: facts beside hits, a separate list, a filter, never fused.
+This supersedes PR #4's "the gap is a view". The spec changes are listed for approval and built with wiki-gutenberg. Review of PR #4 itself:
+- one real finding, the entity boost against 05 §5.2 (task #33);
+- to fix before merge: wikidata linking with gutenberg's encoder (wikidata's space is jina-v3), torch determinism for GLiNER, new dependencies to ask, per-book surface anchors, linking precision.
+
+### 2026-10-25: the reranker's misses — the night's 117, a fresh check, one retry, and query steps first (operator)
+
+FOUND (2026-10-25, München's heading full search; the cause of the HTTP 500s is still open): 117 of 496 queries lost their rerank inside the budget overnight (95 on arm 0, 12 on arm 2, 10 on arm 3, rising through the night) while normattiva's re-embed ran on the card. The asymmetry between arms points at a first-call cost (a load or a wait behind corpus work). Asked of München, read-only: the arm order, how many LIVE searches since 22:30 came back `reranked: false` and why, and the harness's why/ms per miss in Sunday night's resume (deployed conditions). If live searches were hit, this is a defect fixed before anything else, through scheduling.md §6 with numbers.
+
+FIX, part 1 (operator 2026-10-25: "Fix this defect with priority over all the rest"). app/model_load.py's check against LocalAI's `/system` trusted a 2 s cached answer for every caller. In a search, the query embedding's check refreshes that cache, and the rerank's check a moment later believed it. An eviction between the two, by LocalAI's reclaimer making room for another model's load, sent the rerank to a cold reranker: the 7–8 s load ran INSIDE the 8 s budget, against the operator's rule of 2026-10-09 ("Timeouts shall not include cold start"). Reproduced by test (`test_an_eviction_after_a_cached_check…`, which fails on the old code). Now:
+- a single request a person waits on asks `/system` fresh (rerank, chat, translation: `max_age_s=0`, about 11 ms);
+- a query's embedding burst shares a 0.25 s answer, and corpus work keeps the 2 s cache;
+- each loaded model's backend pid is noted, so a rerank that times out with its model gone or re-spawned says "evicted before the request and loaded again inside its budget", and the event log records that cold start, distinct from a reranker that was merely slow.
+**It does not explain the 117** (München, 2026-10-25 07:30 CET, LocalAI's log 22:30 CEST to 07:30 CET, 88,346 lines): louise-rerank-bge was never loaded or evicted all night, and there were no cold-start lines for the rerank. The reclaimer fired 4 times, at 85.1–86.5 % of its 85 %, evicting the 4B encoder twice and chat twice. The misses were **HTTP 500 refusals**: /v1/rerank answered 5,662 × 200 and 130 × 500 (2.2 % of calls), every 500 between 23:00 and 03:00 CEST, with no reason in LocalAI's log. A score-variant query sends 4–6 calls in sequence (one per language group), and any failed one makes the whole list the fused order, so 2.2 % per call becomes 10–20 % of queries. Re-run by day with normattiva idle: 6 of the 117, 32 calls, all 200 (340–5,374 ms). Part 1 stays as a guard for the rule (a stale check is a real window), not as the fix. Also found: two LIVE searches spent 30.4 s (20:05 CEST) and 42.6 s (00:06 CEST) in the rerank, both while the campaign was reranking. Separate processes share no gate, so a person's calls can queue behind the harness's inside LocalAI. Next: the 500's body and the backend's stderr, VRAM and gtt per second, concurrency on the reranker, and the YAML's slots and context.
+
+München's day tests: 6 of the missed queries (32 calls) and 18 reranks of 69/45/9 × 4.4k characters beside the 4B encoder embedding (VRAM peak 83 %) — all 200. bge runs `parallel:1`, context 2560, batch = ubatch 2560, flash attention off. At 00:06 CEST the person's search shared the reranker with the harness and the card with a burst of 86 embedding calls by normattiva in one minute, with 2 × 500 of 5 calls. So the refusals come under load and pass at once.
+
+FIX, part 2: a 5xx is asked again ONCE, after 0.25 s, when at least a second of the budget is left (`retrieval._rerank_call`). The rerank is a pure function of its body, the same policy as urllib3's `Retry` on a status list and gRPC's retry on UNAVAILABLE. One refused call of a query's 4–6 no longer costs the whole list its rerank. The reason now carries the server's own message (`HTTP 500: <LocalAI's error.message>`) and says when the second try failed too, so a live search records the cause the logs lack. Tonight's harness (d6ddc85) logs every refused call with LocalAI's body. The per-call 500 rate measures the reranker; the per-query misses measure the fix. The cause of the 500s is still open until that body is read: the backend's allocation or decode failing under the card's load is the reading.
+
+Operator, the same day: the retry treats the symptom; "Embedding shall have the lower priority and query processing the highest; the subsequent steps of a query in process shall be processed first to avoid wasting the effort spent for the previous steps." **FIX, part 3, the root (app/rage/dispatch.py):**
+- The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY < RERANK < CHAT. 09 §9.12 is amended: the same five header values, a new order.
+- Corpus work stands aside on the WHOLE CARD while any step of a person's query holds the node's claim. Its next request and its encoder's warm wait, bounded by the request's own timeout (then a deferral), and wake on stop.
+- The device-wide yield removed on 2026-09-20 (chat's clock) returns, with the GPU governor holding the clock.
+BEFORE numbers and the scenario are in scheduling-log.md (2026-10-25). Correction: the night's corpus work beside the reranker was GUTENBERG's on-demand embedding of the books the campaign's searches touched, at 1 text a request, 0.43 s each, two in flight. normattiva embedded nothing. The claim stays PER STEP: a whole-query claim (04b4f50, reverted in 1b8d8cc) would have idled the card for the 3.4–4.1 s of gaps per query, while a corpus request in a gap shares the card with the next step for at most ~0.43 s. Found before deploying it (München): **the GPU governor was not running on the node.** There was no TrueNAS app and no `app.gpu_governor` process, and the System status reported none. Its YAML records a deploy on 2026-09-20; it is not known since when it has been gone. So chat has run at the idle clock whenever the card was otherwise quiet. It is installed from deploy/truenas-gpu-governor.yaml before 7cc6975 (as 50030dc on c3a7612) goes out, with min_freq checked idle, during a search and after. Also: the test fake in test_rerank_per_collection.py now carries a status code, instead of product code reading one with a default.
+
+### 2026-10-24: the family map revised on the node's first report — `built` split from `heritage`, `internal` a fallback, place's roots narrowed
+
+The pack's version 3 on the node (München, 17:13–18:35 CEST, 82 min: class tree 1,256 s, codes 3,668 s; 5,231,012 P279 links; largest item Q141715864; map `f79007bd…`, 3.4 MB; codes 122 MB): scholarly 114,950 (+46,010,584 pruned), internal 9,677,031, heritage 5,808,872, event 1,472,201, person 13,736,759, organization 3,738,186, place 7,963,064, work 7,704,829, taxon 4,168,948, property 13,972, other 21,497,371 — summing to the manifest's 75,896,183. München's review found `other` unlisted, churches in place, legislation in internal, every built structure in heritage. Revised before `create` (families.py; wikidata-family-slices.md §5): `heritage` = monuments, archaeological and heritage sites and the designated; new `built`; `place` = settlements, administrative areas, landforms, bodies of water, protected areas; `internal` a fallback; the report lists `other`'s top 50 and probes 30 known classes. Next: the codes and report of the revised map on the node (~1 h CPU), reviewed, then `create`. *Done 2026-10-25: third revision; map `78399d60…` approved (29398cf).*
+
+### 2026-10-24: wikipedia-v8's records build ran on ~1.3 of 4 cpus — the pool sized from the quota, the pages streamed
+
+München's report (18:20Z): the build is not done by Monday 07:00 — 13.37 M of ~74.8 M records, ~120 rec/s, 4–6 days continuous; and only ~1 cpu busy. Their profile (py-spy, read-only) found both causes: `PARSE_PROCESSES` from `os.cpu_count()` = the host's 12 inside a 4-cpu quota (11 children), and a barrier per page of ≤500 documents with a timeout over the whole page (47.8 % of children's samples idle; 15 pages re-parsed serially in 18 h). Fixed in two separately measurable steps, the before numbers and scenario in scheduling-log.md: `config.available_cpus()` (affinity and the cgroup quota, as JVM/Go/.NET read it) and `parallel.compute_pages` (the next pages submitted while the caller writes this one; a progress watchdog, only unanswered parts recomputed). Byte-identical parts (the pool-vs-serial build test). Monday's wikidata does not wait for wikipedia-v8. The operator decided day running on weekdays (2026-10-24): the build runs 08:00–12:00 and 13:30–17:00 as well as 22:30–06:00 (node time, CEST/CET), and is stopped outside them (SIGTERM: it finishes the part, commits, exits 130, and resumes at the next window). Weekends are unchanged: the build runs all day. Set by München (TrueNAS cron, the quiet-hours pattern): /root/louise-scheduled/wikipedia-build.sh start|stop (stop = SIGTERM, then docker wait ≤ 15 min, logging the exit code and the last part written); cron 18 stops at 06:00, 12:00 and 17:00 Mon–Fri, 19 starts at 08:00, 20 at 13:30 and 22:30, and 21 is an idempotent start at 00:05 Sat and Sun (Friday 22:30's run continues to Monday 06:00). The first stop/resume (Mon 12:00 → 13:30) is checked: exit 130, and no part cut twice.
+
+### 2026-10-24: the re-slicing daughter, built — a family added reuses every record and vector, equal to a build from scratch
+
+The second half of the operator's requirement ("I agree"). `hold collection continue --reslice` (the slicing a creation gets now: the pack gives the map of the code's current family list over its class tree, built from the `subclass` table in a minute when the list changed); `dev carry --resliced` (amendment A1g: only the slicing differs and the target cuts by content — the manifest, text index and vector table carried, no snapshot compared); `hold records build <daughter> --records-from <mother>` (her parts from her mother's latest snapshot's record lines, indexed per part from each part's own trailing index, none parsed, each record cut into chunks again for `chunks_root`; refused unless only the slicing differs). Test: a mother built from the origin, a daughter with a family added (`city` before `place`) built from her record lines with the parser forbidden, and a collection built from scratch with the new map — the daughter's parts are the scratch build's, paths and bytes. Amendment: 02 §2.7. Full suite 5252 passed, 2 skipped.
+
+### 2026-10-24: parts cut by content — a daughter with a new family map equals a collection built from scratch
+
+Operator: "the structure must be such that if a new family is added a daughter allows you to reuse all the vectors and corpus of the mother. It must be functionally equivalent to a new collection created from scratch", then "I agree" to B: content-defined part boundaries in Monday's creation. A Codex whose slicing declares `parts: {rule: "content", min, max}` (wikidata's family block: 10,000 / 40,000 around 20,000) cuts each slice where a record's uid fingerprint (SHA-256, first 8 bytes) marks a boundary past `min`, or at `max` — content-defined chunking (LBFS; FastCDC's bounds), the record as the unit. The layout is a pure function of each slice's records: from scratch, resumed, updated or a daughter's, the same parts byte for byte; a change re-issues its part and at worst the next few; no closed parts to keep. The `records` check verifies each sampled part's cut. Amendments: 02 §2.2 (a record's slice is the one its fields give at each snapshot, for such a collection), 09 §9.3 `parts`, pack-format §2. Tests: purity and locality over 20,000 uids, the check, a family collection built whole and stopped-and-resumed after every part — the same parts. Full suite: 5249 passed; 33 errors and failures under parallel load in tests/vega, the GPU governor, run_check and quarantine, all 390 passing when run alone. Owed next (*done: af32643*): the daughter step itself — re-slice from the mother's record lines (no parse), carry the vector table across the new parts (no GPU), and a test that the daughter's parts equal a from-scratch build's.
+
+### 2026-10-24: a family added later — every pinned map stays readable (defect found and fixed)
+
+Operator: "What happens if a new family is created?" Answering it found a defect in 0f0c02f: `load_map` read only maps whose family list was the code's current one, so adding a family to the code would have made every pinned map — and every collection sliced by it — unreadable. Fixed before anything was built on it: a map carries its own family list (precedence order) and roots and is read by them; codes are per map; the code's list is only what a NEW map is written with. Map bytes unchanged, so München's upgrade ahead from e0cb788 stays valid. A new family itself: a new map — before publication a re-creation (family codes again, ~40 min CPU, and the records re-cut; vectors the same bytes, their carry across a re-cut owed when it first happens), after publication a new collection whose parts peers fetch again (wikidata-family-slices.md §7). Test: tests/test_plugins_wikidata_families.py (18).
+
+### 2026-10-24: no official daughters so far (operator, RULE 1); the recommendations accepted
+
+Operator: "No official daughters so far, rule 1. I accept your recommendations". While nothing official has been published, a change to what a collection is goes into a RE-CREATION carrying what is identical (the pack, `--calibration-from`, the vectors of unchanged chunks), never a daughter — CLAUDE.md RULE 1's examples, wikidata-family-slices.md §7. Accepted: the 99 GB version-1 pack beside the dump on tank is kept until Monday's records build has finished, then deleted (München does it); the family list is reviewed from the pack's report before `create`; scholarly articles, lexemes, the niche it/de/fr/es sections (after their pilot) and any root fix go into ONE later re-creation; embedding by family starts with heritage, events, places and people (phase 2, `embed_slices`); the reranker: the score stays unless run 5 shows otherwise — run 5 complete (496/496, 2026-10-24 23:04 CEST): no variant dominates (titles MRR score 0.834 / base 0.809 / slots 0.802; descriptive 0.412 / 0.422 / 0.419, R@10 0.714 / 0.687 / 0.701), so `score` stays (reranker-scope.md §14a). München runs the pack's version-3 upgrade ahead of Monday from e0cb788 (create's corpus lookup after the rename to `wikidata-p1`). *Done 2026-10-24.*
+
+### 2026-10-24: wikidata sliced by family — built: pack version 3, the map pinned in the Codex and carried in the SHARD
+
+Operator: "Go with A" (a family map pinned at creation). Built: app/plugins/wikidata/families.py — the rule (twelve families in precedence; an entity takes the first among its non-deprecated P31 values, a heritage designation makes it heritage; a CLASS takes its NEAREST root, a tie to precedence: precedence alone would have filed every municipality under organization, through "local government"), the map as canonical bytes named by their sha256, the walk of classes newer than the map, the slice `family=<f>/range=<n>`. The pack's version 3, upgraded in place from version 2 (RULE 1, no pass over the bz2): `subclass` (every item's P279 links) and each chunk's largest item, then the dump's own map (`families-<h>.json`), then every entity's code under it (`families-<h>.u8`, one byte an entity) and `families-<h>.report.json` (each family's records, pruned entities and the 25 classes that fill it most, with labels). Parsing does not wait for it (a version-2 pack whose names are done is enough); discovery does. `create` takes the slicing block and the map from the plugin (the pinned dump's pack; several dumps and no `snapshot` are refused in plain words) and writes the SHARD member `slicing/<sha256 hex>.json`; every snapshot lists it (09 §9.4), `share` moves it as the member `slicing` (09 §9.16); the records build reads the Codex's map from the SHARD, checks its hash and slices by the pack's codes (the parse is the fallback, through the same map); the `records` check verifies the member and each sampled record's slice (03 §3.2). A Codex sliced by id range — the wikidata of 2026-10-20 — keeps its ranges. A build never runs a second codes pass beside the worker's own (it waits). Amendments: pack-format.md §2, 09 §9.3 / §9.4 / §9.16, 03 §3.2. Tests: tests/test_plugins_wikidata_families.py (16, the end-to-end plan pass included). *(Upgrade and review done; Monday's order is now: deploy → `create` on map 78399d60 → records build.)* Monday's order on the node, as first planned: deploy → the worker's scan upgrades the pack (~1 h: the class tree ~18 min, the codes ~40 min, as the classes run measured its two passes) → READ the report before `create` (the family list is fixed for the collection's life) → `create` on the new target → the records build.
+
+### 2026-10-24: wikidata's history section, in parser 2; scholarly articles and lexemes later; the slicing constraints written down
+
+Operator: "Go with family slices and the history section now", then "Go with 3" (scholarly articles and lexemes join later, not in Monday's re-creation) "also if it makes sense choose which languages to fetch and embed", then "explain the slicing constraints and future proof constraints". The history section: after each language's text, what the best-rank filter drops (a property's normal-rank statements when it has a preferred one; not quantities, not external ids; each with its qualifiers; at most ten a property, the most recent first), headed `en:history`, under "Other statements include" — the English text stays byte for byte (`textify.history_text`; the word index files it with English, `fts.by_section_language`). Parser 2 still: nothing was built with it. The constraints, and the languages answer (fetch: no choice, a record keeps every language; embed: English now, the niche it/de/fr/es sections with parser 3; no `lang=` slice key — announced, then withdrawn: it would be `mul` for every item): [wikidata-family-slices.md](wikidata-family-slices.md) §7. The binding one: the family list is fixed at creation, so its sizes are reviewed before `create`.
+
+### 2026-10-24: Perugia — gutenberg's records-vs-origin PASSED over the network; quarantine cleared
+
+The real origin check the operator asked for (2026-10-23: no `ack --origin-unchecked`), made possible by c3b9d79's network re-fetch for rsync origins. On b3ac1be (full suite 5149 passed; smoke clean; qwen3-4b bit-identical), 12:27–12:50Z: PASS, 87 records re-parsed from the origin, 0 differing, 84 moved (the mirror regenerates book folders — identical but for origin_hash, counted as reproduced, 03 §3.2 as amended 2026-10-07), reading 87 of 4,100 origin units, 241 MiB of the 256 MiB a check may read (operator, 2026-09-20). One run's depth: 0 of 87 bounds the per-record failure rate at ~3.4 % (95 %); seeds differ per run and per peer, and `--origin-mib` raises it for a deeper run. Copy state: in use.
+
+### 2026-10-24: wikidata sliced by family with a map pinned at creation (operator: A); the history section; nothing pruned
+
+Operator: "Propose a way to choose what to embed like it is currently done for Wikipedia language fetching/embedding … If not written explicitly in the guidelines a collection cannot prune any information from the corpus" (CLAUDE.md, invariant 11; and "Always give a pros cons", Style). The Wikimedia-pages pruning proposal is withdrawn: they stay records, and what a node embeds is chosen by slice, as Wikipedia by language. Family slices met the rule that a slice is stable for a record's life (pack-format.md §2): a class tree is not. Option A — the map of class to family pinned at creation, an amendment of the slicing rule — chosen ("Go with A, but write down today's report"): [wikidata-family-slices.md](wikidata-family-slices.md). With the history section, both go into Monday's re-creation; its records build moves by about a day. Wiktionary and Wikidata's lexemes written down as collections to come ([future-collections.md](future-collections.md)).
+
+### 2026-10-24: what the wikidata text dropped or misread — four fixes in parser 2, three things counted
+
+Operator: "check if there is any other information from wikidata that we silently ignore like the original language". Fixed in parser 2, before any record: `novalue` was written "has <property>", the opposite (upstream; now "no value", Wikibase's wording), `somevalue` lost its qualifiers (an unknown date's bounds), a lexeme value was written as a Python dict (upstream), a quantity lost its ± (our formatter). Counted in the next classes run: the statements the best-rank filter drops (former countries, names, populations), references to merged or deleted entities (the JSON dump has no redirects), Wikimedia's own pages kept as records (categories, templates, disambiguations). Upstream items W6, W7 in the report. The table: wikidata-build-plan.md, last section. The node's pack is at version 2 since 12:00 CEST (in-place upgrade, 37 min 38 s: 2,215 language codes, 17,954,384 names; RULE 1 against an hours-long rebuild). wikidata-refs version 3 synced from it: 121,724,461 rows in 817 s (refs.db 11.16 → 12.62 GB); the 182,531 entities with no label at all have no row. `ask lookup`: Q42 "Douglas Adams" (its label is `mul` in this dump), Q3235171 "Les Roses de la vie" (fr), Q3242104 "Liouberetskaya" (fr, the Latin label over the Russian). The operator also approved the niche selection (a language's section only where Wikidata says more in it than in English) and the pilot before the full embedding.
+
+### 2026-10-24: monuments, buildings and events measured — 10.4 M entities, 1.6 G tokens a language; the occurrence tree is polluted
+
+`tools/wikidata_coverage.py classes` on the node (51 min, read-only): 10,437,567 entities selected (built structure 5.64 M, monument 0.67 M, archaeological site 0.36 M, occurrence 3.90 M of which planned event 1.44 M, heritage designation alone 0.51 M). Wikidata names them in Italian (label or mul) for 11.6 %, German 25.3 %, French 21.2 %, Spanish 12.7 %; their texts' other labels exist in Italian for 86 %. One more language for all: 1.61 G tokens, 3.7 months of wikidata's budget; only where Wikidata names the entity in that language: 1.14 G tokens for all four. Barbacane/barbican and merlon are in the built-structure tree; machicolation needs architectural element (Q391414). The occurrence tree brings in clinical trials, theses, statutory instruments, stars and coins (W5 of upstream-reports/wikidata.md; W3 six P279 cycles, W4 the missing-label worklists, written). Next: a second run with the event roots' chains; the operator's languages decision. *Both done (b3ac1be; languages decided 2026-10-24).* And a pack of NEWER code is never started over (München's safety check: the deployed version-1 worker would have unlinked the version-2 pack).
+
+### 2026-10-24: wikidata — no id where a name exists (operator); the pack's `name` table, upgraded in place
+
+Operator: "As a general rule showing an id is meaningless for humans; in case there are multiple non English languages use in order: 1. the original name if it can be determined and if it's in latin characters 2. Any other language in latin characters. 3. The name in the original language if it can be determined." names.py — the original name from the entity's name statements (P1705/P1559/P1448/P1476/P2561), then its label in its original language (P407/P364/P103 through each language item's code, P424: the language lookup); Latin by Unicode script; among labels the entity's own wikis, then French, Spanish, Italian, German, then Wikidata's listing order (operator: "Go with your recommendation and the language lookup"); any label before an id — in parser 2: the title (20.8 % of the records were titled by their id), the entity's own name in its text, every referenced name, and `ask lookup` (wikidata-refs ref_version 3). The pack (PACK_VERSION 2) gains `language` (written with the chunks) and `name` (a pass over its own lines after them); a complete version-1 pack is upgraded in place by two such passes, not rebuilt from the bz2 (RULE 1); parser 2 parses only from a pack whose names are done, every document deferring before that. wikidata-build-plan.md "No id where a name exists".
+
+### 2026-10-24: wikidata parser 2 — a referenced label falls back to `mul`; the collection is created again before its records
+
+The vendored textifier skipped upstream's `mul` step for REFERENCED entities (the entity's own label had it): an entity labelled only in `mul`, Wikidata's default label since 2024, was written as its id in the text of everything naming it. Fixed as parser 2 (textify.py `Normalizer._chain`: language, `mul`, fallback — upstream's `get_lang_val`), with Italian connectives inert for English. The Codex of 2026-10-20 names parser 1 and nothing was published, so wikidata is created again from the same recipe before Monday's records build (RULE 1: calibration document side reused with `--calibration-from`, the pack kept, the text index rebuilt as already planned; wikidata-build-plan.md "Parser 2"). Counted on the node (`tools/wikidata_coverage.py mul`, a clustered sample of 8,823 kept entities): 280 English texts change (3.2 %), ids written 870 → 506 of 155,247 label lookups — "PlayStation 2", taxa named by their scientific `mul` label. Titled by their id (no English, no `mul` label), exactly over the manifest: 15,765,162 of 75,896,183 records, 20.8 % (about one in five; "one in four" was read off 20 entities).
+
+### 2026-10-24: monuments, buildings and events in more languages — designed, measured first; a standing report to the Wikidata team
+
+Operator: "I want that also monuments, buildings and events are full text translated as well / As ancient and uncommon words (barbacane, barbican) if it fits / Any improvement to wikidata goes in a report to be submitted to the wikidata team for integration." A daughter after the English build; per added language, the textifier fed Wikidata's own labels (no machine translation: records reproduce from the dump); the selection is the P279 closure of architectural structure, monument, archaeological site, event and occurrence, their classes (the vocabulary: barbican/barbacane), and heritage designations (wikidata-build-plan.md, last section). `tools/wikidata_coverage.py classes` counts it on the node first. The report: [upstream-reports/wikidata.md](upstream-reports/wikidata.md). Open: the languages (recommended it, de, fr, es). *Decided 2026-10-24.*
+
+### 2026-10-24: wikidata is searched by name in every language (operator: "names only")
+
+"Go with names only, before Monday's records build." Every label and alias of an entity, in every language (`index_names`, from the record's `extra`, which keeps the whole entity), is indexed as whole-name keys on the record's first chunk, with its popularity (sitelinks). `fts.search_names` matches the question's word sequences (up to 8 words) against them — the longer name first, then the most linked: Wikidata's own near match and rescore (WikibaseCirrusSearch), so a famous entity is not outranked by an obscure one of the same name, as BM25 over a bag of every name would rank it. Keys are `|name` and `<lang>|name`: a search limited to languages matches names in those languages. One more list of the text leg, from the reader's own words (05 §5.1 amended). The text stage takes chunks and names from ONE parse (parse pool kind `chunks+names`). Not in records, sections, `content_hash` or vectors, so the records build is unchanged; an erase-rewrite refuses a names index (names are not stored). Owed on the node with Monday's rebuild: the index's size and `search_names`' time on the real index (CLAUDE.md: time every new hot-path query). Not done: the catalogue (title list) keeps the English title; a title in another language for the 1 in 4 entities with no English label would change the records (title is in `content_hash`).
+
+### 2026-10-24: a multilingual record is indexed by section language (wikidata)
+
+The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an entity has no one language, wikidata-build-plan.md) sat whole in the `other` text group: its English text unstemmed, and every language-limited search ("in English") skipped it, since `other` is searched only for a language that maps there. `fts.by_section_language`: a `mul` record's sections are each indexed in the group of the language their heading names (wikidata's chunker puts the section's language in `chapter`), with that language stored — ONLY a language the plugin declares (`fts.section_languages`: wikidata `("en",)`; no other plugin declares any). The first form took any two or three letters for a code and would have filed pubmed's "AIM" sections and gutenberg's "II" chapters under fake languages; caught the same day, before any node ran it. Any other heading keeps `mul` in `other`, as before; a delete removes every part. The records keep `mul` (correct, and unchanged): only the local text index moves. Owed on the node: wikidata's text index rebuilt (its `other` group dropped, fts re-run), with the records build, Monday. The catalogue and vector legs, which filter by the RECORD's language, keep a `mul` record when its plugin writes one of the asked languages (`retrieval.limited_langs`; only wikidata declares `languages`, `("en",)`), operator 2026-10-24: "Fix the language defect".
 
 ### 2026-10-23: annotations collections are updated, not replaced (operator)
 
@@ -287,6 +1358,10 @@ and `/connect` filled in per viewer. Open: a live check from Open WebUI
 (OpenAI connection and MCP tool) and from one MCP agent — neither was run
 against a real client yet. Then the Open WebUI pipe (`deploy/openwebui/louise_pipe.py`): one model per collection, each person's collections, annotations, answer language and result count as Valves, one search per question (`sources: true`), the hits as Open WebUI sources linked to the reader. Then OpenAI's vector stores and files API (`app/openai_stores.py`, 07 §7.4): curated collections read-only, deposit collections writable; checked with OpenAI's own SDK in a scratch install (not a dependency).
 
+### 2026-10-21: normattiva's vectors re-embedded bit-exact (DAR-legal-it)
+
+`normattiva`'s vectors are re-embedded with its DAR-legal-it encoder in the bit-exact configuration, in the node's quiet hours (77148be, b2f3dd6). Its `records-vs-origin` re-run is still owed.
+
 ### 2026-10-21: NVIDIA support, before any peer has a card (operator)
 
 [nvidia-support.md](nvidia-support.md). The defect it closes: VeGa read a
@@ -300,29 +1375,6 @@ mapped; MIG mode states no run. Contract: llama.cpp `parallel:1`; torch adds
 deploy/localai-nvidia (LocalAI CUDA 13 by digest, YAMLs tested against the
 wrapper), louise-python `VARIANT=cuda`. Floor: driver R580, Turing. Not
 measured on a card: the first one runs README step 6 before it embeds.
-
-### 2026-10-19: the deploy gate is München's full suite on the real image
-
-Operator decision (2026-10-19, night), after a tip passed the
-architecture session's tests and failed at import on the node's image
-(python-multipart present in one container, absent from the other):
-
-- **One gate.** A commit deploys on any peer only after München has run
-  the FULL suite on it in an image built from `requirements.txt` alone —
-  the image the node runs. That run tests what is deployed; nothing
-  else does.
-- **The architecture session** runs the test files its change touches
-  before every push, and says in the push message which it ran. It does
-  not run the full suite: its container carries packages the platform
-  does not declare, so its pass is not the gate.
-- **Perugia** deploys a commit München has passed without rerunning the
-  suite: same code, same image build; what differs is the machine. It
-  runs its own smoke checks (the web answers, the worker's first round,
-  `louise node health`) and reports those.
-- A difference between the two containers that lets a test pass in one
-  and fail in the other is itself a defect to fix (tonight's:
-  tests/test_invariant_guards.py now refuses a multipart route unless
-  the package is declared).
 
 ### 2026-10-20: T2 is T0's envelope tie-breaker
 
@@ -366,19 +1418,19 @@ offer says when a collection cannot be taken yet (no snapshot served).
 
 Perugia is off for the night (operator); the node runs. Gutenberg's open
 parts get no new vectors meanwhile (the node's gutenberg is on-demand).
-1. Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
+1. *(Done: Perugia's copy in use, 2026-10-24.)* Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
    PASSED 4,898 and live on the node since 22:41:58 CEST — or a later
    PASSED tip, then adopts the node's twin d913cceb
-   (deploy/16f/adopt-gutenberg-twin.sh, seed-only across the run, no
+   (deploy/16f/adopt-gutenberg-twin.sh@c572c3b, seed-only across the run, no
    scheduled check in progress); `quarantine_in_use_before` only if its own
    checks have not run.
-2. The reranker regression on titles (MRR 0.738 before it, 0.579 after):
+2. *(Done: run 4, 902ceb4; run 5 kept `score`.)* The reranker regression on titles (MRR 0.738 before it, 0.579 after):
    München measures (a) a catalogue rank-1 kept on top, (b) RRF of the
    reranker's order with the fused one (`retrieval.RERANK_FUSE`, dc36f1a,
    off), (c) the head line weighted — titles, then descriptive; the switch
    moves only on those numbers.
-3. The ARC cap at 16 GiB: c_max and MemAvailable after, from München.
-4. Wikidata's indexing rate from the NVMe pack, from 22:42.
+3. The ARC cap at 16 GiB: c_max and MemAvailable after, from München. *(Still not reported.)*
+4. *(Superseded by the pack's re-creation.)* Wikidata's indexing rate from the NVMe pack, from 22:42.
 5. This session's messages to the peers are refused (no trusted-device
    proof); the operator relays them.
 
@@ -498,9 +1550,9 @@ platform image `sha256:297f2fb5…` (ef2720a). Held file
 `[encoder]` VeGa at 192.168.178.10:30286, vega-jina-v3 / vega-jina-v3-query;
 `snapshot = "20261012"` added by hand (the Codex's origin.spec pins no
 files, so the file names the dump). Quarantine until the first snapshot and
-the gate. Next: `hold records fetch wikidata --profile all` (103.4 GB, the
+the gate. Next (*done*): `hold records fetch wikidata --profile all` (103.4 GB, the
 pack and the label table in one streaming pass), then the first snapshot,
-then gutenberg-graph's steps 4–5 against it.
+then wiki-gutenberg's steps 4–5 against it.
 
 ### 2026-10-20: pitfall 18 measured on Perugia — the embed stage back at CLI throughput under heavy intake
 
@@ -510,7 +1562,7 @@ threads are LanceDB's native writers, not `share-fetch`
 ([scheduling-log.md](scheduling-log.md), the pitfall-18 row). The cut
 stays in the intake thread.
 
-### 2026-10-20: gutenberg-graph, step 2a — Codex version 9, the three claim types, several targets
+### 2026-10-20: wiki-gutenberg, step 2a — Codex version 9, the three claim types, several targets
 
 Built on step 1's amendments: `app/hold/codex.py` reads and writes version 9
 (`slicing.container`, `annotates` as a list — `targets_of` is the one reader),
@@ -524,11 +1576,11 @@ the part named from the Codex's `slicing.container` by every reader (the
 snapshot entry learns it from the `codex.json` beside the snapshot, no wire
 key), a recipe may declare it for any collection. Nothing already written moves: a one-target JSONL collection of the two
 2026-10-09 types is still version 7, byte for byte
-([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "Decided").
+([wiki-gutenberg-amendments.md](wiki-gutenberg-amendments.md), "Decided").
 Tests: tests/hold/test_annotations.py (+6), test_codex.py and
 test_backend_engine.py (version 10 is the unknown one now).
 
-### 2026-10-20: gutenberg-graph, step 1 — the specification amendments written
+### 2026-10-20: wiki-gutenberg, step 1 — the specification amendments written
 
 The operator's decisions of the day (two targets, Parquet parts for every
 collection, a measured agreement floor) are in the documents, dated: 09
@@ -536,7 +1588,7 @@ collection, a measured agreement floor) are in the documents, dated: 09
 the `mention`, `relation` and `community` claims with their keys and the
 `model` method, "The file (B): Parquet" beside the zstd frames, §9.14 the
 three edges, §9.18; 02 §2.10; 05 §5.3 and §5.5; 03 §3.2 `model-agreement`
-([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "The
+([wiki-gutenberg-amendments.md](wiki-gutenberg-amendments.md), "The
 order"). Nothing is built yet: step 2 is app/hold/annotations.py and the
 Parquet parts, step 3 the Ask side, steps 4–5 the methods once the wikidata
 collection exists.
@@ -552,7 +1604,7 @@ tokens/s warm. docs/notes/wikidata-recipe.toml is filled from the two
 stated runs byte for byte (document `bec9c3a0…`, query `dd90f8d4…`, image
 `1807f280…`) and `work.tokens` set to 1.7 G a month from the measured rate
 at eight hours a day — the one chosen number, inside collection_id, for
-the operator to confirm. Create follows the query model's 512/512.
+the operator to confirm. Create follows the query model's 512/512. *Decided: 430 M tokens a month (2 h a day).*
 
 ### 2026-10-20: pubmed-v8 is `pubmed` (operator; München, 08:24–08:35Z)
 
@@ -583,9 +1635,9 @@ not the default: every Codex collection's card already carries the
 *shared* toggle, and the default stays OFF — a default of on was built
 and taken back the same hour on the operator's word ("share off by
 default is fine"); nothing deployed. The decisions of the day beside it: the old jina folder was deleted by the operator on the node
-(München's auto mode refuses irreversible deletes outright, no prompt); gutenberg-graph
+(München's auto mode refuses irreversible deletes outright, no prompt); wiki-gutenberg
 gets two targets (Codex version 9), Parquet parts for EVERY collection, and
-a measured agreement floor (gutenberg-graph-amendments.md); pubmed-v8's
+a measured agreement floor (wiki-gutenberg-amendments.md); pubmed-v8's
 40 M unbundled chunks publish after the wikidata work.
 
 ### 2026-10-20: the bundle intake's quadratic hard split (pitfall 18)
@@ -598,8 +1650,8 @@ Docker Desktop over WSL2 — the GIL held, the embed producer starved, the
 GPU idle (61 chunks/min against the CLI's 143). Fixed by cutting by index
 (byte-identical, the old loop kept as the test's oracle; 0.136 → 0.005 s
 here) and by landing from the intake's one cut instead of a second
-([scheduling.md](scheduling.md) pitfall 18; the log row's AFTER is owed
-by Perugia). The rate gap is the measurement that decides whether the cut
+([scheduling.md](scheduling.md) pitfall 18; the log row's AFTER, owed
+by Perugia, was measured: 62a098d). The rate gap is the measurement that decides whether the cut
 must also leave the intake thread.
 
 ### 2026-10-20: wikidata-refs syncs from the plugin's pack
@@ -614,7 +1666,8 @@ input for its mtime (`input_mtime`), and re-creates an EMPTY table whose
 declared shape moved — `get_store()` had created the old shape on every
 node at the first open — while refusing a non-empty one by name. No
 resolver over labels and the table's size on the node are the two open
-points ([wikidata-build-plan.md](wikidata-build-plan.md) §2).
+points ([wikidata-build-plan.md](wikidata-build-plan.md) §2). *Both closed:
+12.62 GB, 121,724,461 rows; lookup by name, 3247c39.*
 
 ### 2026-10-20: jina-v3's folder, its YAMLs and the rebuild runbook
 
@@ -637,6 +1690,29 @@ digest in the deployed image), both pinned in fetch.py and filled into the
 recipe template with the tokenizer's sha256; the 2026-10-18 measurement's
 folder, which held files the layout excludes, was refused and moved aside
 as `jina-embeddings-v3.pre-installer-20261018` (the operator's to remove).
+
+### 2026-10-19: the deploy gate is München's full suite on the real image
+
+Operator decision (2026-10-19, night), after a tip passed the
+architecture session's tests and failed at import on the node's image
+(python-multipart present in one container, absent from the other):
+
+- **One gate.** A commit deploys on any peer only after München has run
+  the FULL suite on it in an image built from `requirements.txt` alone —
+  the image the node runs. That run tests what is deployed; nothing
+  else does.
+- **The architecture session** runs the test files its change touches
+  before every push, and says in the push message which it ran. It does
+  not run the full suite: its container carries packages the platform
+  does not declare, so its pass is not the gate.
+- **Perugia** deploys a commit München has passed without rerunning the
+  suite: same code, same image build; what differs is the machine. It
+  runs its own smoke checks (the web answers, the worker's first round,
+  `louise node health`) and reports those.
+- A difference between the two containers that lets a test pass in one
+  and fail in the other is itself a defect to fix (tonight's:
+  tests/test_invariant_guards.py now refuses a multipart route unless
+  the package is declared).
 
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 
@@ -718,14 +1794,14 @@ sha256:92f4c9e0…) into the recipe
 ([`normattiva-recipe.toml`](normattiva-recipe.toml)); the articles' token
 lengths were measured for `ctx` (8192, the engine's window; review §7);
 pooling is what the backend does, mean. The runbook for 4493c15 is
-`deploy/16f/deploy-louise-normattiva.sh`: its non-live phases ran — the
+`deploy/16f/deploy-louise-normattiva.sh@c572c3b`: its non-live phases ran — the
 tree staged beside the live one, `louise-rag:staged` built, the live
 config loads every collection under it, and tests/test_validity,
 test_normattiva, test_refs_normattiva, tests/acquire and tests/hold pass in
 it (87, 255, 949). The swap (phases 4–6: promote, build louise-rag:local,
 stop, LOUISE_PLATFORM_IMAGE, start) is refused to the agent as a
 production deploy, as before; the operator runs the script, then
-`deploy/16f/create-normattiva.sh` — the recipe copied into
+`deploy/16f/create-normattiva.sh@c572c3b` — the recipe copied into
 /config/recipes, `hold collection create` in the web container (the
 stated run held to the recipe's engine and weights; slices = "all", so the
 worker acquires the full profile itself), the licence terms printed and
@@ -833,7 +1909,7 @@ the Codex pins the parser that produced the records (02 §2.3), so the
 collection is RE-CREATED: remove the collection file and the collection's
 directory under data/collections (manifest, index, lance, state; nothing
 was built, the corpus on /corpora stays and is adopted by its directories),
-then `create-normattiva.sh` again. The node's action, as every creation
+then `create-normattiva.sh@c572c3b` again. The node's action, as every creation
 is.
 
 **The pilot's harness and the template (2026-10-13).** `tools/legal_pilot.py`
@@ -987,7 +2063,7 @@ date and number (an undated one still needs its form; tests). RULE 1 for
 the collection: a new Codex (the Codex pins the parser, and the old
 versions would enter published, closed parts, which the build refuses —
 02 §2.3), made by A1c as gutenberg's parser 9 was:
-deploy/16f/recreate-normattiva-parser8.sh pauses `normattiva` FIRST (with
+deploy/16f/recreate-normattiva-parser8.sh@c572c3b pauses `normattiva` FIRST (with
 parser 8 live it would discover the old versions itself), creates
 `normattiva-1861` from the same recipe, points its origin at the same
 zips (no fetch; discovery reads the new path as a relocation), carries
@@ -1108,7 +2184,7 @@ single job, and tell the operator the numbers before the first pass).
 ### 2026-10-05: the side branches merged into main
 
 Three branches existed beside `main`. `ccr-b147bbfc-9ktipo` was already
-in main (step 15c). `claude/rage-backends-louise-mnih8a` (2026-09-27/29)
+in main (step 15c). a side branch (2026-09-27/29)
 and `ccr-d5be5f2c-fdn6fl` (2026-09-29/30, a superset of it) were merged
 on 2026-10-05, taking main's later decisions wherever the two sides had
 decided the same question:
@@ -1116,13 +2192,13 @@ decided the same question:
   `load` field, Codex 4 "exactly when" an engine carries it, statement 3
   likewise). Main decided it again on 2026-10-03 as `options` (09 §9.3,
   step 15a) and deployed it on 2026-10-05, so the branch's code, spec
-  rows and tests went; `rage.md` §13 records it as superseded.
-- **Kept as history**: `rage.md` §22–§23 (LocalAI's rerankers backend
-  checked; RAGE spawning LocalAI's backend binaries) — superseded by
-  [`rage-over-localai.md`](rage-over-localai.md), kept with a preface.
+  rows and tests went; `model-pool.md`@c572c3b §13 records it as superseded.
+- **Kept as history**: `model-pool.md`@c572c3b §22–§23 (LocalAI's rerankers backend
+  checked; the model pool spawning LocalAI's backend binaries) — superseded by
+  `model-pool-over-localai.md`@c572c3b, kept with a preface.
 - **Carried**: a validation counts only when THIS node signed it and is
   re-checked once per process (`app/hold/runs.py`, `app/run_check.py`;
-  `rage.md` §13); the web process holds no private key — a public key
+  `model-pool.md`@c572c3b §13); the web process holds no private key — a public key
   file, signing work queued for the worker (`app/identity.py`,
   `app/jobs.py`; `deploy/truenas-app.yaml` mounts the node key read-only
   in its own dataset, NOT yet applied on the node);
@@ -1156,7 +2232,7 @@ because the node lost its internet egress during the image build (DNS and
 HTTPS by IP both fail; the gateway answers at 0.03 ms). Both wait for the
 operator: the deploy runbook, then the deposit runbook (step 16f).
 
-**2026-10-06, ~09:45Z: 3edbabb DEPLOYED** by `deploy/16f/deploy-louise-3edbabb.sh`,
+**2026-10-06, ~09:45Z: 3edbabb DEPLOYED** by `deploy/16f/deploy-louise-3edbabb.sh@c572c3b`,
 run from the agent's session after the operator's "try again": staged, the
 live config loaded all three collections (the proof had to borrow the web
 container's mounts — the drag is on tank), tests/deposit 100 and tests/hold
@@ -1167,10 +2243,10 @@ node's egress had returned after the operator had the TrueNAS Container
 `claude-code` (libvirt-lxc, its own LAN address) force-stopped, deleted,
 and the node rebooted — it was the cause, not the router. Still waiting:
 the granite weights on the node (the agent's scp is refused), then
-`deploy/16f/deposit-16f.sh`.
+`deploy/16f/deposit-16f.sh@c572c3b`.
 
 **2026-10-06, ~10:05Z: the deposit runbook ran** (the weights copy went
-through on the operator's order). Granite is served by RAGE beside the
+through on the operator's order). Granite is served by the model pool beside the
 eight; its run `5b6dea5d…` was stated on the first answer and the same
 run after a reload; the space file was written from `GET /louise/runs`
 (engine `localai/llama-cpp 58830f7+patches…` on the Arc, 384 wide, CLS,
@@ -1187,7 +2263,7 @@ and now accepts). Deployed next.
 **2026-10-06, ~10:40Z: 28dfff7 DEPLOYED** (the copy-state fix; suite 3516 on
 the workstation, tests/deposit 102 and tests/hold 704 in the staged image).
 `deposit-granite` is **in use**, `origin_check: not-planned`. Then
-`deploy/16f/localagi-smoke.sh` ran LocalAGI's own request sequence against
+`deploy/16f/localagi-smoke.sh@c572c3b` ran LocalAGI's own request sequence against
 the node with the deposit token: no token 401; create 201; list; store
 (multipart, the client's temp path, the key its base name); entries; read;
 search found the memory; the open `/api/search` never named the
@@ -1209,7 +2285,7 @@ TrueNAS custom app `localagi` from
 quay.io/mudler/localagi pinned by digest at sha-7e0947d — the commit the
 deposit routes were proven against (quay has no semver tags) — UI on
 :30050, LLM the node's own `localai` app (:30286, `qwen3.8-2b-q4`,
-light because the card is RAGE's), knowledge base Louise
+light because the card is the model pool's), knowledge base Louise
 (`LOCALAGI_LOCALRAG_URL` :30042) with the deposit token as
 `LOCALAGI_LLM_API_KEY` — LocalAGI's pool-level RAG client reuses the
 LLM key (`cmd/agent_run.go`), so the token also travels to the LLM
@@ -1220,7 +2296,7 @@ it (200); the agent was deleted, the collection reset, its held file
 removed. The operator's 16f stop can now run from LocalAGI's UI.
 
 **2026-10-06, ~11:05Z: 16f's STOP RUN** (operator: "do it"), by
-[`deploy/16f/localagi-stop.sh`](../../deploy/16f/localagi-stop.sh) through
+[`deploy/16f/localagi-stop.sh@c572c3b`](../../deploy/16f/localagi-stop.sh) through
 LocalAGI alone (:30050), which proxies its collection routes to Louise:
 - memory STORED: the agent `louise-stop` (kb, long-term memory, daily
   compaction with summary; `qwen3.8-2b-q4` on the `localai` app) took one
@@ -1334,7 +2410,7 @@ operator: the legacy bundle inbox's own trusted-key list has no command;
 **2026-10-08, ~07:20Z (UTC): the genome collections DELETED; step 13f
 found done.** At the operator's yes on the named list: genome-hg38, dm6 and
 sacCer3's data (2.2 GB, 190 MB, 19 MB) and origins (860 MB, 40 MB, 3.4 MB)
-deleted, after `deploy/16f/drop_mounts.py` took their three bind mounts out
+deleted, after `deploy/16f/drop_mounts.py@c572c3b` took their three bind mounts out
 of the app (a missing bind source stops a container starting): app stopped,
 compose updated, started; nine collections in use after. Their files are
 kept as the record in `config/collections-future/` with a README. No app of
@@ -1420,7 +2496,7 @@ pubmed).
 **2026-10-07, ~14:55Z (UTC): the deposit collections re-made; the moved
 outcome live; 3d9036b DEPLOYED.** The node rebooted at 14:00Z on its own —
 a TrueNAS update (kernel 6.18.42 → 6.18.52) — and was down ~30 minutes;
-the new GPU driver gave RAGE new run ids, which the worker gated by itself
+the new GPU driver gave the model pool new run ids, which the worker gated by itself
 (16/16). LocalAGI's two test collections were re-made under their names on
 the operator's word: `deposit-granite` (`sha256:163321a3…`, empty) and
 `louise-stop` (`sha256:6e12e447…`). Their carry step failed silently — a
@@ -1672,7 +2748,7 @@ node. First minutes: the maintainer counted gutenberg's facets for
 2026-08 (lang, subjects) within a minute of the start, no error or
 warning line. Live, through `/api/ask/*` on the node: `ask chat` answered
 a question about Gutenberg in two rounds (one `louise_search` call, a
-cited answer) in 2 min 0 s — the chat model's time, through RAGE; a
+cited answer) in 2 min 0 s — the chat model's time, through the model pool; a
 `lang=en` filter on gutenberg was refused as 63 124 records against the
 20 000 bound, a `subjects=Whaling -- Fiction` filter admitted 13 and put
 Moby-Dick first; `as_of 2026-09-02` answered from 2026-08 and `as_of
@@ -1903,10 +2979,10 @@ The node's DEPLOYMENT.md got today's section appended (its copy had
 diverged from the local one before today: 686 vs 713 lines; neither was
 overwritten). The node runs 865ccbe; main is the same code plus notes.
 
-### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
+### 2026-10-03: LocalAI takes the lifecycle; the model pool keeps the run identity
 
-The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
-LocalAI will launch, load, preload, cache and evict the models, and RAGE
+The operator accepted `model-pool-over-localai.md`@c572c3b:
+LocalAI will launch, load, preload, cache and evict the models, and the model pool
 will state the run of every answer. That is migration step 15. Done the
 same day:
 - **The spec.** 03 §3.3 says who launches. 09 §9.3 gives an engine
@@ -1914,13 +2990,13 @@ same day:
   field is absent for an engine started by `args`, so no `engine_id`
   changes and nothing in use is re-gated. Codex 4 and calibration
   statement 3 in §9.18.
-- **15b.** The one LocalAI patch RAGE cannot work without: `GET /system`
+- **15b.** The one LocalAI patch the model pool cannot work without: `GET /system`
   lists each model's load options and their hash. It is in
   `deploy/localai/patches/` and tested in LocalAI's own suite.
   [`localai-bugs.md`](localai-bugs.md) is now the one list of LocalAI
   action items: 7 defects, 1 patch, 4 requests, none filed yet.
 
-Nothing changed on the node; RAGE as deployed keeps running until 15f.
+Nothing changed on the node; the model pool as deployed keeps running until 15f.
 
 **15a, the same day**: Codex 4 and calibration statement 3 in the code
 (`app/hold/codex.py`, `embedder.py`, `collection.py`;
@@ -1928,14 +3004,14 @@ Nothing changed on the node; RAGE as deployed keeps running until 15f.
 are written at version 4. Every existing Codex, engine id, run and
 statement stays as it is. Whole suite 3439 passed.
 
-**15d, the same day**: RAGE's front over LocalAI, beside today's
-(`RAGE_RUNNER=localai`). Runs are read from LocalAI's `/system` and the
+**15d, the same day**: the model pool's front over LocalAI, beside today's
+(the pool's runner set to LocalAI). Runs are read from LocalAI's `/system` and the
 kernel: options, argv, environment, the card from the process's DRM
 clients, and weights hashed per process. Also built: the admin door, the
 panel, the restart, and `PUT`/`DELETE` of LocalAI's YAML. 37 tests against
 a fake LocalAI. Not run against a real one: that is 15c on the node.
 
-**15e in part, the same day**: `deploy/rage/Dockerfile.localai` builds the
+**15e in part, the same day**: the model pool's LocalAI image build builds the
 patched LocalAI (version `58830f7+patches.17b54353635e`) with its SYCL
 backend pinned by digest. It ships the six llama.cpp models' YAML and an
 app file. Its `smoke` target ran the whole chain on a CPU with a real
@@ -1959,7 +3035,7 @@ answer, the same run after a restart. It found `run.sh` giving relative
 cannot reach: they first run on the node.
 
 **The image, 2026-10-04**: built on the node and published,
-`ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+the model pool's image `sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
 (`localai-58830f7-1`). Every backend's libraries imported at build; nothing
 run on the card yet. Next: 15c, the operator's go/no-go.
 
@@ -1969,29 +3045,29 @@ engine. The MedCPT reranker on the card matches today's to 3e-8. It found
 LocalAI bug B9: an intermittent NaN fails the whole request. Louise now
 retries it as she retries llama-server's null vectors. Not run: the spill
 test, DAR-legal-it and MADLAD on the card, because each needs room the live
-models hold. The go is the operator's (rage-over-localai §12).
+models hold. The go is the operator's (model-pool-over-localai.md@c572c3b §12).
 
 **15f ready, not run (2026-10-04)**: the operator gave the go ("suspend
 dar-legal for now, go on with the rest"; DAR-legal-it serves no
 collection). Merged to main, rebuilt and published
-(`ghcr.io/sourstar/rage@sha256:e64893cf…4e26`). Every model was tried under
+(the model pool's image `sha256:e64893cf…4e26`). Every model was tried under
 LocalAI beside the live one, which found and fixed chat's template. The
 swap itself was refused to the agent as a production deploy, so it is two
 scripts on the node for the operator, with a backout (migration-plan 15f).
 
-**15f DONE, 2026-10-05: RAGE runs over LocalAI on the node.** The operator
+**15f DONE, 2026-10-05: the model pool runs over LocalAI on the node.** The operator
 ran both phases. Every model states a run, and every collection's
 calibration answers match the old engine's (lowest cosine 0.999833).
 Louise runs the merged main with `TRANSLATE_API=completion`, and 1609aa9
 since 06:12 UTC: LocalAI's "exceeds the available context size" shrinks
 the cut. The operator deployed it, and web and worker run one image. The
-old engine's backups stay in `/mnt/ssd5/apps/louise-rage-15c/cutover/backup`
+old engine's backups stay in `the cut-over backup dataset`
 until 15g.
 
-**15g, the same day: the llama-swap RAGE retired from the repository**
+**15g, the same day: the llama-swap the model pool retired from the repository**
 (legacy-to-delete §8; suite 3378 on the node). It is commit 8390155, which
 went in under the previous commit's message by mistake. Its description is
-in the commit after it. The node keeps `rage:pre-15f`, `louise-rag:pre-15f`
+in the commit after it. The node keeps the model pool's pre-15f image, `louise-rag:pre-15f`
 and the backups until the operator removes them.
 - **Louise deployed at 736fc52** (06:47 UTC). The translator now speaks only
   the completion shape: 499 languages, a sentence translated, a null for an
@@ -1999,25 +3075,25 @@ and the backups until the operator removes them.
   node's `src/deploy` is overlaid, never replaced, so the Dockerfiles 15g
   deleted were still there; they were removed by hand, with copies in
   `src.old/deploy`.
-- **RAGE not redeployed on purpose.** 15g changed its code only by
+- **The model pool not redeployed on purpose.** 15g changed its code only by
   deletion, and a new image is a new run for every model and a re-gate of
   every space. `e64893cf…` stays, reproducible from 6246334, and the next
-  real RAGE change carries 15g.
+  real the model pool change carries 15g.
 - **Leftovers removed, the same day** (operator: "remove every leftover"),
   so there is NO WAY BACK to the llama-swap engine on the node any more:
   - its images (`b10630-1`…`-8`; they stay published on ghcr.io) and the
     first LocalAI build;
   - the rollback tags `louise-rag:pre-15f` and `pre-736fc52`, and the old
     MADLAD app images;
-  - `/mnt/ssd5/apps/louise-rage-15c/` (backups, `backout.sh`, the before and
+  - the cut-over backup dataset (backups, `backout.sh`, the before and
     after vectors), `src.old`, and the scratch trees in `/tmp`;
-  - the llama-swap-era copies in RAGE's `config/` and `state/`;
+  - the llama-swap-era copies in the model pool's `config/` and `state/`;
   - dangling images and the build cache, about 85 GB;
   - `TRANSLATE_API` in Louise's app config.
 
   Kept: the running images, every `louise-rag:codex-*`, the llama.cpp base
   images, and other apps' images, including an `ix-localai` app that is not
-  RAGE's.
+  the model pool's.
 
 ### 2026-09-22: one branch
 
@@ -2269,9 +3345,9 @@ has nearly finished delivering: of the first 401,408 candidates only 1,192
 30.9M documents of GPU work, which is why it is not a thing to flip
 unasked.
 
-### 2026-09-22: a reboot renumbered the cards and RAGE would not start
+### 2026-09-22: a reboot renumbered the cards and the model pool would not start
 
-The operator, after a reboot: `louise-rage` start fails with
+The operator, after a reboot: the model pool's app fails to start with
 
     error while creating mount source path
     '/sys/class/drm/card0/device/tile0/gt0/freq0':
@@ -2284,18 +3360,18 @@ CREATE the missing source under `/sys` and the container never started.
 Not degraded — dead: a bind that cannot be made stops the app, and the
 clock is otherwise optional.
 
-[`rage.md`](rage.md) §18 had already said this of render nodes, when the
+`model-pool.md`@c572c3b §18 had already said this of render nodes, when the
 driver in a run identity moved to the PCI address for the same reason:
 *a number is not a name, an address moves only with the hardware.* The
 clock bind was the last piece still holding a number.
 
 The address cannot go in the bind either: TrueNAS parses `source:target:
-mode` and an address has colons — the rule `tests/rage/test_deploy_files.py`
+mode` and an address has colons — the rule the model pool's deploy-file test
 already carried. So the bind names a colon-free symlink on the pool, made
 once, and the test now refuses a card-numbered source as well (f1b9dfc):
 
     ln -sfn /sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0 \
-            /mnt/ssd5/apps/louise-rage/gpufreq
+            <the model pool's dataset>/gpufreq
 
 Checked in a throwaway container before the app config was touched: Docker
 resolves the symlink and the container both reads and WRITES through it
@@ -2341,7 +3417,7 @@ single bit". Detail is in [`v1-rebuild.md`](v1-rebuild.md) and
   recomputes least, the artifact indistinguishable from one made by the
   book.
 
-### 2026-09-21: a PubMed search ran 75 minutes; search and RAGE fixes
+### 2026-09-21: a PubMed search ran 75 minutes; search and the model pool fixes
 
 Committed on `louise`, not deployed; the other session tests them together.
 
@@ -2372,10 +3448,10 @@ Committed on `louise`, not deployed; the other session tests them together.
     at 300 (9df8190; spec 336a5ee);
   - the answer's opening stays in view while it streams (576224b);
   - a fact reached through a link names that link (da098b4, 05 §5.4).
-- **RAGE b10630-8 is live.** When a model does not fit on the card, RAGE
+- **The model pool b10630-8 is live.** When a model does not fit on the card, the model pool
   frees space by evicting lower-priority models first (93ccefa), and it
   reads a request's body before waiting for its model to load (9f77a99).
-  See [`rage.md`](rage.md) (amended 2026-09-21).
+  See `model-pool.md`@c572c3b (amended 2026-09-21).
 
 ### v1.0 roots — the development collections are not the product (2026-09-12)
 
@@ -4121,10 +5197,10 @@ Deployed 2026-09-14 14:01 UTC (74173fc, image `fa25111…`): node suite
 pins `sha256:7de4793a…`; the placeholder Codex's files are kept beside
 the drag in the staging directory, not deleted.
 
-**`genome`, `packed` and `pack adopt` boxed in `attic/`** (operator,
+**`genome`, `packed` and `pack adopt` boxed in `attic/` (removed 2026-11-01)** (operator,
 2026-09-14: "remove them from the active code keeping them in a box for
 reference until they are either converted to the final format or
-permanently dropped"). [`attic/README.md`](../../attic/README.md) lists
+permanently dropped"). [`attic/README.md` (removed 2026-11-01)](../../attic/README.md) lists
 what moved and why. No registry, spec, CLI verb, create-dialog path or
 help text reaches them now, and the image does not carry them. Tests
 that used them as the worked example now use a live plugin or an inline
@@ -5192,7 +6268,7 @@ completed.**
 - New manifests are created without the table. An old manifest's is
   dropped once at the worker's startup (`db.drop_catalog_fts`, replacing
   the rowid realignment it no longer needs).
-- `tools/clean_titles.py` now writes the index. The index has one writer,
+- `tools/clean_titles.py@c572c3b` now writes the index. The index has one writer,
   the worker's, so the tool asks for the worker to be stopped and changes
   nothing while it runs. `tools/migrate_manifest.py` drops a pre-refactor
   catalog instead of converting it.
@@ -5238,7 +6314,7 @@ was not slow, it was not fed.
   most 1 s per call. On live pubmed: worst call 1.46 s; the whole sweep
   is 158 s spread over 141 calls.
 - **Levels:** corpus < translation < chat < rerank < query.
-- **One gate per model server** (`app/dispatch.py`). It admits the
+- **One gate per model server** (`app/rage/dispatch.py`). It admits the
   server's capacity, by level, fair by service time.
 - **Corpus stands aside on the GPU per chunk** while anything
   interactive runs, through a claim in `state/node.sqlite`.
@@ -5288,15 +6364,15 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
   history. The governor samples them every 10 s into `gpu_samples`, kept
   7 days for a widget to come (operator, 2026-09-19). A week at 10 s is
   3.6 MB and stays flat, because pruning on write reuses the freed pages.
-  Any workaround belongs to RAGE only; other apps are never restarted for
+  Any workaround belongs to the model pool only; other apps are never restarted for
   it (operator). First samples: 1,873–1,934 RPM, pkg 72–78 °C, vram
   74–80 °C, 192–204 W.
 
-### RAGE: reviewed, redesigned, the front built — nothing on the node yet (2026-09-19)
+### The model pool: reviewed, redesigned, the front built — nothing on the node yet (2026-09-19)
 
 **What happened, in order.**
-1. The first proposal for RAGE (b0f5dad) was reviewed before any code
-   ([`rage-review.md`](rage-review.md)) and did not survive as written:
+1. The first proposal for the model pool (b0f5dad) was reviewed before any code
+   (`model-pool-review.md`@c572c3b) and did not survive as written:
    llama-swap has no load endpoint and evicts by default; the run
    identity could not be computed as specified (a process cannot see its
    image's digest; the raw argv and environment would have made every
@@ -5308,17 +6384,17 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
    cannot be checked waits for the operator's recorded decision.
 3. The amendments are on `main`: **8bbc66a** (the run identity made
    computable, a weights digest for directories, `Louise-Level`, the
-   model's URL, `RAGE_URL`) and **98ee4dc** (quarantine).
-4. [`rage.md`](rage.md) rewritten to the accepted design;
-   `migration-plan.md` (deleted 2026-10-08) gained **step 13** (RAGE,
+   model's URL, the pool's address variable) and **98ee4dc** (quarantine).
+4. `model-pool.md`@c572c3b rewritten to the accepted design;
+   `migration-plan.md` (deleted 2026-10-08) gained **step 13** (the model pool,
    parts a–f) and **step 14** (quarantine). Step 12 stays last.
-5. The code as it stood before RAGE is tagged **v0.1.0** (`louise`
+5. The code as it stood before the model pool is tagged **v0.1.0** (`louise`
    01a4d00; the first tag of the repository).
-6. **Steps 13b and 13c are built**: `app/rage/`, the launcher of our
+6. **Steps 13b and 13c are built**: `app/rage/` (the model pool's, deleted 2026-10-18), the launcher of our
    three servers, and 13d's files (image, example config, TrueNAS app).
-   [`rage.md`](rage.md) §17 lists each piece and what proves it.
+   `model-pool.md`@c572c3b §17 lists each piece and what proves it.
 
-**Numbers.** `tests/rage/`: 96 tests in 7 s, against a directory that
+**Numbers.** the model pool's tests: 96 tests in 7 s, against a directory that
 stands in for `/proc` and a fake llama-swap. The whole suite: 3,050
 passed, none failed, 7 min 34 s. No number from the node exists yet: no
 image has been built.
@@ -5331,7 +6407,7 @@ image has been built.
   Found by reading the example before writing the generator, not after.
 - *Three pre-existing guards said no, and each was right.* Nothing
   imports the GPU probe (so a card's name and capacity are declared in
-  `rage.toml`, which is also the only way to get the driver's own words
+  the pool's config file, which is also the only way to get the driver's own words
   09 §9.3 asks for). No GPU stack under `app/`. Every image of ours
   answers SIGTERM as PID 1 — the front's boot had no handler before
   uvicorn is up; it has one now, and that guard asks for a handler, not
@@ -5353,16 +6429,16 @@ host's budget too (`host.<card>` per entry, the peak). The app file's
 first `mem_limit` was 40g, which with Louise's worker at its 20.6 GiB
 peak is more than the machine's 61.9; it is **28g**, leaving ZFS at
 least 9 GiB of cache in the worst case. Also found: gutenberg's encoder
-runs llama.cpp b10603 and the others b10630, so under RAGE's one build
+runs llama.cpp b10603 and the others b10630, so under the model pool's one build
 gutenberg's space meets another engine; and Louise's admin token is an
 environment VALUE today (`ADMIN_TOKEN_FILE` unset).
 
 **The operator's values (2026-09-19):** folder
-`/mnt/ssd5/apps/louise-rage`; port 30437; the chat model is the file
+the model pool's dataset; port 30437; the chat model is the file
 Ollama serves as `qwen3:8b`, whose blob name is its weights digest and
 which carries its own chat template; the per-model apps are shut off
-before RAGE loads, which makes 13f a cut-over and not a gradual switch
-([`rage.md`](rage.md) §16). Still to give: the registry.
+before the model pool loads, which makes 13f a cut-over and not a gradual switch
+(`model-pool.md`@c572c3b §16). Still to give: the registry.
 
 **The same day, after the front:**
 - **A live bug fixed (8bec7fc):** every streamed answer on the Ask page
@@ -5373,18 +6449,18 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
   copy and `reset` in the last, which `contextvars` refuses. The gate
   and the claim were released correctly; only the message was wrong.
   NOT DEPLOYED — it needs the web container rebuilt.
-- **`tools/endpoint_vectors.py` (3275ccb):** records what each encoder
+- **`tools/endpoint_vectors.py@c572c3b` (3275ccb):** records what each encoder
   answers today — the sixteen fingerprint texts and a spread of the
   calibration set, one text a request, unnormalised — and compares
-  RAGE's answers with it afterwards. The cut-over needs it FIRST: once
+  the model pool's answers with it afterwards. The cut-over needs it FIRST: once
   the per-model apps are off there is nothing left to compare with.
   `app/hold/fingerprint.py` is 09 §9.12's rule. A test caught
   `Path.with_suffix` replacing ".document": a bi-encoder's query side
   would have overwritten its document side's recording.
 - **13e, first part (3dd4194):** every model request carries
   `Louise-Level`; `CHAT_API = ollama | openai` so the chat model can
-  leave Ollama for RAGE by switching one variable, and come back;
-  `RAGE_URL`. Nothing changes on today's node: the header is ignored by
+  leave Ollama for the model pool by switching one variable, and come back;
+  the pool's address variable. Nothing changes on today's node: the header is ignored by
   today's servers and the protocol defaults to Ollama's.
 - **13a, Codex v3:** the engine in the Codex and out of the space, and
   every artefact that named an image moved one version while still
@@ -5453,7 +6529,7 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   (`state/calibration.json`): pubmed 16/16, whole set worst 0.9896,
   34,784 tokens/s; wikipedia 16/16, worst 0.9990, 14,662 tokens/s;
   gutenberg 16/16, worst 0.9998, 2,208 tokens/s.
-- **Today's encoder answers are recorded** for the RAGE cut-over, five
+- **Today's encoder answers are recorded** for the model pool cut-over, five
   sides, 79 texts each: `/data/state/endpoint-vectors-2026-09-19`.
 - **What the deploy found, each fixed before going on.** (1) The node's
   test run: version-3 `embedder check` looked for the encoder before the
@@ -5478,11 +6554,11 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   budget-drawing fetch of the plan's sample, which does not exist yet.
   That fetch and the scheduled run are one piece of work.
 
-**RAGE'S IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
-first half).** `ghcr.io/sourstar/rage@sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
+**The model pool's IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
+first half).** the model pool's image `sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
 (tag `b10630-1`, 18.2 GB; the base's layers were mounted from
 ggml-org/llama.cpp, not uploaded). The login is a Docker config kept by
-path, `/mnt/ssd5/apps/louise-rage/secrets/docker` — root's own config
+path, `secrets/docker` in the model pool's dataset — root's own config
 was not touched. **The package is PUBLIC** (operator, 2026-09-19; GitHub
 offers no API for it): an anonymous pull by digest answers 200, the
 manifest's bytes hash to the digest, and a layer downloads — 32 blobs,
@@ -5493,13 +6569,13 @@ may freeze it.
   (32656 MiB)`; torch 2.14.0+xpu, under the environment a torch model
   declares, reads `xpu available: True` and names the card; OpenVINO lists
   `['CPU', 'GPU']`. These were the unknowns the trial build left.
-- **RAGE's folder is ready for the cut-over**: `config/rage.toml` (eight
+- **The model pool's folder is ready for the cut-over**: the model pool's config file (eight
   models, five preloaded; every weights path checked present on the
-  node), `config/truenas-rage.yaml` with the digest filled in,
+  node), its TrueNAS app file with the digest filled in,
   `secrets/admin.token` generated there and never shown, `state/` empty.
 - **DNA is frozen and inactive** (operator, 2026-09-19: "not ferried to
   the new architecture … until further development"). DNABERT-2 is no
-  longer served: commented out of `rage.example.toml`, its bind out of
+  longer served: commented out of the pool's example config, its bind out of
   the app file, a test holds both. Its weights on the node sit in a
   Hugging Face cache layout whose symbolic links the weights digest
   refuses; placing them as a real directory is part of bringing it back.
@@ -5507,14 +6583,14 @@ may freeze it.
   (found by comparing hashes on the node, printing neither). It was not
   sent anywhere; both token files are now mode 600.
 - **Left:** 13d's proof with real models and 13f are ONE evening — the
-  per-model apps go off before RAGE loads. Today's vectors are recorded.
+  per-model apps go off before the model pool loads. Today's vectors are recorded.
 
 **THE CUT-OVER IS DONE (2026-09-19 night; 13d's proof and 13f's first
 half, one evening as planned).** The operator paused the node, stopped
 the five apps (`embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`,
 `embed-gpu-medcpt`, `translate-gpu-madlad`, `louise-gpu-governor`) and
-installed `louise-rage` from the app file, in that order; the rest was
-driven from here. RAGE serves every model Louise uses except chat, on
+installed the model pool's app from the app file, in that order; the rest was
+driven from here. The model pool serves every model Louise uses except chat, on
 port 30437; chat followed later the same night (below).
 
 | model | device | ready in | host RSS | card |
@@ -5530,36 +6606,36 @@ port 30437; chat followed later the same night (below).
 Seven models at once: 8.0 GiB of host RSS by process, 5.6 GiB by the
 container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
 32.6. MADLAD's 20 s is against the 300 s its own app took.
-- **RAGE's vectors against the recording of the old endpoints**, 79
+- **The model pool's vectors against the recording of the old endpoints**, 79
   texts a side, worst cosine: gutenberg 0.999999, pubmed documents
   1.000000, pubmed queries 0.999981, wikipedia 0.999998; median 1.000000
   everywhere. No fingerprint is bit-equal — expected for gutenberg
   (b10603 → b10630), and for the others the engine's settings differ —
   so the cosines judge, and the gate tests.
-- **The gate through RAGE passed for all three**, the same whole-set
+- **The gate through the model pool passed for all three**, the same whole-set
   figures as through the old apps (worst 0.9896 / 0.9990 / 0.9998).
   Throughput read 142,707 / 72,900 / 3,373 tokens/s against 34,784 /
   14,662 / 2,208 — but the node was PAUSED for these and running for
-  those, so this is not yet a comparison of RAGE with the apps.
+  those, so this is not yet a comparison of the model pool with the apps.
 - **The query path, live**: a search on each collection reranked by its
   own reranker; an Italian question over gutenberg translated by MADLAD
   into every held language; a streamed answer over pubmed ran to
   `[DONE]`, 74 chunks, no error chunk.
-- **The worker resumed and works through RAGE**, no error in its log: in
-  its first two minutes RAGE served 428 requests to qwen3, 125 to bge-m3
-  and 4 to medcpt-article. The GPU clock is RAGE's now (`/louise/gpu`:
+- **The worker resumed and works through the model pool**, no error in its log: in
+  its first two minutes the model pool served 428 requests to qwen3, 125 to bge-m3
+  and 4 to medcpt-article. The GPU clock is the model pool's now (`/louise/gpu`:
   running, rest 400 MHz, max 2,800, not pinned).
 - **What was switched**: the `[encoder]` and `[reranker]` URLs of the
   three collection files, to `…:30437/upstream/<model>`; `TRANSLATE_URL`
-  and a new `RAGE_URL` on web and worker, through the TrueNAS client
+  and a new the pool's address variable on web and worker, through the TrueNAS client
   library so the app's configuration — which carries the admin token —
   never reached a command line. **The way back**:
-  `config/backup-pre-rage-2026-09-19/` holds the three files and the
+  the pre-pool backup folder (2026-09-19) holds the three files and the
   app's configuration (mode 600); the five apps are stopped, not deleted.
-- **Differs from the app file's own note**: RAGE's `secrets/admin.token`
-  is a token generated on the node, not Louise's. RAGE reads it once at
-  start, and nothing in Louise calls RAGE's operator routes yet, so it
-  was left; making them the same is a file copy and a restart of RAGE.
+- **Differs from the app file's own note**: the model pool's `secrets/admin.token`
+  is a token generated on the node, not Louise's. The model pool reads it once at
+  start, and nothing in Louise calls the model pool's operator routes yet, so it
+  was left; making them the same is a file copy and a restart of the model pool.
 - **Not done**: the retirements, which are
   [`legacy-to-delete.md`](legacy-to-delete.md) §7, by its rule.
 
@@ -5579,7 +6655,7 @@ now ends at its next ref when the mode stops parsing, where a pause used
 to wait for it (1,083 s on wikivec).
 - **WORK IN FLIGHT STOPS TOO — found by watching the node (412a5c7).**
   After the first deploy, "download/seeding only" took no new document
-  and the two in flight went on: RAGE served 470 embedding requests in the
+  and the two in flight went on: the model pool served 470 embedding requests in the
   next 100 s, and the largest book is 5.3 h. Embedding now ends at its next
   slice and an archive pass at its next row — the units SIGTERM already
   had — deferred, never marked, resumed from what is written. Measured
@@ -5592,11 +6668,11 @@ to wait for it (1,083 s on wikivec).
   `louise-rag:v0.1.0-live`.
 - **The System tab's clock panel** read "GPU governor not running" after
   the cut-over, because it reads the retired app's heartbeat; with
-  `RAGE_URL` set it asks RAGE (f8a6266). `GPU_PROBE_URL` is still what
-  feeds the panel's per-process rows — it shows RAGE's seven processes —
+  the pool's address variable set it asks the model pool (f8a6266). `GPU_PROBE_URL` is still what
+  feeds the panel's per-process rows — it shows the model pool's seven processes —
   so it was left alone; the operator's remark that it "is not used
   anymore" is OPEN: if it means the probe should go, its rows need
-  another source first (rage.md §12 has RAGE's pids joined to the
+  another source first (model-pool.md@c572c3b §12 has the model pool's pids joined to the
   probe's).
 
 **2026-09-20, night — ONE ORIGIN CHECK READS AT MOST 256 MiB OF THE ORIGIN.**
@@ -5626,7 +6702,7 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   DIR` is what a peer gives — so the bound is what that step will have to
   respect when it is built, and what `--origin` reads today.
 
-**2026-09-20, evening — QUARANTINE IS ENFORCED, AND RAGE READS THE CARD.**
+**2026-09-20, evening — QUARANTINE IS ENFORCED, AND the model pool READS THE CARD.**
 - **Quarantine: ENFORCED on the node** (`platform.toml`: `[node] quarantine
   = "enforce"`, the three live collections listed by collection id under
   `quarantine_in_use_before`). The list went in first, in report mode,
@@ -5635,19 +6711,19 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   nothing withheld, search answered on gutenberg, pubmed and wikipedia,
   the node still paused as the operator left it. Way back:
   `config/platform.toml.pre-quarantine-enforce`.
-- **RAGE reads the card's real memory, gives up idle models when a
-  stranger squeezes it, and tells Louise** ([`rage.md`](rage.md) §19;
+- **The model pool reads the card's real memory, gives up idle models when a
+  stranger squeezes it, and tells Louise** (`model-pool.md`@c572c3b §19;
   louise 789bd0e, 028897a). Fifth image,
-  `ghcr.io/sourstar/rage@sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
+  the model pool's image `sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
   (tag `b10630-5`; `b10630-3` and `-4` were published on the way and are
   superseded — nothing published is deleted). The app gained `cap_add:
   PERFMON`: `xe` tells what is USED only to that capability. On the node:
-  32,656 MiB total, 24,691 used, 24,664 RAGE's own, 27 outside, nothing
+  32,656 MiB total, 24,691 used, 24,664 the model pool's own, 27 outside, nothing
   pushed out. Every run id is new again — a new image is a new run (09
   §9.12) — and no collection here is owed a gate (all Codex v2). Way
   back: `config/app-config.pre-memory-feature.json` (mode 600).
 - **Proved live, not only in tests**: a 7 GiB stranger of my own, twice
-  (rage.md §19). The first run showed the rule was not "wise" — 9,937 MiB
+  (model-pool.md@c572c3b §19). The first run showed the rule was not "wise" — 9,937 MiB
   given up for a 1,435 MiB deficit — and the second, after the fix, gave
   up 1,596.
 - **Correction**: a model pushed off the card DOES move back when it is
@@ -5658,20 +6734,20 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   gone minutes later by other hands, and that session ran four more
   bake-offs on the card during the evening, all small.
 
-**2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE RAGE, THE
+**2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE the model pool, THE
 HOST RAN OUT OF MEMORY, AND THE EARLIER ANSWER ABOUT HOST RAM WAS THE
 SMALLER HALF.** Found while building what the operator asked for next:
 "separate real RAM occupancy from memory mapped RAM".
 - **What happened.** At 14:50 a bake-off container (`bakeoff-st:xpu`,
   another session's; Qwen3-Embedding-0.6B under sentence-transformers,
   `--attn sdpa --batch 32`) took 21.4 GiB of the 32 GiB card and 22.8 GiB
-  more of GPU buffers in host RAM. RAGE had 25 GiB resident. The `xe`
+  more of GPU buffers in host RAM. The model pool had 25 GiB resident. The `xe`
   driver moved EVERY resident model's buffers into host RAM with no error
   to anyone (DRM fdinfo, `drm-resident-vram0` against `drm-resident-gtt`):
   chat 476 KiB on the card and 7,403 MiB in host RAM, bge-reranker 9 MiB /
   6,129 MiB, bge-m3 0 / 1,290 MiB. GPU buffers in host RAM, all processes:
   32.3 GiB; host memory used 56 of 63 GiB with the ZFS ARC squeezed to 2.2
-  GiB. **The kernel's out-of-memory killer (global) took three of RAGE's
+  GiB. **The kernel's out-of-memory killer (global) took three of the model pool's
   children**: MADLAD and Qwen3-Embedding at 14:51:43–44, bge-reranker at
   15:03:15 — with an `xe` engine reset in the same second. They go first
   by design (`oom_score_adj` 800). The third kill came as the staged test
@@ -5682,15 +6758,15 @@ SMALLER HALF.** Found while building what the operator asked for next:
   died of the engine reset (`UR_RESULT_ERROR_DEVICE_LOST`, at 10,752 of
   23,617 documents) and its process has spun one core since, still holding
   the card and ~27 GiB of host RAM: stopping that container is the
-  operator's. RAGE restarts a dead model on
+  operator's. The model pool restarts a dead model on
   its next request, as another launch. The models pushed out do NOT move
   back by themselves (2026-09-18 showed the same): a reload does it, once
   the card has room.
-- **Why RAGE could not prevent it**: admission counts what RAGE's OWN
-  models declare. A process that reaches the card without RAGE is
-  invisible to it. Anything that needs the card beside RAGE has to go
-  through RAGE, or run with RAGE's models unloaded. OPEN, the operator's:
-  whether RAGE should read the card's real free memory before a load.
+- **Why the model pool could not prevent it**: admission counts what the model pool's OWN
+  models declare. A process that reaches the card without the model pool is
+  invisible to it. Anything that needs the card beside the model pool has to go
+  through the model pool, or run with the model pool's models unloaded. OPEN, the operator's:
+  whether the model pool should read the card's real free memory before a load.
 - **The correction.** The host-RAM answer of the night before (the mapped
   model file, plus 270–650 MiB of heap per process) was true and was the
   smaller half. The GPU panel's "in host RAM" column was never RSS: it is
@@ -5701,7 +6777,7 @@ SMALLER HALF.** Found while building what the operator asked for next:
   will, never occupancy). A row with most of its GPU buffers in host RAM
   reads "pushed off the card". Twenty minutes after a load the models read
   264–397 MiB owned and 0 mapped.
-- **A defect of RAGE's found by it, fixed in code (8de3a60), NOT yet on the
+- **A defect of the model pool's found by it, fixed in code (8de3a60), NOT yet on the
   node**: `/louise/models` read "ready" for the three dead models, with
   dead pids. The request path was right (`_verified` starts another
   launch, hashed and checked again), so no run was stated for a dead
@@ -5734,11 +6810,11 @@ stays `pending`, and the Library says "tests open — in use by decision".
 
 **2026-09-20, midday — THE DRIVER A RUN STATES IS THE CARD'S, AND THE NODE
 RUNS THE IMAGE THAT READS IT SO.** Operator: "driver fix: yes"
-([`rage.md`](rage.md) §18, item 1; louise bfe5377). Second image,
-`ghcr.io/sourstar/rage@sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
+(`model-pool.md`@c572c3b §18, item 1; louise bfe5377). Second image,
+the model pool's image `sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
 (tag `b10630-2`, same base and same llama-swap: only the front changed;
 public, anonymous pull checked, the manifest's bytes hash to the digest).
-The node's `rage.toml` declares `pci = { xpu = "0000:03:00.0" }` — REQUIRED
+The node's the pool's config file declares `pci = { xpu = "0000:03:00.0" }` — REQUIRED
 here: `xe` and `amdgpu` are both loaded, and without an address the new
 front states no run and says what to declare (checked in a throwaway
 container before the switch, with and without the address, and against
@@ -5747,31 +6823,31 @@ the AMD graphics' address, which reads `amdgpu`).
   6.18.23-production+truenas; xe; intel-opencl-icd 26.18.38308.1-0;
   libze-intel-gpu1 26.18.38308.1-0; libze1 1.27.0-1~24.04~ppa2`.
 - **All seven run ids are new, and that is the rule, not a side effect**:
-  the image is part of every run (09 §9.12), so a new RAGE build is a new
+  the image is part of every run (09 §9.12), so a new the model pool build is a new
   run and is re-gated. Before and after are kept in
-  `state/runs-before-driver-fix.json` beside RAGE's state. Nothing on the
+  `state/runs-before-driver-fix.json` beside the model pool's state. Nothing on the
   node is owed a gate today — every collection here is Codex v2, and the
   run check is v3's (step 13e) — but the first v3 collection would have
   been gated again at its next write, by itself.
 - Preload after the switch: 7 models, the slowest Qwen3 at 25.3 s. Search
   answered on gutenberg, pubmed and wikipedia (no leg withheld), a
   streamed Ask gave its first token in 6.8 s and finished in 12.9 s, the
-  clock reads. No error in RAGE's, the web's or the worker's log. The
+  clock reads. No error in the model pool's, the web's or the worker's log. The
   node was left PAUSED, as the operator set it.
-- The way back: `config/rage.toml.pre-driver-fix`,
-  `config/truenas-rage.yaml.pre-driver-fix`,
+- The way back: the pool config's pre-driver-fix copy,
+  its app file's pre-driver-fix copy,
   `config/app-config.pre-driver-fix.json` (mode 600). The first image
   stays in the registry — nothing published is deleted — and
-  `deploy/bakeoff-st/Dockerfile.xpu` (the bake-off's, not RAGE's) still
+  `deploy/bakeoff-st/Dockerfile.xpu@c572c3b` (the bake-off's, not the model pool's) still
   builds on it, which is right: it wants the runtime, not the front.
 
-**2026-09-20, morning — RAGE NO LONGER READS ANYTHING OF OLLAMA'S.**
-Operator: "If the chat model runs now in RAGE why do we need Ollama?" —
+**2026-09-20, morning — the model pool NO LONGER READS ANYTHING OF OLLAMA'S.**
+Operator: "If the chat model runs now in [the model pool] why do we need Ollama?" —
 we did not, except for ONE FILE: the chat model was read from Ollama's
-blob store. It now has a copy of RAGE's own,
-`/mnt/ssd5/apps/louise-rage/models/chat/qwen3-8b.gguf`, checked against
+blob store. It now has a copy of the model pool's own,
+`models/chat/qwen3-8b.gguf` in the model pool's dataset, checked against
 the digest in the name it came from (`a3de86cd…686f`); the app's bind and
-`rage.toml` point at it, and a test forbids a bind or a weights path that
+the pool's config file point at it, and a test forbids a bind or a weights path that
 names another app's folder. **The path is not part of a run**: chat's run
 id is `sha256:ce6d7fb39087…` before and after, and the six other resident
 models came back from the restart with the run ids they had — the first
@@ -5781,33 +6857,33 @@ chat 11.3, bge-m3 9.3, bge-reranker 7.3, MedCPT query 5.3, cross-encoder
 3.3). A streamed Ask answered in 8.2 s. The GPU panel's last cryptic row
 reads `qwen3-8b`. Ollama has served nothing since chat moved (its only
 requests were the comparison's two chats and the unload). The way back
-for the move: `config/rage.toml.pre-chat-move`,
+for the move: the pool config's pre-chat-move copy,
 `config/app-config.pre-chat-move.json` (mode 600).
 - **THE OPERATOR DELETED THE OLD APPS** (seen 2026-09-20: none of
   `embed-gpu-*`, `embed-cpu-*`, `translate-gpu-madlad`,
   `louise-gpu-governor` is on the node any more). So the way back through
   them that [`legacy-to-delete.md`](legacy-to-delete.md) §7 describes is
   gone by the operator's own decision; their model folders stay, because
-  RAGE reads them. `ollama` still exists and runs, idle: stopping and
+  the model pool reads them. `ollama` still exists and runs, idle: stopping and
   deleting it, and the 89 GB of its store, is the operator's.
 - **The node was rebooted at 10:34** (kernel: a software reset), and came
-  back by itself: `louise-rag`, `louise-rage`, the probe, the mode it was
-  in. RAGE preloaded on its own. The operator then PAUSED the node from
+  back by itself: `louise-rag`, the model pool's app, the probe, the mode it was
+  in. The model pool preloaded on its own. The operator then PAUSED the node from
   the Library (10:38, from 192.168.178.76) and it was left paused — the
   two documents in flight were deferred at their next slice, as the mode
   table now has it.
 
 **LATER THE SAME NIGHT (2026-09-19/20), unattended.**
-- **Chat runs in RAGE** (operator: "the same model in Ollama, just run in
-  RAGE"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
-  back in `config/backup-pre-rage-2026-09-19/app-config.pre-chat.json`
+- **Chat runs in the model pool** (operator: "the same model in Ollama, just run in
+  [the model pool]"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
+  back in the pre-pool backup's app config (2026-09-19)
   (mode 600). Loaded in 15 s, 7,250 MiB of the card, no `<think>` in an
-  answer. Same prompt, the worker embedding beside both: RAGE 12.2–13.8
+  answer. Same prompt, the worker embedding beside both: the model pool 12.2–13.8
   tokens/s generated, Ollama 8.3–8.9. A streamed Ask over gutenberg took
-  25 s through RAGE against 47 s through Ollama. Ollama is idle now, its
+  25 s through the model pool against 47 s through Ollama. Ollama is idle now, its
   model unloaded through its own API; it goes by
   [`legacy-to-delete.md`](legacy-to-delete.md) §7. `chat` and `madlad`
-  joined RAGE's `preload`. **Declared card memory corrected**: Qwen3 was
+  joined the model pool's `preload`. **Declared card memory corrected**: Qwen3 was
   declared 5,200 MiB and holds 8,628 — admission counts what is declared,
   so that is how a card gets over-committed; now 9,000, and chat 7,600.
   Eight models resident: 25.0 GiB of the card's 32.6, and every model at
@@ -5835,7 +6911,7 @@ for the move: `config/rage.toml.pre-chat-move`,
   entries — it lowers the peak the 28 GiB limit is judged against — but
   it is a change to each engine's arguments, so it is the operator's.
 - **"servers.launch" on the GPU panel** were MADLAD (6.2 GB of the card)
-  and MedCPT's cross-encoder (432 MB): RAGE starts both through one
+  and MedCPT's cross-encoder (432 MB): the model pool starts both through one
   Python launcher, and the probe labelled a python process by its
   module. It now labels one that names `--weights` by them, as it does
   llama-server.
@@ -5843,12 +6919,12 @@ for the move: `config/rage.toml.pre-chat-move`,
   `madlad400-3b-mt-bf16` and `medcpt-cross-ov`. ONE ROW IS STILL
   CRYPTIC: `sha256-a3de86cd…` is the CHAT model — Qwen3 8B read from
   Ollama's blob store, whose file name is its digest. The probe names
-  such a blob from Ollama's `manifests` beside it, and RAGE binds only
+  such a blob from Ollama's `manifests` beside it, and the model pool binds only
   `blobs/`. Two ways, neither taken unattended: bind Ollama's whole
   `models/` read-only and point `weights` at `…/blobs/sha256-…` (the
   run identity does not move: the template keeps `${WEIGHTS}` and the
-  digest is of the bytes) — a restart of RAGE; or the design's own join of
-  the probe's pids with RAGE's (rage.md §12), which needs RAGE to say
+  digest is of the bytes) — a restart of the model pool; or the design's own join of
+  the probe's pids with the model pool's (model-pool.md@c572c3b §12), which needs the model pool to say
   which container it is, so a new image.
 - **What re-fetching the origin would cost, measured** (the open design
   question of step 14): pubmed's plan samples 0.05 of its shards — 68 of
@@ -5874,7 +6950,7 @@ measure on the node first; invariant 5), so it was not guessed at here.
 Until it exists quarantine stays on `report`. `node show` (07 §7.8) is
 not built; `louise health` carries the state meanwhile. What the local
 trial build of the image found and fixed before any of this reached the
-node is in [`rage.md`](rage.md) §17.
+node is in `model-pool.md`@c572c3b §17.
 
 ### What is waiting on the operator
 
@@ -6831,7 +7907,7 @@ gutenberg pack plan needs those vectors before the hand-over.
    coat). Encoder: the 2026-08-26 shortlist below
    (KaLM-Embedding-Gemma3-12B, Qwen3-Embedding-8B) was reasoning, and
    **2026-09-20 replaced it with measurement** — `tools/encoder_bakeoff.py`
-   over JuriFindIT's 179 expert questions, through RAGE on the B70,
+   over JuriFindIT's 179 expert questions, through the model pool on the B70,
    `gazzetta-plugin.md` §7.1b. Neither shortlisted model is the answer. The
    two findings that outrank the ranking: running the published
    **DAR-legal-it** ourselves landed within 0.0014 of its authors' recalls,
@@ -7255,7 +8331,7 @@ that would decide it, actually exist to download? It does —
 `jurifindit/JuriFindIT`, parquet, CC-BY-NC-SA-4.0 (gated: invariant 9 wants
 an ack, and `fetch` writes the digests to record one against).
 
-`tools/encoder_bakeoff.py` runs §7.2's procedure against RAGE: the 179
+`tools/encoder_bakeoff.py` runs §7.2's procedure against the model pool: the 179
 expert validation questions over the 23,617-node corpus, through
 `app.embeddings` so the request shape is production's, sharded and
 resumable because it is ~47 minutes per model on the B70.
@@ -7299,7 +8375,7 @@ Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s, DAR-legal-it ~4m.
 
 DAR-legal-it was run on the card through a **side-car** — `FROM` the
 deployed rage digest plus one venv, run once and discarded
-(`deploy/bakeoff-st/Dockerfile.xpu`). RAGE itself, its `rage.toml` and the
+(`deploy/bakeoff-st/Dockerfile.xpu@c572c3b`). The model pool itself, its the pool's config file and the
 pushed image were not touched. **Its recalls land within 0.0014 of the
 authors' published figures**, which validates our metric code against the
 real `InformationRetrievalEvaluator` and makes every row here comparable

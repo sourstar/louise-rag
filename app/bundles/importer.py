@@ -42,7 +42,6 @@ from .export import (HEADER_NAME, POSSESSION_NAME, SIGNATURE_NAME, VECTORS_NAME)
 from .format import (BundleError, BundleFormatError, bundle_id_of, content_digest,
                      parse_header, parse_possession, seq_of, signed_payload,
                      sort_rows, uid_of, verify_signature)
-from .writer_lock import vector_write_lock
 
 
 class BundleSpaceMismatch(BundleError):
@@ -146,8 +145,8 @@ def _check_space(con, collection, header, embed_fn=None) -> bool:
 
     pinned = con.execute("SELECT dim FROM space WHERE id=1").fetchone()
     pinned_dim = pinned["dim"] if pinned else None
-    observed = spaces.known_lance_dim(collection.lance_dir)
-    for label, value in (("pinned", pinned_dim), ("local vector table", observed)):
+    observed = spaces.known_lance_dims(collection.lance_dir)
+    for label, value in (("pinned", pinned_dim),) + tuple(("local vector table", d) for d in sorted(observed)):
         if value is not None and int(value) != header.dim:
             raise BundleSpaceMismatch(
                 f"bundle dim {header.dim} != {label} dim {value}")
@@ -307,7 +306,15 @@ def _write_rows(collection, native_id: int, lance_rows: list[dict], header) -> N
     embeddings.upsert_book's so both writers produce identical tables; width
     and value type come from the header, which the space check has already
     reconciled against the pinned dim.
+
+    A split collection (app/vector_parts.py): the document's part, created
+    with this schema when the bundle brings its first rows.
     """
+    from .. import vector_parts
+    if vector_parts.ensure_split(collection):
+        part = embeddings._part_for_write(collection, native_id)
+        embeddings._check_part_rows(collection, part.vector_part, lance_rows)
+        collection = part
     conn = embeddings._conn(collection)
     if embeddings.TABLE in conn.table_names():
         table = conn.open_table(embeddings.TABLE)
@@ -321,7 +328,8 @@ def _write_rows(collection, native_id: int, lance_rows: list[dict], header) -> N
         pa.field("chapter", pa.string()), pa.field("text", pa.string()),
         pa.field("vector", pa.list_(value_type, header.dim)),
     ])
-    conn.create_table(embeddings.TABLE, data=lance_rows, schema=schema)
+    conn.create_table(embeddings.TABLE, data=lance_rows, schema=schema,
+                      storage_options=embeddings.NEW_TABLE_STORAGE)
 
 
 def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
@@ -363,6 +371,14 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
         except Exception:
             pass
         return {"ok": False, "retryable": False, "error": str(e),
+                "error_class": type(e).__name__}
+    except RuntimeError as e:   # after BundleError, its subclass
+        # a compaction holding the table, or another writer committing
+        # first: the store's moment, never the bundle's (worker.vector_store_contended)
+        from ..worker import vector_store_contended
+        if not vector_store_contended(e):
+            raise
+        return {"ok": False, "retryable": True, "error": f"vector store busy: {e}",
                 "error_class": type(e).__name__}
 
 
@@ -510,7 +526,9 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
                                   else np.float32),
         } for cid in ids]
 
-        with vector_write_lock(con):
+        # through the writer registration, as every vector write: a
+        # compaction waits for it and holds the next off (genesis, 2026-10-30)
+        with embeddings._write_lock(con, collection):
             _write_rows(collection, native_id, lance_rows, header)
 
         con.execute(

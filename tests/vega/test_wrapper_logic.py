@@ -499,7 +499,7 @@ LOAD = json.dumps({"Model": "bge-m3.gguf", "ModelFile": "/models/bge-m3.gguf",
 LOAD_RUN = json.dumps(json.loads(LOAD) | {"Options": ["pairs:true", "parallel:1"]})
 
 
-def test_the_options_are_canonical_as_rage_writes_them():
+def test_the_options_are_canonical_as_the_model_pool_wrote_them():
     canon = vw.canon_from_protojson(LOAD)
     assert canon.options == {"Model": "bge-m3.gguf", "ModelFile": "${WEIGHTS}",
                              "ModelPath": "${MODELS}", "ContextSize": 8192,
@@ -507,6 +507,41 @@ def test_the_options_are_canonical_as_rage_writes_them():
                              "Options": ["pairs:true"]}
     assert canon.env == {"NEO_CACHE_DIR": "/state/neo-cache"}
     assert canon.weights_path == "/models/bge-m3.gguf"
+
+
+def test_a_second_file_is_a_placeholder_and_part_of_the_weights():
+    """09 §9.3, amended 2026-10-31: a LoRA, a projector, a draft model is
+    stated — its path a placeholder, its file in `files` for the digest."""
+    canon = vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {
+        "LoraAdapters": ["/models/a/retrieval.gguf", "/models/a/style.gguf"],
+        "LoraScales": [1.0, 0.25], "MMProj": "/models/proj.gguf"}))
+    assert canon.options["LoraAdapters"] == ["${WEIGHTS:LoraAdapters[0]}",
+                                             "${WEIGHTS:LoraAdapters[1]}"]
+    assert canon.options["MMProj"] == "${WEIGHTS:MMProj}"
+    assert canon.files == {"${WEIGHTS:LoraAdapters[0]}": "/models/a/retrieval.gguf",
+                           "${WEIGHTS:LoraAdapters[1]}": "/models/a/style.gguf",
+                           "${WEIGHTS:MMProj}": "/models/proj.gguf"}
+    assert canon.shaping == {"LoraScales": ["1", "0.25"]}, "as `options` writes them"
+    plain = vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {"LoraScale": 0.5}))
+    assert plain.files == {} and plain.shaping == {}, "no adapter: the weights are the file"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("LoraAdapter", "adapters/retrieval.gguf"),       # each backend resolves a name its own way
+    ("LoraAdapters", ["/models/a.gguf", "b.gguf"]),
+    ("DraftModel", "draft.gguf"),
+])
+def test_a_second_file_named_by_a_relative_name_states_no_run(field, value):
+    with pytest.raises(loadopts.Unstatable, match="absolute path"):
+        vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {field: value}))
+
+
+def test_what_a_load_reads_counts_its_second_files(tmp_path):
+    w, a = tmp_path / "w.gguf", tmp_path / "a.gguf"
+    w.write_bytes(b"x" * 2**20)
+    a.write_bytes(b"y" * 2**19)
+    assert vw.weights_mib(str(w)) == 1.0
+    assert vw.weights_mib(str(w), {"${WEIGHTS:LoraAdapter}": str(a)}) == 1.5
 
 
 def test_the_run_is_what_the_wrapper_launched(tmp_path):
@@ -570,8 +605,10 @@ def test_the_driver_lines_are_the_runs_runtime(tmp_path):
     (proc_root / "sys" / "kernel" / "osrelease").write_text("6.18.0\n")
     _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(json.dumps(
                                  json.loads(LOAD_RUN) | {"EnvVars": {"NEO_CACHE_DIR": "/state/neo-cache",
-                                                                     "GGML_SYCL_ENABLE_DNN": "0"}})),
-                             environ={"NEO_CACHE_DIR": "/state/neo-cache", "GGML_SYCL_ENABLE_DNN": "0"},
+                                                                     "GGML_SYCL_ENABLE_DNN": "0",
+                                                                     "GGML_SYCL_FA_ONEDNN": "0"}})),
+                             environ={"NEO_CACHE_DIR": "/state/neo-cache", "GGML_SYCL_ENABLE_DNN": "0",
+                                      "GGML_SYCL_FA_ONEDNN": "0"},
                              device="Arc",
                              pci=None, weights="sha256:" + "11" * 32,
                              tree=vw.tree_digest(backend.directory),
@@ -582,7 +619,7 @@ def test_the_driver_lines_are_the_runs_runtime(tmp_path):
 
 @pytest.mark.parametrize("name, env", [
     ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
-    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}),
     ("cuda12-llama-cpp", {}),              # cuBLAS disallows atomics by default
     ("vulkan-llama-cpp", {}),              # no mode offered
     ("llama-cpp", {}),
@@ -598,6 +635,7 @@ def _load_with(env, options=("pairs:true", "parallel:1")):
 @pytest.mark.parametrize("name, env", [
     ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
     ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_FA_ONEDNN": "0"}),
 ])
 def test_a_card_run_without_its_vendors_deterministic_mode_is_never_stated(tmp_path, name, env):
     """CLAUDE.md invariant 12: in the MODEL's env, so the run states it."""
@@ -606,12 +644,14 @@ def test_a_card_run_without_its_vendors_deterministic_mode_is_never_stated(tmp_p
               tree=vw.tree_digest(backend.directory), runtime=[],
               card_driver_line="dxg 1")
     (key, value), = env.items()
+    rest = {k: v for k, v in vw.determinism_env(name).items() if k != key}
     with pytest.raises(loadopts.Unstatable, match=f"invariant 12.*{key}={value}"):
-        vw.state_run(canon=_load_with({}), environ=env, **kw)
+        vw.state_run(canon=_load_with(rest), environ=rest, **kw)
     with pytest.raises(loadopts.Unstatable, match="invariant 12"):
         vw.state_run(canon=_load_with({key: "1"}), environ={key: "1"}, **kw)
-    _rid, run = vw.state_run(canon=_load_with(env), environ=env, **kw)
-    assert run["engine"]["env"] == env, "the run says it ran deterministic"
+    full = vw.determinism_env(name)
+    _rid, run = vw.state_run(canon=_load_with(full), environ=full, **kw)
+    assert run["engine"]["env"] == full, "the run says it ran deterministic"
     # the same backend on the CPU uses no card library: nothing is required
     vw.state_run(canon=_load_with({}), environ={}, **(kw | {"device": "cpu"}))
 
@@ -778,7 +818,7 @@ def _run_kw(tmp_path, name, device="the card"):
 def test_llama_cpp_runs_one_sequence_at_a_time_on_any_device(tmp_path, device):
     """Measured: louise-rerank-bge at parallel:4 moved 16 of 20 scores with
     the documents' order; at parallel:1 none moved."""
-    env = {"GGML_SYCL_ENABLE_DNN": "0"} if device != "cpu" else {}
+    env = {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"} if device != "cpu" else {}
     kw = _run_kw(tmp_path, "intel-sycl-f16-llama-cpp", device)
     for options in (("parallel:4",), ()):
         with pytest.raises(loadopts.Unstatable, match="invariant 12.*parallel:1"):
@@ -830,3 +870,106 @@ def test_an_openvino_task_is_stated_only_measured_on_this_very_tree(tmp_path, ta
     env = {vw.MEASURED_ENV: "louise-python-20261021a"}
     _rid, run = vw.state_run(canon=_load_with(env, opts), environ=env, **kw)
     assert run["engine"]["env"] == env, "the run says what it was measured on"
+
+
+def test_the_wrapper_is_part_of_the_engine(tmp_path):
+    """Operator, 2026-10-31 (choice A): the wrapper decides what the backend is
+    given (the cut, the pair's form), and #110 changed it with every run's
+    identity unchanged. A backend engine's `image` is the digest of the
+    backend's tree AND of the package's code, under `/vega/`, and of `cuts`;
+    not of the host's settings, the install record, the kept digests or
+    what Python compiles beside the code."""
+    backend, pkg = tmp_path / "real", tmp_path / "vega-real"
+    (backend / "lib").mkdir(parents=True)
+    (backend / "run.sh").write_text("#!/bin/sh\n")
+    (pkg / "app" / "vega").mkdir(parents=True)
+    (pkg / "vega_wrapper.py").write_text("# the wrapper\n")
+    (pkg / "app" / "vega" / "tag.py").write_text("# the tag\n")
+    (pkg / "vega.json").write_text('{"receipts_socket": "/run/a.sock"}')
+    (pkg / "metadata.json").write_text("{}")
+    (pkg / vw.DIGEST_STORE).write_text("{}")
+    (pkg / f".{vw.DIGEST_STORE}.123.tmp").write_text("{}")
+    (pkg / "venv" / "lib").mkdir(parents=True)
+    (pkg / "venv" / "lib" / "grpc.py").write_text("#")
+    (pkg / "app" / "__pycache__").mkdir()
+    (pkg / "app" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    (pkg / "run.sh").write_text("#!/bin/sh\n")
+    (pkg / "REVISION").write_text("0ec2239\n")
+    (pkg / "neo-cache").mkdir()                  # Intel's kernel cache, where an env names none
+    (pkg / "neo-cache" / "kernel.bin").write_bytes(b"\1")
+    (pkg / "run").mkdir()                        # the receipts socket's directory
+    (pkg / "run" / "stray.log").write_text("x")
+    m = vw.engine_manifest(backend, pkg, vw.TOKENIZER)
+    wrapper = sorted(k for k in m if k.startswith(vw.WRAPPER_PREFIX))
+    assert wrapper == ["/vega/app/vega/tag.py", "/vega/run.sh", "/vega/vega.json#cuts",
+                       "/vega/vega_wrapper.py"], "the code alone, by an allow-list"
+    assert m["/vega/vega.json#cuts"] == {"type": "setting", "value": vw.TOKENIZER}
+    assert {k for k in m if not k.startswith("/")} == set(vw.tree_manifest(backend))
+    image = vw.manifest_digest(m)
+    assert image != vw.tree_digest(backend)
+    # the host's settings are not the engine
+    (pkg / "vega.json").write_text('{"receipts_socket": "/run/b.sock"}')
+    (pkg / "venv" / "lib" / "grpc.py").write_text("# upgraded")
+    (pkg / "neo-cache" / "kernel2.bin").write_bytes(b"\2")     # compiled under load
+    (pkg / "run" / "other.txt").write_text("y")
+    (pkg / "REVISION").write_text("f70dbf9\n")
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) == image, \
+        "a derived cache, a stray file or a revision note never moves the run"
+    # the wrapper's code and its cut are
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.CONTEXT_SIZE)) != image
+    (pkg / "app" / "vega" / "tag.py").write_text("# the tag, changed\n")
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) != image
+    # without a package (a test's Config), the backend's tree alone
+    assert vw.engine_manifest(backend, None, vw.TOKENIZER) == vw.tree_manifest(backend)
+
+
+# ---- a vendor mode relaxed once measured (invariant 12 amended 2026-11-01, choice B;
+# the operator, 2026-11-02: "Align VeGa to the amended specs") -----------------------
+
+def _sycl_kw(tmp_path, name="intel-sycl-f16-llama-cpp-up"):
+    backend = vw.real_backend(_backend_dir(tmp_path, name=name))
+    return dict(backend=backend, device="the card", pci=None, weights="sha256:" + "11" * 32,
+                tree=vw.tree_digest(backend.directory), runtime=[], card_driver_line="dxg 1"), name
+
+
+def test_one_setting_measured_near_exact_on_this_backend_may_be_relaxed(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    _rid, run = vw.state_run(canon=_load_with(env), environ=env, **kw)
+    assert run["engine"]["env"] == env, "the run states what it relaxed, and where it was measured"
+    exact = vw.determinism_env(name)
+    rid_exact, _ = vw.state_run(canon=_load_with(exact), environ=exact, **kw)
+    assert rid_exact != _rid, "the exact mode stays another run, available under its own model"
+
+
+def test_relaxing_one_setting_never_relaxes_another_or_parallel(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="GGML_SYCL_FA_ONEDNN=0"):
+        vw.state_run(canon=_load_with(env), environ=env, **kw)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="parallel:1"):
+        vw.state_run(canon=_load_with(env, ("pairs:true", "parallel:4")), environ=env, **kw)
+
+
+@pytest.mark.parametrize("said, match", [
+    ("intel-sycl-f16-llama-cpp GGML_SYCL_ENABLE_DNN", "measure it again"),     # another tree
+    ("{name} ROCBLAS_DEFAULT_ATOMICS_MODE", "not a setting"),                    # not this mode
+    ("{name} GGML_SYCL_ENABLE_DNN GGML_SYCL_FA_ONEDNN", "one setting"),          # two at once
+    ("GGML_SYCL_ENABLE_DNN", "one setting"),                                     # no backend
+])
+def test_a_relaxation_not_measured_for_this_run_is_refused(tmp_path, said, match):
+    kw, name = _sycl_kw(tmp_path)
+    env = {"GGML_SYCL_ENABLE_DNN": "1", "GGML_SYCL_FA_ONEDNN": "0",
+           vw.NEAR_EXACT_ENV: said.format(name=name)}
+    with pytest.raises(loadopts.Unstatable, match=match):
+        vw.state_run(canon=_load_with(env), environ=env, **kw)
+
+
+def test_a_cpu_run_has_no_mode_to_relax(tmp_path):
+    kw, name = _sycl_kw(tmp_path)
+    env = {vw.NEAR_EXACT_ENV: f"{name} GGML_SYCL_ENABLE_DNN"}
+    with pytest.raises(loadopts.Unstatable, match="CPU"):
+        vw.state_run(canon=_load_with(env), environ=env, **(kw | {"device": "cpu"}))

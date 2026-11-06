@@ -6,18 +6,19 @@ Pipeline per query:
      -> every step below is a structural no-op, degenerating exactly to the
      pre-P0.3 pipeline. Entities found -> two separate outputs, NEVER
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
-     for the LLM context (never ranked, never in RRF); doc_keys-tagged hits
-     get a soft RRF boost. The boost takes only the entities the query
-     NAMES; the facts take those and docs/05's one hop, bounded per link,
-     with what the bound left out named in `facts_withheld` (2026-09-21:
-     one gene expanded to 21,968 variants).
+     for the LLM context (never ranked, never in RRF); the ranked lists are
+     left as they are — 05 §5.2: nothing boosts (the soft RRF boost
+     doc_keys-tagged hits used to get lost on TREC PM, 2026-10-25). The legs
+     are handed only the entities the query NAMES; the facts take those and
+     docs/05's one hop, bounded per link, with what the bound left out named
+     in `facts_withheld` (2026-09-21: one gene expanded to 21,968 variants).
   1. catalog search (the catalog index over title/author/subjects,
      app/catalog.py — subjects are English LoC headings for every
      language, so this is cross-lingual for free)
   2. lexical fan-out: the query in every language the indexes hold, BM25
      each group with its own (app/language_plan.py — once per search)
   3. dense search over whatever is embedded (cross-lingual natively)
-  4. reciprocal-rank-fusion merge (+ entity boost), optional external rerank
+  4. reciprocal-rank-fusion merge, optional external rerank
   5. lazy-embed hook: top books not yet embedded get queued
 
 P0.1 runs a single (Gutenberg) collection; source-qualified, multi-collection
@@ -30,18 +31,18 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import httpx
 from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
-               dispatch, embeddings, model_load,
-               fts, httpc, language_plan, refs, work_dedup)
+               embeddings, model_load, fts, httpc, language_plan, refs, work_dedup)
+from .rage import dispatch
 from .language_plan import LanguagePlan
 from .refs.resolver import row_of
 from .bundles import verify_on_use
 from .hold import runs as hold_runs
 
 RRF_K = 60
-ENTITY_BOOST = 1.0 / RRF_K   # one extra "virtual rank-1 vote" for a tagged hit
 
 
 @dataclass(frozen=True)
@@ -432,6 +433,14 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             texts.append(f"{title}\n\n{body_text}" if title else body_text)
             owner.append((i, c))
     budget_s = budget_s * max(1.0, len(texts) / max(1, len(head)))
+    # WARMED BEFORE THE CUT: the cut asks the reranker's own tokenizer, and a
+    # cold one took that request as its load — 10 s timeout, the text cut by
+    # bytes instead of tokens, a second load started by the next text, and
+    # no cold start logged (München, 2026-10-27 15:42)
+    try:
+        _warm_reranker(recipe)
+    except model_load.LoadTimeout as e:
+        return _fused_order(hits, str(e))
     texts = fit_to_window(texts, recipe)
     # the query each text is judged against: its record's language's variant
     variants = {k.lower(): v for k, v in (queries or {}).items() if v}
@@ -439,10 +448,6 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     for t, (i, _c) in enumerate(owner):
         lang = (head[i].get("lang") or "").lower()
         groups.setdefault(variants.get(lang) or query, []).append(t)
-    try:
-        _warm_reranker(recipe)
-    except model_load.LoadTimeout as e:
-        return _fused_order(hits, str(e))
     deadline = time.monotonic() + budget_s
     scores: dict[int, float] = {}
     for q, idx in groups.items():
@@ -452,32 +457,44 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         if remaining <= 0:
             return _fused_order(hits, f"the rerank took longer than its {budget_s:.1f} s budget")
         part = [texts[t] for t in idx]
+        # A TEXT IS SCORED ONCE PER CALL (2026-11-03: the rerank was 6.2 s of
+        # a 7.0 s search on Ask's benchmark). Two records can send the same
+        # text against the same query — the editions of a work under one
+        # title, a chunk two legs matched — and a pair's score is a pure
+        # function of the pair: the reranker runs one sequence at a time
+        # (`parallel:1`, the wrapper's contract) and was measured bit-exact
+        # with any batch-mates and in any order (approved-encoders.md,
+        # louise-rerank-bge 2026-10-31). So the duplicate is not sent and
+        # takes the score its twin got: the same order, by construction.
+        distinct = list(dict.fromkeys(part))
         if recipe.api == "jina":
-            body = {"query": q, "documents": part, "top_n": len(part)}
+            body = {"query": q, "documents": distinct, "top_n": len(distinct)}
         else:
-            body = {"query": q, "texts": part, "truncate": True}
+            body = {"query": q, "texts": distinct, "truncate": True}
         if recipe.model:
             # the file's `rerank_model` (07 §7.8, amended 2026-10-08): a runner
             # that picks the model from the body (LocalAI) is told which; only
             # RERANK_URL names none
             body["model"] = recipe.model
+        # the backend serving the reranker now: another pid after a timed-out
+        # request means it was evicted and loaded again in between, a cold
+        # start the budget paid (model_load; the cached check missed it)
+        pid = model_load.backend_pid(recipe.url, recipe.model)
+        sent = time.monotonic()
         try:
-            with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=remaining):
-                r = httpc.post(recipe.url, json=body, timeout=remaining,
-                               headers=dispatch.level_headers())
-            r.raise_for_status()
-            data = r.json()
+            data = _rerank_call(recipe, body, remaining, deadline)
             rows = data["results"] if isinstance(data, dict) else data
             got = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
                                           else o["score"]) for o in rows}
         except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
-            return _fused_order(hits, rerank_failure(e, budget_s))
-        if sorted(got) != list(range(len(part))):
+            return _fused_order(hits, _cold_or(e, recipe, pid, sent, budget_s))
+        if sorted(got) != list(range(len(distinct))):
             return _fused_order(hits, f"the reranker answered for "
-                                      f"{sum(1 for i in got if 0 <= i < len(part))} of "
-                                      f"{len(texts)} candidates")
+                                      f"{sum(1 for i in got if 0 <= i < len(distinct))} of "
+                                      f"{len(distinct)} candidates")
+        at = {text: k for k, text in enumerate(distinct)}
         for local, t in enumerate(idx):
-            scores[t] = got[local]
+            scores[t] = got[at[part[local]]]
     best: dict[int, tuple[float, dict]] = {}
     for t, (i, c) in enumerate(owner):
         if i not in best or scores[t] > best[i][0]:
@@ -488,8 +505,15 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     else:
         order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
             if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    moved: dict[int, dict] = {}
     if CATALOG_FIRST:
+        before = order
         order = _catalog_first(order, head)
+        if order and before and order[0] != before[0]:
+            # CLAUDE.md invariant 4, rule 2: a weight's result says what moved
+            # it and how far — here from the reranker's place to the first
+            moved[order[0]] = {"weight": "catalog_first", "from": before.index(order[0]) + 1,
+                               "to": 1}
     for i in order:
         score, c = best[i]
         h = dict(head[i])
@@ -497,6 +521,8 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             # the chunk that scored the record is the one the result shows
             h.update({f: c[f] for f in ("chunk_id", "text", "chapter") if f in c})
         h["rerank_score"] = score
+        if i in moved:
+            h["moved_by"] = [moved[i]]
         ranked.append(h)
     return ranked + tail, True
 
@@ -580,12 +606,77 @@ def rerank_failure(e: BaseException, budget_s: float) -> str:
     if isinstance(e, httpx.TimeoutException) and not isinstance(e, httpx.ConnectTimeout):
         return f"the reranker did not answer within {budget_s:g} s"
     if isinstance(e, httpx.HTTPStatusError):
-        return f"the reranker refused the request (HTTP {e.response.status_code})"
+        said = _server_said(e.response)
+        return (f"the reranker refused the request (HTTP {e.response.status_code}"
+                + (f": {said})" if said else ")")
+                + (", and again when asked once more" if getattr(e, "retried", False) else ""))
     if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
         return "the reranker could not be reached"
     if isinstance(e, (KeyError, IndexError, TypeError, ValueError)):
         return f"the reranker's answer could not be read ({type(e).__name__})"
     return f"the reranker failed ({type(e).__name__})"
+
+
+#: a server error (5xx) is asked again ONCE, after this pause, when the
+#: budget still has room: the rerank is a pure function of its body, and
+#: under load the reranker refuses transiently (2026-10-25: 130 of 5,792
+#: night calls answered 500, scattered — 1 in 21 within one minute — and
+#: none by day). One refused call of a query's 4-6 used to cost the whole
+#: list its rerank. The standard client policy (urllib3's `Retry` with a
+#: status list, gRPC's retry on UNAVAILABLE), kept to one try because the
+#: budget is a person's wait; a library is not adopted for one call site.
+RERANK_RETRY_PAUSE_S = 0.25
+
+
+def _rerank_call(recipe, body: dict, timeout: float, deadline: float) -> dict:
+    """One rerank request, through the gate: its JSON answer. A 5xx is
+    asked again once when at least the pause and a second remain before
+    `deadline`; anything else raises as it came."""
+    for attempt in (1, 2):
+        with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=timeout):
+            r = httpc.post(recipe.url, json=body, timeout=timeout,
+                           headers=dispatch.level_headers())
+        if r.status_code >= 500 and attempt == 1:
+            left = deadline - time.monotonic() - RERANK_RETRY_PAUSE_S
+            if left >= 1.0:
+                time.sleep(RERANK_RETRY_PAUSE_S)
+                timeout = left
+                continue
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            e.retried = attempt == 2          # what the reason says
+            raise
+        return r.json()
+    raise AssertionError("unreachable")
+
+
+def _server_said(response) -> str:
+    """The error a model server put in its answer, short: LocalAI's
+    `{"error": {"message": …}}`, else the start of the text. Never the
+    request's body or headers."""
+    try:
+        got = response.json()
+        msg = (got.get("error") or {}).get("message") if isinstance(got, dict) else None
+        if not msg and isinstance(got, dict):
+            msg = got.get("error") if isinstance(got.get("error"), str) else got.get("detail")
+    except Exception:   # noqa: BLE001 — not JSON: its text
+        msg = None
+    text = str(msg or getattr(response, "text", "") or "").strip().replace("\n", " ")
+    return text[:160]
+
+
+def _cold_or(e: BaseException, recipe, pid: int | None, sent: float, budget_s: float) -> str:
+    """A failed rerank request's reason: a timeout whose model is served by
+    another backend than when the request went was a COLD START inside the
+    budget (operator, 2026-10-09: "Timeouts shall not include cold start"),
+    recorded as one and said so; anything else is `rerank_failure`."""
+    if isinstance(e, httpx.TimeoutException) and not isinstance(e, httpx.ConnectTimeout) \
+            and model_load.reloaded_since(recipe.url, recipe.model, pid):
+        model_load.note_cold_call(recipe.url, recipe.model, "rerank", time.monotonic() - sent)
+        return (f"the reranker was evicted before the request and loaded again inside its "
+                f"{budget_s:g} s budget")
+    return rerank_failure(e, budget_s)
 
 
 def _reranked(query: str, hits: list[dict], recipe, budget_s: float,
@@ -620,12 +711,12 @@ def _warm_reranker(recipe) -> None:
         body = {"query": "warm", "texts": ["warm"], "truncate": True}
     body["model"] = recipe.model
 
-    def warm(bound_s: float) -> None:
+    def warm(bound_s: float):
         with dispatch.interactive(dispatch.Level.RERANK):
-            httpc.post(recipe.url, json=body, timeout=bound_s,
-                       headers=dispatch.level_headers())
+            return httpc.post(recipe.url, json=body, timeout=bound_s,
+                              headers=dispatch.level_headers())
 
-    model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank")
+    model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank", max_age_s=0.0)
 
 
 #: docs/05's one hop, bounded: at most this many facts per declared link from
@@ -640,7 +731,7 @@ FACTS_PER_LINK = 25
 def _entity_facts(query: str, store) -> tuple[list, list["PinnedFact"], list[dict]]:
     """resolve, then docs/05's expand — one hop along each declared link,
     bounded — then the facts. Returns the entities the query NAMES (the
-    boost's, and only those: the 21,968 variants BRCA2 reaches tag not one
+    legs', and only those: the 21,968 variants BRCA2 reaches tag not one
     PubMed document the gene does not), the pinned facts, and what each link
     reached beyond its bound: named in the answer, never dropped in silence
     (docs/05). A fact expand reached names the link (`PinnedFact.via`)."""
@@ -690,46 +781,15 @@ def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
                                  label=e.label, fields=row, via=via))
     return facts
 
-def _tagged_among(con, collection, entity_ids: list[str], book_ids) -> set[int]:
-    """Which of these CANDIDATES carry any of `entity_ids` — for the boost.
-
-    The boost asks one thing: is this hit tagged? So the question is put for
-    the candidates alone, after the merge, and its cost is theirs — a few
-    hundred at most — never the entity's. It used to be the other way round:
-    every document tagged with the entity, fetched before the search, to test
-    a hundred hits against. On pubmed (40.0 M documents, 51.5 GB, 2026-09-21)
-    BRCA2 tags 12,053 documents and took 2.5 s that way; the heaviest gene,
-    HGNC:5172, tags 265,237.
-
-    And before THAT fix it never finished at all. A manifest nobody has
-    ANALYZEd has no statistics, so the planner takes any equality on an
-    indexed column to be selective — and `d.source = ?` is not, every
-    document of a collection has the same source. It drove the loop from all
-    40 M documents; one search was still running after 75 minutes, its
-    caller long gone. `CROSS JOIN` fixes the order here, and with BOTH
-    columns of the unique (source, native_id) index constrained, each
-    candidate is known to be at most one row whatever the statistics say.
-
-    `str(book_id)` is how a candidate is found again: a book_id IS
-    int(native_id), exact for every native id without leading zeros — which
-    is every collection this node holds."""
-    if not entity_ids or not book_ids:
-        return set()
-    ids = sorted({str(b) for b in book_ids})
-    rows = con.execute(
-        f"SELECT d.native_id FROM documents d CROSS JOIN doc_keys k ON k.uid = d.uid "
-        f"WHERE d.source = ? AND d.native_id IN ({','.join('?' * len(ids))}) "
-        f"AND k.entity_id IN ({','.join('?' * len(entity_ids))})",
-        [collection.plugin, *ids, *entity_ids]).fetchall()
-    return {int(r["native_id"]) for r in rows}
-
 def _enqueue_lazy_embed(con, book_ids: list[int], collection):
     now = int(time.time())
     for bid in book_ids:
         uid = f"{collection.plugin}:{bid}"
         row = con.execute(
             "SELECT embed_done FROM documents WHERE uid=? AND in_scope=1", (uid,)).fetchone()
-        if row and not row["embed_done"]:
+        # 0 only: 1 is embedded, and -1 is not embedded here by choice
+        # (07 §7.8 `embed_slices`), a search included
+        if row and row["embed_done"] == 0:
             con.execute(
                 "INSERT INTO embed_queue(uid,priority,ts) VALUES(?,?,?) "
                 "ON CONFLICT(uid) DO UPDATE SET priority=100, ts=excluded.ts",
@@ -756,6 +816,23 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 #: 05 §5.1 (amended 2026-10-20): the source of the catalogue leg — a
 #: record's title, creators and subjects (app/catalog.py)
 CATALOG_SOURCE = "catalog"
+
+
+def limited_langs(collection, only) -> tuple[str, ...]:
+    """The record languages a search limited to `only` keeps, for the legs
+    that filter by the RECORD's language (catalogue, vectors). A
+    multilingual (`mul`) record is written in its plugin's `languages`, one
+    section each (wikidata: `("en",)`, a Codex's list for its life, 02 §2.7):
+    it is kept when one of them is asked for. 2026-10-24: every "in English"
+    search left wikidata's 75.9 M records out of these legs, their `lang`
+    being `mul`. The text leg routes the sections themselves
+    (fts.by_section_language). Unlimited: `()`, every language, as before."""
+    only = tuple(only or ())
+    if not only:
+        return only
+    if fts.MULTILINGUAL not in only and set(only) & set(fts.section_languages(collection)):
+        return only + (fts.MULTILINGUAL,)
+    return only
 #: the legacy prompt's "[catalog matches]" block reads at most this many
 CATALOG_PROMPT = 10
 #: the catalogue variant's chunk lookup asks one text query per language
@@ -841,12 +918,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                             entity_ids: list[str], plan: LanguagePlan | None = None,
                             depth: int = 0, book_ids: set[int] | None = None,
                             as_of: int | None = None) -> dict:
-    """catalog + fts fan-out + dense + intra-collection RRF + entity boost —
+    """catalog + fts fan-out + dense + intra-collection RRF —
     the per-collection core, extracted so search() (one collection) and
     federated_search() (N collections) share identical logic. `plan` is the
     search's language plan, made once for all its collections; without one
     this collection plans alone. Each leg goes at least `depth` deep, so a
-    reranker asked for its top N has N candidates to order. Returns
+    reranker asked for its top N has N candidates to order. `entity_ids`,
+    the entities the query names, change no rank and restrict nothing
+    (05 §5.2, amended 2026-10-25); the `keys` filter arrives as `book_ids`. Returns
     {"catalog", "merged", "translations", "timings", "scope"}."""
     timings: dict[str, float] = {}
     vector_leg: str | None = None      # why the vector leg was withheld, if it was
@@ -878,7 +957,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     t0 = time.time()
     # as deep as the text leg's other variants: it is one of them (§5.1)
     catalog_hits, catalog_why = (
-        catalog_leg(con, core, limit=max(k, depth, 20), langs=plan.only, collection=collection)
+        catalog_leg(con, core, limit=max(k, depth, 20), langs=limited_langs(collection, plan.only),
+                    collection=collection)
         if mode in ("hybrid", "catalog") else ([], None))
     if book_ids:
         catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
@@ -915,6 +995,17 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                     if q == core:
                         own.add(len(lists))      # the user's own words: first on a tie
                     lists.append(hits)
+        if fts.names_capable(collection):
+            # BY NAME (operator, 2026-10-24; wikidata): the records one of
+            # whose names in any language IS a word sequence of the reader's
+            # own words — in one of the asked languages when the search is
+            # limited to some (fts.search_names) — longest name, then most
+            # linked, first. A list of the text leg, as the catalogue's is.
+            cancel.checkpoint()
+            by_name = fts.search_names(collection, core, limit, langs=list(plan.only) or None, **restrict)
+            if by_name:
+                own.add(len(lists))
+                lists.append(by_name)
         if catalog_hits:
             # 05 §5.1 (amended 2026-10-20): the catalogue leg, run with the
             # reader's own words
@@ -959,7 +1050,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 # empty leg whenever the top k were in other languages
                 if vector_leg is None:
                     lists.append(embeddings.search_records(core, limit, collection=collection,
-                                                           langs=list(plan.only) or None,
+                                                           langs=list(limited_langs(collection, plan.only)) or None,
                                                            **restrict))
         except (hold_runs.RunUnvalidated, hold_runs.RunRefused) as e:
             # the answer named a run not yet tested, or one that failed — or
@@ -997,12 +1088,13 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     # what the reranker will read above each candidate's chunks (05 §5.6)
     if collections_mod.reranker_for(collection) is not None:
         _attach_heads(con, collection, merged[:limit])
-    tagged = _tagged_among(con, collection, entity_ids, [m["book_id"] for m in merged])
-    if tagged:
-        for m in merged:
-            if m["book_id"] in tagged:
-                m["rrf"] += ENTITY_BOOST
-        merged.sort(key=lambda x: (-x["rrf"], record_of(x)))
+    # 05 §5.2: nothing boosts. The +1/60 an entity-tagged candidate used to
+    # get lost on TREC Precision Medicine (80 topics, NDCG@10 0.3073 against
+    # 0.3143 without it, docs/notes/query-campaign.md), and the spec never
+    # allowed it. Nor do the entities the query names restrict the legs
+    # (amended 2026-10-25, operator: restricting lost too, 0.3002 / 0.2983):
+    # they are pinned as facts beside the lists, and a reader who wants the
+    # tagged records alone asks with the `keys` filter (app/ask/filters.py).
 
     return {"catalog": catalog_hits[:CATALOG_PROMPT], "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,
@@ -1151,9 +1243,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     t_total = time.time()
 
     # resolve -> expand -> plan (architecture-v2.md §4, docs/05). No entities
-    # found (the common case) -> no facts and no entity ids, and nothing
-    # below reads either until the boost block, which is then skipped — a
-    # structural no-op, not a behavior that needs re-verifying per call.
+    # found (the common case) -> no facts and no entity ids; found, they are
+    # pinned as facts and change no rank (05 §5.2: nothing boosts).
     store = refs.get_store()
     resolved, facts, facts_withheld = _entity_facts(query, store)
 
@@ -1207,7 +1298,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
 
 def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
     """Second RRF pass across collections' already-intra-collection-merged
-    (+entity-boosted) candidate lists. Rank is each list's OWN position —
+    candidate lists. Rank is each list's OWN position —
     raw per-collection score/rrf values are never compared across
     collections (architecture-v2.md's RRF-fuses-rankable-lists design, and
     this task's own "scores never compared across collections" contract).
@@ -1227,11 +1318,65 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
     return scored
 
 
+def _merge_by_relevance(lists: list[tuple[list[dict], Any]]) -> list[dict]:
+    """05 §5.6 (amended 2026-10-31, operator's B): the collections' lists
+    merged on each record's PROBABILITY OF RELEVANCE — its reranker's score
+    through that collection's own calibration (`collections.Calibration`,
+    Platt scaling) — where rank fusion gave every collection's first record
+    the same weight, however weak (docs/notes/federated-merge.md).
+
+    EACH LIST KEEPS ITS OWN ORDER. A record's merge value is the best
+    probability at or below it in its own list (a running maximum from the
+    bottom), so what its collection put above another record stays above it:
+    the catalogue's first record (§5.6), a language's slots, the tail the
+    reranker did not read (probability 0 — it follows every judged record).
+    Ties: the higher place in its own list, then the list's order (the
+    collections by name, as the caller sorted them). Each hit keeps `rrf`, its
+    rank-fusion value, beside `relevance`."""
+    scored: list[tuple[float, int, int, dict]] = []
+    for li, (hits, calibration) in enumerate(lists):
+        envelope = [0.0] * len(hits)
+        best = 0.0
+        for i in range(len(hits) - 1, -1, -1):
+            score = hits[i].get("rerank_score")
+            if score is not None:
+                best = max(best, calibration.probability(score))
+            envelope[i] = best
+        for i, h in enumerate(hits):
+            entry = dict(h)
+            entry["rrf"] = 1.0 / (RRF_K + i + 1)
+            entry["relevance"] = round(envelope[i], 6)
+            scored.append((-envelope[i], i, li, entry))
+    scored.sort(key=lambda t: t[:3])
+    return [t[3] for t in scored]
+
+
+def _relevance_merge_withheld(lists: list[tuple], reranked: dict[str, bool]) -> list[dict]:
+    """Why these lists cannot be merged on relevance — one entry per list
+    that has no usable calibration this time; [] when every one has. `lists`
+    is (collection, hits, recipe) per collection."""
+    why: list[dict] = []
+    for collection, _hits, recipe in lists:
+        cal = getattr(recipe, "calibration", None) if recipe is not None else None
+        if recipe is None:
+            reason = "no reranker"
+        elif cal is None:
+            reason = "its reranker has no calibration"
+        elif cal.rerank_model != recipe.model:
+            reason = f"calibrated for {cal.rerank_model}, its reranker is {recipe.model}"
+        elif not reranked.get(collection.name):
+            reason = "its list was not reranked this time"
+        else:
+            continue
+        why.append({"collection": collection.name, "reason": reason})
+    return why
+
+
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
                       all_languages: bool = False, book_ids_for=None,
                       show_in: str | None = None, as_of: int | None = None,
-                      annotations=None) -> dict:
+                      annotations=None, keep_lists: bool = False) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -1344,7 +1489,17 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     reranked = {c.name: ok for (c, _), (_, ok, _) in zip(per_collection, ranked)}
     rerank_withheld = [_rerank_withheld(c, why)
                        for (c, _), (_, _, why) in zip(per_collection, ranked) if why]
-    final = _merge_rrf_federated([hits for hits, _, _ in ranked])[:k]
+    # 05 §5.6 (amended 2026-10-31): on relevance when every list's reranker
+    # is calibrated and answered; by rank otherwise, and the result says why
+    recipes = [(c, hits, collections_mod.reranker_for(c))
+               for (c, _), (hits, _, _) in zip(per_collection, ranked)]
+    merge_withheld = _relevance_merge_withheld(recipes, reranked) if len(recipes) > 1 else []
+    if len(recipes) > 1 and not merge_withheld:
+        final = _merge_by_relevance([(hits, r.calibration) for _, hits, r in recipes])[:k]
+        merged_by = "relevance"
+    else:
+        final = _merge_rrf_federated([hits for hits, _, _ in ranked])[:k]
+        merged_by = "rank"
     rerank_ms = round((time.time() - t0) * 1000, 1)
 
     # metadata attach + lazy-embed enqueue, grouped by source_collection
@@ -1377,13 +1532,22 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
               "catalog": catalog, "hits": final,
               "facts": [asdict(f) for f in facts] + _article_facts(query, collections, facts, as_of),
               "facts_withheld": facts_withheld,
-              "timings": timings, "reranked": reranked}
+              "timings": timings, "reranked": reranked, "merged_by": merged_by}
     if legs_withheld:
         result["legs_withheld"] = legs_withheld
     if rerank_withheld:
         result["rerank_withheld"] = rerank_withheld
+    if merge_withheld and any(getattr(r, "calibration", None) for _, _, r in recipes):
+        # a calibration is configured and was not used this time: say why
+        result["merge_withheld"] = merge_withheld
     if filtered:
         result["filtered"] = filtered
+    if keep_lists:
+        # MEASUREMENT (tools/measure/fusion_calibration.py): each collection's
+        # list as the merge saw it
+        result["lists"] = {c.name: {"reranked": reranked.get(c.name, False),
+                                    "rerank_model": getattr(r, "model", None), "hits": hits}
+                           for c, hits, r in recipes}
     return result
 
 ANSWER_SYSTEM = (

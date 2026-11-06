@@ -1,5 +1,8 @@
 # Lineage: how a collection continues, splits and gets replaced
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` §2.7 (daughters, sisters, corrective sisters), which adopted it.
+
+
 *Proposal, 2026-09-05. For review — nothing here is built. Depends on
 `no-central-node.md` (Codex, content-addressed snapshots, HRW) and
 `certified-collections.md`; amends `pack-format.md` §6.1, §7, §17 and

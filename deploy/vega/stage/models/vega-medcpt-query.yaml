@@ -1,12 +1,13 @@
 {
-  "backend": "vega-llama-cpp",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 513,
   "embeddings": true,
   "env": {
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
-    "GGML_SYCL_ENABLE_DNN": "0"
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0"
   },
-  "flash_attention": "on",
+  "flash_attention": "off",
   "gpu_layers": 999,
   "mmap": true,
   "name": "vega-medcpt-query",

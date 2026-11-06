@@ -5,7 +5,7 @@
 # interactive claim is live. Measured 2026-09-20: a chat call alone on the
 # card took 87 s at a mean of 990 MHz, and 64 s with the clock held. Absent,
 # the System tab says so and chat is slower on an idle card; nothing else
-# depends on it. It moves into RAGE when that exists.
+# depends on it. It moves into the model pool when that exists.
 #
 # Why its own app. 2026-09-20, the first deploy, as a service of louise-rag:
 # - TrueNAS rewrote the long-syntax bind into short `source:target:rw`;
@@ -22,8 +22,19 @@
 # System tab shows "not running"; Louise is untouched. It also mounts the
 # node store's directory for the claim and its heartbeat.
 #
+# The profile's GPU level (2026-10-27, docs/notes/node-profiles-design.md;
+# app/gpu_level.py). It reads platform.toml's [schedule] (the config
+# directory, read-only) in the node's local time (TZ, the same as Louise's),
+# and writes the card's power limit, hwmon `power1_max`: the card's
+# `device/hwmon/` is bound writable at /gpuhwmon (hwmonN inside; N changes
+# across boots, so it is found, never named). Where `power1_max` is absent or
+# read-only it writes `max_freq` in /gpufreq instead. It replaces the root
+# cron deploy/scheduled/gpu-cap.sh. A limit changes how fast a vector comes,
+# never its bytes.
+#
 # What it gets. No network. Never louise-rag's env, which carries
-# ADMIN_TOKEN. Init forwards the stop signal; SIGTERM gives the clock back.
+# ADMIN_TOKEN. Init forwards the stop signal; SIGTERM gives the clock, the
+# power limit and the clock ceiling back.
 
 services:
   gpu-governor:
@@ -35,7 +46,11 @@ services:
     network_mode: none
     environment:
       DATA_DIR: /data
+      CONFIG_DIR: /config
+      TZ: Europe/Rome
     volumes:
       - /mnt/ssd4/apps/louise-rag/data/state:/data/state
+      - /mnt/ssd4/apps/louise-rag/config:/config:ro
       - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
+      - /sys/class/drm/card0/device/hwmon:/gpuhwmon
     stop_grace_period: 10s

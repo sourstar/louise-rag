@@ -7,6 +7,12 @@
    withheld, `run_search` returns {hits, withheld} with no `timings`, so the
    badge row below raised UndefinedError and /ask/query answered 500: the
    gate's own message replaced by a crash. Both fixed here. #}
+{# THE REPORT (operator, 2026-10-30: "the report of the time spent shall
+   be before the answer box, otherwise it is buried among many other
+   information"): what was left out and what the search took. Rendered here
+   with the hits; the page moves it into #report, above the answer
+   (ask.html, `placeReport`). #}
+<div id="search-report">
 {% if result.withheld %}
 <div class="panel">
   <b>Some collections were left out of this search.</b>
@@ -32,6 +38,7 @@
   {% elif result.language and result.language.status == 'unavailable' %}
   <span class="badge err" title="no model could translate the question: every language was searched with it as typed">languages: query not translated</span>
   {% endif %}
+</div>
 </div>
 
 {% if result.facts is defined and result.facts %}
@@ -79,6 +86,8 @@
     {% if h.authors %}<span class="badge">{{ h.authors }}</span>{% endif %}
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
+    {# CLAUDE.md invariant 4, rule 2: a result a weight moved says so #}
+    {% for m in h.moved_by or [] %}<span class="badge" title="moved by a weight: {{ m.weight }}, from place {{ m['from'] }} to {{ m.to }}">{{ 'catalogue match' if m.weight == 'catalog_first' else m.weight }}: moved up from #{{ m['from'] }}</span>{% endfor %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
     {# the chapter or section heading is the document's own words, so it
        is translated with the entry (operator, 2026-09-18: "in full") #}
@@ -145,6 +154,8 @@
     {% for f in h.plates %}
     {% if f.kind == 'img' %}{% set src = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash}|urlencode) %}
     <figure class="plate"><a href="{{ src }}" target="_blank" rel="noopener" title="open the plate full size"><img src="{{ src }}" loading="lazy" alt="{{ f.caption or 'plate' }}"></a>{% if f.caption %}<figcaption dir="auto">{{ f.caption }}</figcaption>{% endif %}</figure>
+    {% elif f.kind == 'download' %}{% set dl = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash, 'download': 1}|urlencode) %}
+    <a class="badge plate-download" href="{{ dl }}" download rel="noopener" title="{{ f.why }} — stored and shared, offered as a file">🖼 {{ f.caption or 'illustration' }} — not displayable ({{ f.media_type or 'unknown type' }}, {{ f.size }}) — download</a>
     {% elif f.kind == 'link' %}
     <a class="badge lapis plate-link" href="{{ f.href }}" target="_blank" rel="noopener" title="{{ f.why }} — the origin shows it">🖼 {{ f.caption or 'illustration' }} — at the source ↗</a>
     {% else %}

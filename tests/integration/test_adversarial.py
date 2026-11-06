@@ -1,10 +1,11 @@
 """F1's adversarial suite: the eight prescribed scenarios, each with its
 defined correct outcome encoded as an assertion — not a description.
 
-These deliberately cross module boundaries: coordinator accepting what it
-structurally cannot check, the consumer catching it, the report feeding back,
-probation throttling the next lease. Unit suites already cover each module
-alone; what F1 owns is the seams.
+These deliberately cross module boundaries: the consumer catching what a
+producer signed, verify-on-use, quarantine, restarts mid-import. Unit suites
+already cover each module alone; what F1 owns is the seams. (The scenarios
+that ran through architecture-v2's coordinator left with it on 2026-11-01:
+04 §4.5 hands work out by rendezvous, never by a coordinator.)
 """
 import io
 import tarfile
@@ -17,7 +18,6 @@ from fastapi.testclient import TestClient
 from app import db, embeddings, worker
 from app.bundles import export as bundle_export
 from app.bundles import importer, ledger, trust, verify_on_use
-from app.coordinator import leases, service, store
 from tests.integration.conftest import (ATTACKER_KEY, PRODUCER_KEY, mirror_corpus,
                                          model_embed, seed_node)
 
@@ -46,17 +46,6 @@ def _archive(directory):
 
 
 WIDE_UNIVERSE = [f"gutenberg:{i}" for i in range(100, 150)]
-
-
-@pytest.fixture
-def coordinator(tmp_path):
-    # a universe comfortably larger than any single lease, so throttling is
-    # distinguishable from simply running out of work
-    app = service.create_app(db_path=str(tmp_path / "coord.db"),
-                             artifact_dir=str(tmp_path / "coord-artifacts"),
-                             candidate_source=lambda s, c: WIDE_UNIVERSE)
-    with TestClient(app) as client:
-        yield client
 
 
 @pytest.fixture
@@ -94,44 +83,6 @@ def test_corrupted_space_bundle(two_nodes, tmp_path, monkeypatch):
 
 
 # ────────────────── 2. wrong-model bundle, end to end ──────────────────
-
-def test_wrong_model_bundle_coordinator_accepts_consumer_catches_reports_throttle(
-        two_nodes, coordinator, tmp_path, monkeypatch):
-    """The full seam: the coordinator has no corpus and no model, so a
-    wrong-model bundle passes its T0-T2 honestly (tier_reached records how
-    little was checked). The CONSUMER catches it at sample re-embed, reports
-    the failure, and the coordinator's next lease to that producer shrinks.
-    """
-    producer_con, producer_col, consumer_con, consumer_col, rows = two_nodes
-    # producer re-embeds everything with a DIFFERENT model, then exports
-    wrong = {r["id"]: v for r, v in
-             zip(rows, model_embed([r["text"] for r in rows], salt="model-B"))}
-    conn = embeddings._conn(producer_col)
-    table = conn.open_table(embeddings.TABLE)
-    for uid, native_id in DOCS.items():
-        chunk_rows = [r for r in rows if r["id"].startswith(uid + ":")]
-        table.delete(f"book_id = {native_id}")
-        table.add([{**r, "vector": np.asarray(wrong[r["id"]], dtype=np.float32)}
-                   for r in chunk_rows])
-    summary = _export(producer_con, producer_col, tmp_path, list(DOCS))
-
-    upload = coordinator.post("/bundles", content=_archive(tmp_path / "b"),
-                              headers={"content-type": "application/x-tar"})
-    assert upload.status_code == 200, "coordinator cannot catch a wrong model without T3"
-    assert upload.json()["tier_reached"] == 0     # honest: only structural T0 ran
-
-    result = importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")
-    assert result["error_class"] == "BundleVerificationError"
-    assert "DIFFERENT MODEL" in result["error"]
-
-    producer_id = summary["producer"]
-    for _ in range(4):
-        coordinator.post("/reports", json={"producer": producer_id, "passed": False})
-    lease = coordinator.get("/work", params={"space": "s", "producer": producer_id,
-                                              "n": 100}).json()
-    # 50 uids were available; probation caps a 100-uid request at 100//10
-    assert 0 < len(lease["uids"]) <= 10, "probation did not throttle the lease"
-
 
 # ────────────────── 3. 5%-poisoned bundle ──────────────────
 
@@ -212,29 +163,6 @@ def test_replayed_bundle_for_a_revised_document_is_refused(two_nodes, tmp_path):
 
 # ────────────────── 5. expired-lease double completion ──────────────────
 
-def test_expired_lease_double_completion_converges(two_nodes, coordinator, tmp_path):
-    """§7's core tolerance, at the seam: the same range leased twice after
-    expiry, both producers upload, and the system converges — one covered uid
-    set, no double credit for identical work."""
-    producer_con, producer_col, _, _, _ = two_nodes
-    coord_db = store.connect(coordinator.app.state.db_path)
-    first = leases.issue(coord_db, space_id="s", collection="c",
-                          producer="a" * 64, count=3, candidate_uids=list(DOCS), ttl=-1)
-    second = leases.issue(coord_db, space_id="s", collection="c",
-                           producer="b" * 64, count=3, candidate_uids=list(DOCS))
-    assert set(first["uids"]) == set(second["uids"])
-
-    _export(producer_con, producer_col, tmp_path, list(DOCS))
-    payload = _archive(tmp_path / "b")
-    one = coordinator.post("/bundles", content=payload,
-                           headers={"content-type": "application/x-tar"}).json()
-    two = coordinator.post("/bundles", content=payload,
-                           headers={"content-type": "application/x-tar"}).json()
-    assert one["bundle_id"] == two["bundle_id"] and two.get("duplicate")
-    board = coordinator.get("/leaderboard").json()["leaderboard"]
-    assert board[0]["bundles_accepted"] == 1
-
-
 # ────────────────── 6. import racing local embedding ──────────────────
 
 def test_import_local_race_is_covered_at_module_level():
@@ -274,30 +202,6 @@ def test_worker_restart_after_crash_mid_import_recovers(two_nodes, tmp_path,
     monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     retry = importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")
     assert retry["ok"], retry.get("error")
-
-
-# ────────────────── 7. coordinator restart mid-lease ──────────────────
-
-def test_coordinator_restart_mid_lease(tmp_path):
-    """Leases live in SQLite, so a restarted coordinator honors them: no
-    re-issue of live work, completion still accepted."""
-    db_path = str(tmp_path / "coord.db")
-    app1 = service.create_app(db_path=db_path, artifact_dir=str(tmp_path / "a1"),
-                              candidate_source=lambda s, c: list(DOCS))
-    with TestClient(app1) as client:
-        lease = client.get("/work", params={"space": "s", "producer": "a" * 64,
-                                             "n": 2}).json()
-    assert lease["uids"]
-
-    app2 = service.create_app(db_path=db_path, artifact_dir=str(tmp_path / "a2"),
-                              candidate_source=lambda s, c: list(DOCS))
-    with TestClient(app2) as client:
-        second = client.get("/work", params={"space": "s", "producer": "b" * 64,
-                                              "n": 2}).json()
-        assert not set(lease["uids"]) & set(second["uids"]), \
-            "restart forgot a live lease and double-issued the work"
-        coord_db = store.connect(db_path)
-        assert leases.complete(coord_db, lease["lease_id"], "a" * 64)
 
 
 # ────────────────── 8. consumer SIGTERM mid-import ──────────────────

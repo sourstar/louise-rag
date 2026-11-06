@@ -1,5 +1,8 @@
 # A General-Purpose, Peer-to-Peer RAG Platform — v2
 
+> **Superseded** (2026-10-25, handover) by the specification in `docs/01`–`09` (2026-10-08); a near-copy of `architecture-v2.md`, kept for history.
+
+
 **Consolidated architecture.** Supersedes v1 (`p2p-rag-architecture-sketch.md`). New in this revision: the verification ladder (§6), the reference/entity layer (§4), the acquisition layer, transfer manager, and preservation failsafe (§5.1–5.3), the community workload protocol (§7), concrete genesis corpora and their licensing (§8), the genomics collection including multi-species (§9), hardware placement (§10), a revised roadmap (§11), the configuration/control plane and web interface (§14–15), and packaging/deployment (§16).
 
 **Goal.** Generalize the single-source `gutenberg-rag` app into a platform where (1) any data source is a plugin, (2) sources live in separate collections federated at query time, (3) both raw corpora and vector artifacts are shareable peer-to-peer, and (4) the embedding workload is split across contributors — with verification strong enough that vectors from strangers are safe to import.

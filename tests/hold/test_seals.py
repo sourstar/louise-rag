@@ -346,3 +346,13 @@ def test_a_pades_seal_is_captured_from_the_pdf_and_validates_like_a_cades_one(pk
     with pytest.raises(seals.SealError, match="not a signed PDF"):
         seals.capture(tmp_path / "x.p7m", format="pades", trusted_list=TL) if (tmp_path / "x.p7m").write_bytes(
             a_p7m(pki)) else None
+
+
+def test_an_envelope_ending_in_a_zero_byte_keeps_it():
+    # 2026-10-27: /Contents' zero padding was stripped, and with it a
+    # signature's own last byte when it was 0x00 (one key in 256)
+    from asn1crypto import core
+    value = core.OctetString(b"signature ending in zero\x00").dump()
+    assert value.endswith(b"\x00")
+    assert seals.der_value(value + b"\x00" * 64) == value
+    assert seals.der_value(value) == value

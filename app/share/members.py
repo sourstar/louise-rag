@@ -201,9 +201,9 @@ class Member:
 
 
 def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
-    """`validation`, `terms`, `calibration-<set>` and `seals-<id>` from the
-    snapshot's `files` (09 §9.4); a null entry (a green collection's terms)
-    is no member."""
+    """`validation`, `terms`, `slicing`, `calibration-<set>` and
+    `seals-<id>` from the snapshot's `files` (09 §9.4); a null entry (a
+    green collection's terms) is no member."""
     out: list[Member] = []
     plain = {shard_mod.VALIDATION_PATH: "validation", shard_mod.TERMS_PATH: "terms"}
     calibration: dict[str, list[MemberFile]] = {}
@@ -216,6 +216,9 @@ def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
         mf = MemberFile(path, entry["root"], int(entry["bytes"]))
         if path in plain:
             out.append(Member(plain[path], (mf,)))
+        elif path.startswith("slicing/") and path.endswith(".json"):
+            # the family map a slicing names (09 §9.4, §9.16, amended 2026-10-24)
+            out.append(Member("slicing", (mf,)))
         elif path.startswith("calibration/"):
             stem = Path(path).name.split(".", 1)[0]
             calibration.setdefault(f"calibration-{stem}", []).append(mf)

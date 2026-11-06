@@ -39,6 +39,7 @@ def test_the_snapshot_index_keeps_only_directories_with_a_full_dump(monkeypatch)
     class R:
         def __init__(self, text, code=200):
             self.text, self.status_code = text, code
+            self.content = text.encode()
 
         def raise_for_status(self):
             pass
@@ -56,6 +57,12 @@ def test_the_snapshot_index_keeps_only_directories_with_a_full_dump(monkeypatch)
         def get(self, url, headers=None):
             return R(pages[url]) if url in pages else R("", 404)
     import httpx
+
+    from app.acquire import budget
     monkeypatch.setattr(httpx, "Client", Client)
+    drawn = []
+    monkeypatch.setattr(budget, "acquire_bytes", drawn.append)
     assert specs.wikidata_snapshots() == ("20261012", "20261007")
+    # invariant 5: the top listing and each of the five dated listings, drawn
+    assert len(drawn) == len(pages) and sum(drawn) == sum(len(t.encode()) for t in pages.values())
     assert WIKIDATA_SPEC.snapshot_index is specs.wikidata_snapshots

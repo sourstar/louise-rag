@@ -50,4 +50,4 @@ def test_the_note_is_matched_on_its_words(text, hit):
 
 
 def test_the_parser_moved():
-    assert SOURCE.PARSER_VERSION == 10
+    assert SOURCE.PARSER_VERSION >= 10, "10 moved it; 11 (every plate) moved it again"

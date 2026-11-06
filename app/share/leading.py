@@ -297,6 +297,11 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
             # named only when there is something to name
             try:
                 extra = {k: v for k, v in counting.view_kwargs(root, collection.name, codex, con).items() if v}
+            except counting.CoverageUnknown:
+                # every doubt embeds (module docstring): no union, so nothing
+                # is skipped on a count nobody can trust — the publish pass,
+                # which reads the same count, logs why
+                extra = {}
             except Exception:   # noqa: BLE001 — the sum, as before: a count that fails disables no skip
                 extra = {}
             ranks = contribute.work_order(codex, snapshot, con, me=own_key, live=live, now=now, **extra) \

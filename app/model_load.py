@@ -52,14 +52,59 @@ import httpx
 
 from . import httpc
 
-#: how long one `/system` answer is trusted
+#: how long one `/system` answer is trusted by the worker's hot path
 SYSTEM_TTL_S = 2.0
+#: how long it is trusted for a request a person waits on. In 2 s another
+#: model's load can make LocalAI's reclaimer evict this one, and a check that
+#: reads the older answer sends the request cold, its load then paid inside
+#: its budget. A guard for the operator's rule of 2026-10-09; it was NOT the
+#: cause of the 2026-10-25 rerank misses: the reranker was never evicted that
+#: night, and the misses were HTTP 500s (STATUS.md). A burst — a query's
+#: variants — shares one read; a single request (rerank, chat, translation)
+#: asks with 0.
+INTERACTIVE_TTL_S = 0.25
 #: how long a server that has no `/system` (or not LocalAI's) is left alone
 NO_ROUTE_TTL_S = 300.0
 #: the bound on one `/system` read; measured 11 ms on the node
 PROBE_TIMEOUT_S = 2.0
 #: the measured profile's bounds, shipped with the code
 BOUNDS_FILE = Path(__file__).with_name("model_loads.json")
+
+
+#: What VeGa's wrapper answers a load it states no run for (vega_wrapper
+#: `_refuse_load`), carried inside the runner's error: LocalAI answers the
+#: load that failed with HTTP 500 "failed to load model … could not load
+#: model (no success): VeGa: no run can be stated: <why>", and every request
+#: after it with a 503 "load is in cooldown" that no longer says why
+#: (München, 2026-11-02, reproduced). Waiting does not heal it: the model's
+#: tree or YAML must change (CLAUDE.md invariant 12).
+VEGA_NO_RUN = "VeGa: no run can be stated"
+
+
+class LoadRefused(ConnectionError):
+    """The platform refused to load the model: VeGa states no run for it.
+    A ConnectionError, so the worker and a search read it as "not now" (no
+    document is touched, the leg is withheld with this reason); a command
+    exits 2, refused (app/louise.py), and `deploy/supervise-pass.sh` does
+    not run it again. Seen only on the request that made the load — the
+    warm — so it is raised there, for the warm's caller and every caller
+    that waited on it, instead of the cooldown the real request would meet."""
+
+    def __init__(self, message: str, *, model: str) -> None:
+        super().__init__(message)
+        self.model = model
+
+
+def refused_load(model: str, response) -> LoadRefused | None:
+    """The refusal in a runner's answer, or None."""
+    status = getattr(response, "status_code", None)
+    body = getattr(response, "text", "") or ""
+    if status is None or status < 500 or VEGA_NO_RUN not in body:
+        return None
+    at = body.index(VEGA_NO_RUN)
+    why = body[at:at + 400].split('","type"')[0].strip()
+    return LoadRefused(f"{model}: {why} — the model platform refuses to state a run for it; "
+                       f"nothing is written, and waiting does not change it", model=model)
 
 
 class LoadTimeout(httpx.ConnectTimeout):
@@ -94,6 +139,7 @@ class _Flight:
 
 _lock = threading.Lock()
 _systems: dict[str, tuple[float, frozenset[str] | None, float]] = {}   # server -> (at, ids, ttl)
+_pids: dict[str, dict[str, int]] = {}                                    # server -> {model: backend pid}
 _probe_locks: dict[str, threading.Lock] = {}
 _flights: dict[tuple[str, str], _Flight] = {}
 _recent: deque[ColdStart] = deque(maxlen=100)
@@ -105,6 +151,7 @@ def reset() -> None:
     global _bounds
     with _lock:
         _systems.clear()
+        _pids.clear()
         _probe_locks.clear()
         _flights.clear()
         _recent.clear()
@@ -119,7 +166,8 @@ def server_of(url: str) -> str:
 
 
 def _fetch_system(server: str) -> frozenset[str] | None:
-    """The ids LocalAI lists as loaded, or None when the server cannot say."""
+    """The ids LocalAI lists as loaded, or None when the server cannot say;
+    each one's backend pid noted on the way (`backend_pid`)."""
     try:
         r = httpc.get(f"{server}/system", timeout=PROBE_TIMEOUT_S)
     except Exception:   # noqa: BLE001 — unreachable: nothing is known
@@ -134,27 +182,40 @@ def _fetch_system(server: str) -> frozenset[str] | None:
         raise _NoRoute() from None
     if not isinstance(rows, list):
         raise _NoRoute()
-    return frozenset(m["id"] for m in rows if isinstance(m, dict) and isinstance(m.get("id"), str))
+    held = [m for m in rows if isinstance(m, dict) and isinstance(m.get("id"), str)]
+    pids = {}
+    for m in held:
+        pid = (m.get("process") or {}).get("pid") if isinstance(m.get("process"), dict) else None
+        if isinstance(pid, int):
+            pids[m["id"]] = pid
+    with _lock:
+        _pids[server] = pids
+    return frozenset(m["id"] for m in held)
 
 
 class _NoRoute(Exception):
     """The server answered, and not as LocalAI's `/system` does."""
 
 
-def loaded_models(server: str) -> frozenset[str] | None:
-    """What `server` holds, cached `SYSTEM_TTL_S`; None when it cannot say.
-    One read per server at a time: a caller arriving during a read takes
-    its answer."""
-    now = time.monotonic()
+def loaded_models(server: str, max_age_s: float | None = None) -> frozenset[str] | None:
+    """What `server` holds, from an answer at most `max_age_s` old (default
+    `SYSTEM_TTL_S`; a runner with no `/system` is not asked again for
+    `NO_ROUTE_TTL_S` whatever is asked); None when it cannot say. One read
+    per server at a time: a caller arriving during a read takes its answer."""
+    def fresh_enough(got) -> bool:
+        age = time.monotonic() - got[0]
+        limit = got[2] if got[2] == NO_ROUTE_TTL_S or max_age_s is None else min(got[2], max_age_s)
+        return age < limit
+
     with _lock:
         got = _systems.get(server)
-        if got is not None and now - got[0] < got[2]:
+        if got is not None and fresh_enough(got):
             return got[1]
         lock = _probe_locks.setdefault(server, threading.Lock())
     with lock:
         with _lock:
             got = _systems.get(server)
-            if got is not None and time.monotonic() - got[0] < got[2]:
+            if got is not None and fresh_enough(got):
                 return got[1]
         try:
             ids, ttl = _fetch_system(server), SYSTEM_TTL_S
@@ -163,6 +224,47 @@ def loaded_models(server: str) -> frozenset[str] | None:
         with _lock:
             _systems[server] = (time.monotonic(), ids, ttl)
         return ids
+
+
+def backend_pid(url: str, model: str | None, max_age_s: float = INTERACTIVE_TTL_S) -> int | None:
+    """The pid of the backend that serves `model` on `url`'s runner, from an
+    answer at most `max_age_s` old; None when it is not loaded or the runner
+    cannot say. A different pid after a request than before it means the
+    model was loaded again in between — a cold start that request paid."""
+    if not model:
+        return None
+    server = server_of(url)
+    ids = loaded_models(server, max_age_s)
+    if not ids or model not in ids:
+        return None
+    with _lock:
+        return _pids.get(server, {}).get(model)
+
+
+def reloaded_since(url: str, model: str, pid: int | None) -> bool:
+    """Was `model`, served by backend `pid` before a request, evicted since —
+    gone from the runner now, or served by another backend? Asked fresh;
+    False when nothing is known (no pid before, or a runner that cannot
+    say)."""
+    if pid is None or not model:
+        return False
+    server = server_of(url)
+    ids = loaded_models(server, 0.0)
+    if ids is None:
+        return False
+    if model not in ids:
+        return True                       # evicted, and loading again or not
+    with _lock:
+        now = _pids.get(server, {}).get(model)
+    return now is not None and now != pid
+
+
+def note_cold_call(url: str, model: str, caller: str, seconds: float) -> None:
+    """Record a cold start a request paid inside its own budget (the model
+    was evicted between the check and the request): published like a warm's,
+    so the event log says what the fallback's reason says."""
+    _record(ColdStart(time.time(), server_of(url), model, caller, seconds, load_timeout_s(model),
+                      "failed: evicted before the request, loaded inside its budget"))
 
 
 def speaks_localai(server: str) -> bool | None:
@@ -259,17 +361,27 @@ def load_timeout_s(model: str) -> float:
 
 
 def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], *,
-                  caller: str) -> float | None:
+                  caller: str, max_age_s: float | None = None) -> float | None:
     """Warm `model` on the runner behind `url` if the runner says it is not
-    loaded. `warm(bound_s)` sends one minimal request bounded by `bound_s`.
+    loaded. `warm(bound_s)` sends one minimal request bounded by `bound_s`,
+    and returns the runner's response where it has one: an answer of 400 or
+    more is a load that FAILED — never noted as loaded — and one carrying
+    VeGa's refusal raises `LoadRefused` (München, 2026-11-02: a refused load
+    was recorded "loaded" and the real request met the cooldown).
+    The runner's answer may be `max_age_s` old: by default `SYSTEM_TTL_S`
+    for corpus work and `INTERACTIVE_TTL_S` above it; a single request a
+    person waits on (a rerank, a chat answer, a translation) passes 0.
 
     Returns the seconds this call spent waiting for the load, or None when
     nothing was waited for (loaded, or nothing known). Raises `LoadTimeout`
     when the load outlasted its bound."""
     if not model:
         return None
+    if max_age_s is None:
+        from .rage import dispatch
+        max_age_s = INTERACTIVE_TTL_S if dispatch.current()[0] > dispatch.Level.CORPUS else SYSTEM_TTL_S
     server = server_of(url)
-    ids = loaded_models(server)
+    ids = loaded_models(server, max_age_s)
     if ids is None or model in ids:
         return None
     key = (server, model)
@@ -283,14 +395,25 @@ def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], 
         t0 = time.monotonic()
         if not flight.done.wait(bound):
             raise LoadTimeout(_reason(model, bound), model=model, bound_s=bound)
-        if isinstance(flight.error, LoadTimeout):
+        if isinstance(flight.error, (LoadTimeout, LoadRefused)):
             raise flight.error
         return time.monotonic() - t0
     t0 = time.monotonic()
     outcome = "failed: interrupted"
     try:
-        warm(bound)
-        outcome = "loaded"
+        answer = warm(bound)
+        status = getattr(answer, "status_code", None)
+        if isinstance(status, int) and status >= 400:
+            refusal = refused_load(model, answer)
+            if refusal is not None:
+                flight.error = refusal
+                outcome = f"refused: {str(refusal)[:200]}"
+            else:
+                # a failed load: the request goes as it did before and meets
+                # its own fate (a cooldown is a busy answer, a deferral)
+                outcome = f"failed: HTTP {status}"
+        else:
+            outcome = "loaded"
     except httpx.ConnectTimeout:
         outcome = "failed: the server did not accept a connection"    # down, not loading
     except httpx.TimeoutException:
@@ -335,6 +458,9 @@ def recent() -> list[ColdStart]:
 def message(c: ColdStart) -> str:
     if c.outcome == "loaded":
         what = f"loaded in {c.seconds:.1f} s"
+    elif c.outcome.startswith("failed: evicted"):
+        what = (f"was evicted between the check and the request, which then paid the load inside "
+                f"its budget and gave up after {c.seconds:.1f} s")
     elif c.outcome == "timeout":
         what = f"still loading after {_seconds(c.bound_s)} s — the caller fell back or deferred"
     else:

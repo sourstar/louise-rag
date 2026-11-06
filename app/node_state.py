@@ -121,10 +121,31 @@ MODE_SAYS = {
 }
 
 
-def runs(state: str, activity: str) -> bool:
-    """Does the node, in this mode, do this? A mode this does not know runs
-    nothing — the reading of an unreadable state everywhere else too."""
+def mode_runs(state: str, activity: str) -> bool:
+    """Does this MODE, by the table alone, run this? A mode this does not
+    know runs nothing — the reading of an unreadable state everywhere else."""
     return activity in MODE_RUNS.get(state, frozenset())
+
+
+def profile_runs(activity: str) -> bool:
+    """Does the node PROFILE in force let this run? Its `mode`
+    (app/node_profile.py; operator 2026-11-02: "suspend processing during
+    the quiet time frames"), read through app/cpu_limit.py's cache — one file
+    read per 30 s or at the schedule's own boundary, the last good one kept
+    when the file does not load. No profile, or one in `running`, holds
+    nothing."""
+    from . import cpu_limit
+    lim = cpu_limit.current()
+    return lim.mode is None or mode_runs(lim.mode, activity)
+
+
+def runs(state: str, activity: str) -> bool:
+    """Does the node, in this mode and in the profile in force now, do this?
+    The STRICTER of the two wins (node-profiles-design.md decision 6): the
+    activity runs only where both the node's mode and the profile's mode run
+    it. Every gate asks here, so the worker, the seeder, `node health`, the
+    jobs and the Library cannot disagree about what runs."""
+    return mode_runs(state, activity) and profile_runs(activity)
 
 
 def path() -> Path:
@@ -298,6 +319,33 @@ def peek(read, absent, *, error=None, table: str = "control"):
         return error
 
 
+#: `louise node stop` (07 §7.3): the worker finishes its current units,
+#: commits and exits 0 — where a signal exits 130 (§7.7). Through the
+#: control table, as the digest request is: the CLI and the worker are two
+#: processes, often two containers, and a pid does not cross a container.
+STOP_REQUEST_KEY = "stop_requested"
+
+
+def request_stop() -> None:
+    with closing(connect()) as c:
+        db.set_control(c, STOP_REQUEST_KEY, "1")
+        c.commit()
+
+
+def take_stop_request() -> bool:
+    """True once per request: read and cleared together. An unreadable
+    store is no request — the worker keeps running, a signal still stops it."""
+    try:
+        with closing(connect()) as c:
+            if db.get_control(c, STOP_REQUEST_KEY) != "1":
+                return False
+            db.set_control(c, STOP_REQUEST_KEY, "")
+            c.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
 #: 04 §4.5 (amended 2026-10-20): a collection's embed mode or sharing
 #: switched → the next digest goes out at once, so the parts this peer led
 #: are released (or claimed) without waiting the hour. The web sets it, the
@@ -445,11 +493,60 @@ def paused_collections(con: sqlite3.Connection | None = None) -> set[str]:
         return read(c)
 
 
-def set_paused(name: str, paused: bool) -> set[str]:
-    """Pause or resume one collection; the set as it is after."""
+#: every collection pause and resume, newest last: when, which, and who
+#: (2026-10-31: normattiva was found paused, and neither the operator nor
+#: the node session had paused it; nothing recorded who had)
+PAUSED_HISTORY_KEY = "paused_collections_history"
+PAUSED_HISTORY_KEEP = 200
+
+
+def invoker() -> str:
+    """Who is running this command, for a history entry: the parent
+    process's program and script, by their names only (never their
+    arguments, which could carry anything), and the user."""
+    import getpass
+    import os
+    parts = []
+    try:
+        with open(f"/proc/{os.getppid()}/cmdline", "rb") as f:
+            argv = [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
+        names = [os.path.basename(argv[0])] if argv else []
+        names += [os.path.basename(a) for a in argv[1:3] if a.endswith((".sh", ".py"))]
+        if names:
+            parts.append("from " + " ".join(names))
+    except OSError:
+        pass
+    try:
+        parts.append(f"user {getpass.getuser()}")
+    except Exception:   # noqa: BLE001 — no user name to give
+        pass
+    return ", ".join(parts)
+
+
+def set_paused(name: str, paused: bool, *, by: str = "") -> set[str]:
+    """Pause or resume one collection; the set as it is after. The write is
+    recorded with `by` — the command or the route and its caller."""
     import json
+    import time
     with closing(connect()) as c:
         names = paused_collections(c)
         (names.add if paused else names.discard)(name)
         db.set_control(c, PAUSED_KEY, json.dumps(sorted(names)))
+        try:
+            hist = json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
+        except ValueError:
+            hist = []
+        hist = (hist + [{"at": time.time(), "collection": name, "paused": bool(paused),
+                         "by": by or "unnamed"}])[-PAUSED_HISTORY_KEEP:]
+        db.set_control(c, PAUSED_HISTORY_KEY, json.dumps(hist))
         return names
+
+
+def pause_history() -> list[dict]:
+    """The recorded collection pauses and resumes, oldest first; [] when none."""
+    import json
+    try:
+        with closing(connect()) as c:
+            return json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
+    except (ValueError, sqlite3.Error):
+        return []

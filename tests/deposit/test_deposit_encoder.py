@@ -122,3 +122,26 @@ def test_the_command_line_names_another_endpoint_s_api_and_model(node, capsys):
                         "--encoder", LOCALAI, "--platform-image", PLATFORM]) == 2
     assert "names no model" in capsys.readouterr().err
     assert not (node / "carol").exists()
+
+
+def test_the_first_deposit_collection_finds_its_space_by_the_served_weights(node, monkeypatch):
+    """02 §2.9 (amended 2026-10-25, RULE 2): with no space file and no
+    deposit collection on the encoder yet, the node copies the space of a
+    held Codex whose weights the deposit encoder's STATED RUN loads — nothing
+    re-embedded, nothing asked. A model whose run loads other weights finds
+    none, and the refusal stands."""
+    from app import encoder_resolve
+    platform(node, VEGA)
+    elsewhere = first_on(node, "alice", ENCODER_URL, None)     # another endpoint: not space_source's
+    served = {"vega-granite": "sha256:" + "0e" * 32}
+    monkeypatch.setattr(encoder_resolve, "served_weights",
+                        lambda url, api, model, **kw:
+                        served.get(model) if (url, api) == (LOCALAI, "vega") else None)
+    monkeypatch.setattr(louise, "_embed_for_recipe",
+                        lambda *a, **k: pytest.fail("the space is copied, never re-embedded"))
+    with pytest.raises(deposit.DepositError, match="no space to create"):
+        louise.create_deposit(node, "carol", platform_image=PLATFORM)
+    served["vega-granite"] = elsewhere.space.encoder.weights
+    codex, _ = louise.create_deposit(node, "bob", platform_image=PLATFORM)
+    assert codex.space_id == elsewhere.space_id and codex.collection_id != elsewhere.collection_id
+    assert codex.space.calibration.vectors == elsewhere.space.calibration.vectors

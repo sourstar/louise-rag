@@ -8,7 +8,7 @@ Written 2026-10-11 for the SHARD's directory (`drag/` → `shard/`, 09's
 opening note): `tank/apps/louise-drag` is renamed `louise-shard` and each
 collection's `/data/collections/<name>/drag` mount point `…/shard`, with the
 app STOPPED. Through TrueNAS's API client in this process, as
-drop_mounts.py: the config carries the admin token, so it never reaches a
+drop_mounts.py@c572c3b: the config carries the admin token, so it never reaches a
 command line, a log or this output. Prints the mounts it changes — host and
 container paths, nothing else.
 

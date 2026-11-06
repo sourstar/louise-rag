@@ -114,7 +114,8 @@ def test_help_page_is_open_and_documents_the_platform(client):
 
 def test_ui_is_rebranded_no_legacy_name_or_link(client):
     r = client.get("/ask")
-    assert "louise-rag" in r.text
+    # the header names the project, not the container (operator, 2026-10-30)
+    assert '<div class="brand">Project Louise</div>' in r.text and "<title>Ask — Project Louise</title>" in r.text
     assert "gutenberg-rag" not in r.text
     assert "legacy dashboard" not in r.text
 
@@ -148,6 +149,67 @@ def test_admin_login_cookie_authorizes_subsequent_navigation(client):
     assert r.status_code == 200
 
 
+def test_the_name_is_centred_above_the_menu_and_no_search_button_is_lit(client):
+    """The operator (2026-10-30): the application's name at the centre on
+    top, the menu entries below it; on Ask neither search button lit at
+    rest (a lit one read as already pressed)."""
+    html = client.get("/ask").text
+    nav = html[html.index("<nav>"):html.index("</nav>")]
+    assert nav.index('<div class="brand">Project Louise</div>') < nav.index('<div class="menu">') \
+        < nav.index('href="/ask"')
+    assert 'class="primary"' not in html[html.index('id="q"'):html.index('id="results"')]
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
+    assert "nav{display:flex;flex-direction:column;align-items:center" in css
+
+
+def test_four_themes_each_reader_chooses_and_each_defines_every_colour(client):
+    """The operator (2026-10-30): "Themes, make them selectable by the user,
+    I like them all" — Slate, Kelsch, Grès des Vosges and Colmar, chosen in
+    the menu, kept in the reader's browser and applied before the page
+    draws; every theme sets every colour the pages use."""
+    import re
+    html = client.get("/ask").text
+    assert html.index("localStorage.getItem('louise-theme')") < html.index("<body>"), "set before drawing"
+    themes = re.findall(r'<option value="([a-z]*)">', html[html.index('id="theme"'):html.index("</select>")])
+    assert themes == ["", "kelsch", "gres", "colmar"]
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
+    base = set(re.findall(r"--([a-z0-9]+):", css[css.index(":root{"):css.index("}", css.index(":root{"))])) - {"mono"}
+    for t in themes[1:]:
+        block = css[css.index(f':root[data-theme="{t}"]{{'):]
+        block = block[:block.index("}")]
+        assert set(re.findall(r"--([a-z0-9]+):", block)) == base, t
+        assert "color-scheme:" in block
+    pages = [css] + [p.read_text() for p in (Path(web.__file__).parent / "templates").rglob("*.html")]
+    for literal in ("#233240", "#b9c8d2", "#9fb0bc"):
+        assert sum(t.count(literal) for t in pages) == (1 if literal != "#9fb0bc" else 0), literal
+
+
+def test_one_ask_button_a_switch_and_the_settings_out_of_the_way(client):
+    """The operator (2026-10-30): "ask and search are confusing" — one Ask
+    button, a switch "Search only" / "AI summary", and the settings a
+    reader need not touch behind one closed line."""
+    html = client.get("/ask").text
+    form = html[html.index('id="q"'):html.index('id="results"')]
+    assert form.count("<button") == 1 and 'onclick="go()">Ask</button>' in form
+    assert "<span>Search only</span></label>" in form and "<span>Search + AI summary</span></label>" in form
+    assert "Ask (RAG)" not in html and 'onclick="search()"' not in form
+    settings = form[form.index('<details class="settings">'):form.index("</details>")]
+    for control in ('id="mode"', 'id="limit"', 'id="rerank-depth"', 'id="all-langs"'):
+        assert control in settings, control
+    assert 'id="lang"' in form and 'id="lang"' not in settings, "the results' language stays in sight"
+    assert "function go(){return howAsk()==='search'?search():ask()}" in html
+
+
+def test_admin_login_takes_the_token_as_copied_with_its_spaces(client):
+    """/login stripped the pasted token and /admin/login did not: a newline
+    or space a copy picked up refused the right token (2026-10-30)."""
+    r = client.post("/admin/login", json={"token": " sekrit\n"})
+    assert r.status_code == 200
+    client.cookies.clear()
+    client.cookies.set("admin_token", r.cookies["admin_token"])
+    assert client.get("/admin/library").status_code == 200, "the cookie holds the token, not its spaces"
+
+
 def test_reader_routes_stay_open_with_no_token(client):
     _seed_one_book()
     checks = [
@@ -179,7 +241,7 @@ def test_library_page_renders_shelf_card(client):
     assert r.status_code == 200
     # the default fixture collection has acquire_enabled=False, so the
     # "fetched" stage bar is honestly absent — its n/a explanation stands in
-    assert "fetch stage: n/a" in r.text
+    assert "fetch stage: off" in r.text
     assert "parsed (rdf)" in r.text
     assert "indexed (lexical)" in r.text and "embedded (dense)" in r.text
     assert "grow profile" in r.text
@@ -692,6 +754,19 @@ def test_an_empty_badge_is_not_drawn(client):
     assert "Curie M" in html and "Chapter I" in html
 
 
+def test_a_hit_a_weight_moved_says_so(client):
+    """CLAUDE.md invariant 4, rule 2 (operator, 2026-10-31): every result a
+    weight moved shows what moved it and how far."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    hit = {"chunk_id": "gutenberg:2701:0:1", "book_id": 2701, "title": "Moby Dick",
+           "lang": "en", "text": "x", "source_collection": "gutenberg",
+           "moved_by": [{"weight": "catalog_first", "from": 3, "to": 1}]}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    assert "catalogue match: moved up from #3" in html
+    plain = {k: v for k, v in hit.items() if k != "moved_by"}
+    assert "moved up" not in tpl.render(result={"hits": [plain], "timings": {"fts": 1}})
+
+
 def test_a_hit_links_to_the_origin_not_to_this_node(client):
     """`reader.html` has offered "open at the source" all along, but the Ask
     page's reader panel loads the FRAGMENT, which has no header — so the
@@ -1009,7 +1084,7 @@ def test_ask_writes_the_answer_before_translating_the_entries(client):
     body = js[js.index("async function ask()"):]
     hold = body.index("tq.hold=true")
     search = body.index("await search()")
-    answer = body.index("fetch('/v1/chat/completions'")
+    answer = body.index("relayStart('answer'")         # through the relay (app/relay.py)
     release = body.index("tq.hold=false")
     entries = body.index("tqPump();")
     assert hold < search < answer < release < entries
@@ -1019,7 +1094,7 @@ def test_a_new_search_or_switch_stops_the_translation_in_flight(client):
     js = client.get("/ask").text
     assert "langAbort.abort()" in js and "signal:ctl.signal" in js
     search = js[js.index("async function search()"):js.index("async function ask()")]
-    assert search.index("stopTranslating()") < search.index("fetch('/ask/query'"), \
+    assert search.index("stopTranslating()") < search.index("relayStart('search'"), \
         "the model is freed before the search needs it"
 
 
@@ -1274,3 +1349,27 @@ def test_a_whole_answer_is_logged_and_the_stream_kept_alive_while_silent(client,
     assert ": keepalive\n\n" in r.text
     assert _answer_text(r.text) == "Il diritto" and "[answer cut" not in r.text
     assert "answer: 10 chars in" in capsys.readouterr().out
+
+
+def test_the_search_report_has_its_place_above_the_answer_box(client):
+    """Operator, 2026-10-30: "the report of the time spent shall be before
+    the answer box, otherwise it is buried among many other information"."""
+    page = client.get("/ask").text
+    assert page.index('id="report"') < page.index('id="answer-pane"') < page.index('id="results"')
+    assert "placeReport()" in page
+    _seed_one_book()
+    r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
+    html = r.json()["html"] if r.headers.get("content-type", "").startswith("application/json") else r.text
+    assert 'id="search-report"' in html and " ms</span>" in html, "the timings are the report's"
+    assert html.index('id="search-report"') < html.index('class="hit"')
+
+
+def test_log_out_is_named_plainly_and_asks_first(client):
+    """Operator, 2026-10-30: "admin log out" read as a page called admin, and
+    an accidental touch logged the reader out without the key at hand."""
+    page = client.get("/admin/library", headers={"X-Admin-Token": "sekrit"}).text
+    assert ">Log out</a>" in page and "· log out" not in page
+    assert 'onclick="confirmLogout(this.dataset.name);return false"' in page
+    assert "fetch('/logout'" not in page.split("function confirmLogout", 1)[0], \
+        "the link itself logs nobody out: the confirmation does"
+    assert "you need your key" in page and "Stay logged in" in page

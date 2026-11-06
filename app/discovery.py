@@ -141,7 +141,8 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
 
     state = DiscoverState(corpus_root=root,
                            state_dir=collection.manifest_path.parent,
-                           snapshot=getattr(collection, "snapshot", None))
+                           snapshot=getattr(collection, "snapshot", None),
+                           stop=stop)
     seen = 0
     # STREAMING with last-write-wins BY ORDER. A source may yield the same
     # uid more than once in one sweep (PubMed updatefiles revising a baseline
@@ -313,6 +314,16 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
                     (ref.locator, txt_name, lang, ref.mtime, ref.size,
                      raw.raw_hash, now, uid)))
                 local["changed"] += 1
+            elif row["path"] != ref.locator:
+                # the same bytes, re-stamped AND somewhere else: the locator
+                # is refreshed now, as the relocated branch below would on
+                # the next scan — until then the stale path kept the corpus
+                # reading as moved, and every start re-enumerated it
+                writes.append((
+                    "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,error=NULL,"
+                    "retries=0,updated_at=? WHERE uid=?",
+                    (ref.locator, txt_name, ref.mtime, ref.size, now, uid)))
+                local["relocated"] += 1
             else:
                 writes.append(("UPDATE documents SET mtime=?,size=? WHERE uid=?",
                                (ref.mtime, ref.size, uid)))
@@ -411,3 +422,7 @@ def apply_scope(con):
               SELECT uid FROM documents WHERE in_scope=1
               ORDER BY CAST(native_id AS INTEGER) LIMIT ?)""",
             (int(scope["limit"]),))
+    # the widening above undid the slices' narrowing (app/slice_scope.py): its
+    # pass starts again, and the collection's stages wait for it
+    from . import slice_scope
+    slice_scope.invalidate(con)

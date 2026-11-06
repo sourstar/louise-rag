@@ -415,20 +415,89 @@ def test_the_nth_marker_is_figures_n(tmp_path: Path):
     assert "Cover" not in text and "broken" not in text
 
 
-def test_a_refused_type_stays_in_both_and_is_marked_not_carried(tmp_path: Path):
-    """08 §8.7 admits jpeg and png. SVG is REAL in Gutenberg — 2,407 images
-    — so refusing it is a live cost, and the record must SAY so: the origin
-    has a picture here that this collection does not carry, and a reader
-    meeting the caption should stop looking rather than ask again later."""
+#: an SVG with what makes it a document rather than an image: a script and
+#: an external reference (08 §8.7) — carried, never executed or followed
+SVG = (b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script>'
+       b'<image href="https://example.invalid/x.png"/></svg>')
+
+
+def _png(width: int, height: int, tail: bytes = b"") -> bytes:
+    import struct
+    import zlib
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + ihdr
+            + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr)) + tail)
+
+
+#: over 08 §8.7's byte cap (16 MiB) and its megapixel cap (100 MP declared)
+OVER_CAP = _png(10_000, 10_000, b"\0" * ((16 << 20) + 1))
+
+
+def test_every_plate_is_carried_whatever_its_type_or_size(tmp_path: Path):
+    """Parser 11 (operator, 2026-10-25: "Every plate"): invariant 11 wins
+    over 08 §8.7's old refusal. An SVG, a GIF and a plate over the caps
+    are carried like a jpeg — `carried: true`, the origin's bytes hashed —
+    and only display applies the closed list (app/ask/figures.py). The
+    refused SVG used to stay in the text and be named `carried: false`."""
     p = build(tmp_path / "b.epub",
               [("a.xhtml", page('<img src="images/p1.jpg" alt="kept"/>'
-                                '<img src="images/d.svg" alt="refused"/>'))],
-              images=[("images/p1.jpg", PLATE), ("images/d.svg", b"<svg/>")])
+                                '<img src="images/d.svg" alt="diagram"/>'
+                                '<img src="images/g.gif" alt="animated"/>'
+                                '<img src="images/big.png" alt="huge"/>'))],
+              images=[("images/p1.jpg", PLATE), ("images/d.svg", SVG),
+                      ("images/g.gif", b"GIF89a" + b"gif" * 20), ("images/big.png", OVER_CAP)])
     figs = pg_epub.figures(p)
-    assert [f.carried for f in figs] == [True, False]
-    assert [f.caption for f in figs] == ["kept", "refused"]
-    assert markers_in(pg_epub.read_clean(p)) == 2, \
-        "the refused image is still announced; it is not a broken reference"
+    assert [f.carried for f in figs] == [True] * 4
+    assert [f.media_type for f in figs] == ["image/jpeg", "image/svg+xml", "image/gif", "image/png"]
+    assert figs[1].sha256 == "sha256:" + hashlib.sha256(SVG).hexdigest() and figs[1].bytes == len(SVG)
+    assert figs[3].bytes == len(OVER_CAP) > (16 << 20)
+    assert [f.caption for f in figs] == ["kept", "diagram", "animated", "huge"]
+    assert markers_in(pg_epub.read_clean(p)) == 4
+
+
+def test_carrying_a_plate_moves_no_text(tmp_path: Path):
+    """The chunk text must not change when an image becomes carried
+    (parser 10 -> 11): the marker never depended on the type, so an SVG
+    leaves exactly the marker a jpeg with the same caption leaves, and the
+    sections, `content_hash` and every chunk stay as they were."""
+    body = ('<h1>One</h1><p>Before.</p><img src="images/x.{ext}" alt="A plan of the town"/>'
+            '<p>After.</p>')
+    svg = build(tmp_path / "s.epub", [("a.xhtml", page(body.format(ext="svg")))],
+                images=[("images/x.svg", SVG)])
+    jpg = build(tmp_path / "j.epub", [("a.xhtml", page(body.format(ext="jpg")))],
+                images=[("images/x.jpg", PLATE)])
+    assert pg_epub.read_clean(svg) == pg_epub.read_clean(jpg) == \
+        "One\n\nBefore.\n\n[Illustration: A plan of the town]\n\nAfter."
+    assert pg_epub.sections(svg) == pg_epub.sections(jpg)
+
+
+def test_the_container_holds_every_plate_byte_for_byte(tmp_path: Path):
+    """The build's second pass (app/pack/build.py `_write_figures`) reads
+    every carried plate back from the origin through the plugin and stores
+    it as opaque bytes: the SVG with its script and the plate over both
+    caps come back out of the container identical to what the epub holds."""
+    from app.hold import figures as fig_mod
+    from app.pack import build as pack_build
+    from app.plugins.gutenberg.source import GutenbergSource
+
+    book = tmp_path / "corpus" / "9"
+    book.mkdir(parents=True)
+    p = build(book / "pg9-images.epub",
+              [("a.xhtml", page('<p>x</p><img src="images/p1.jpg" alt="kept"/>'
+                                '<img src="images/d.svg" alt="diagram"/>'
+                                '<img src="images/big.png" alt="huge"/>'
+                                '<img src="images/d.svg" alt="again"/>'))],
+              images=[("images/p1.jpg", PLATE), ("images/d.svg", SVG), ("images/big.png", OVER_CAP)])
+    figs = pg_epub.figures(p)
+    row = {"uid": "gutenberg:9", "path": str(book), "native_id": "9"}
+    plates = {f.sha256: (row, f.href) for f in figs if f.carried}
+    assert len(plates) == 3, "the repeat is stored once"
+    pack = tmp_path / "pack"
+    pack_build._write_figures(GutenbergSource(), pack, "lang=en", 1, plates, lambda *_: None)
+    container = fig_mod.path_for(pack, "lang=en", 1)
+    for raw in (PLATE, SVG, OVER_CAP):
+        assert fig_mod.read_figure(container, hashlib.sha256(raw).hexdigest()) == raw
+    assert fig_mod.verify(container) == (3, [])
 
 
 def test_the_cover_drops_from_the_text_as_well_as_the_figures(tmp_path: Path):

@@ -1,0 +1,14 @@
+# THE NATIVE BUILD only (Dockerfile, stage `native`; tools/build_native.py;
+# docs/notes/python-hot-spots.md "E", 2026-11-02): mypyc compiles wikidata's
+# textifier and formatter to C. None of this reaches the runtime image: the
+# stage's .so files are copied out of it, and a compiled module imports
+# nothing of mypy's. Every package pinned, mypy's dependencies too: the
+# compiler is part of what makes the image's bytes, so it moves only by a
+# commit (and the identity check, tools/measure/textify_identity.py).
+mypy==2.4.0
+mypy_extensions==1.1.0
+typing_extensions==4.16.0
+pathspec==1.1.1
+librt==0.16.0
+ast-serialize==0.13.1
+setuptools==84.0.0

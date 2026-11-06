@@ -64,6 +64,10 @@ def _judged_against_a_running_node(request, monkeypatch):
     every other one is judged against a running node, which holds nothing."""
     if "isolated_config" not in request.fixturenames:
         monkeypatch.setattr(health, "_node_mode", lambda: "running")
+    # and against no node profile: the host's own schedule must not hold a
+    # stage in a test (a test that wants one sets cpu_limit.current itself)
+    from app import cpu_limit
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.NO_PROFILE)
 
 
 def test_work_waiting_on_a_switched_off_stage_is_BLOCKED(con, monkeypatch):
@@ -114,7 +118,48 @@ def test_errored_documents_are_counted_only_when_asked(con, monkeypatch):
     got = health.inspect(con, Collection(), errors=True)
     assert got.errors == 2
     embed = next(s for s in got.stages if s.name == "embed")
-    assert embed.waiting == 5, "the five include the two errored: exact exclusion costs 23x"
+    # below ERRORED_EXACT_BELOW the errored are read apart (a lookup each
+    # over a few rows); above it they stay inside the count — exact exclusion
+    # over millions cost 23x
+    assert (embed.waiting, embed.errored) == (3, 2)
+
+
+def test_a_stage_whose_only_documents_are_errored_is_idle_not_stuck(con, monkeypatch):
+    """gutenberg's 33 rdf documents, errored since September, read as 33
+    waiting on a running stage — stuck work (München, 2026-10-30). They are
+    out of every selection until retried: counted apart, the stage idle."""
+    _docs(con, 33, rdf=0, fts=0, error="no epub, txt or rdf")
+    _scope(monkeypatch, "all")
+    rdf = next(s for s in health.inspect(con, Collection()).stages if s.name == "rdf")
+    assert (rdf.waiting, rdf.errored, rdf.state) == (0, 33, health.IDLE)
+    assert "33 errored, not waiting" in rdf.line()
+
+
+def test_above_the_exact_bound_the_errored_stay_inside_the_count(con, monkeypatch):
+    monkeypatch.setattr(health, "ERRORED_EXACT_BELOW", 4)
+    _docs(con, 3)
+    _docs(con, 2, error="boom", start=100)
+    _scope(monkeypatch, "all")
+    embed = next(s for s in health.inspect(con, Collection()).stages if s.name == "embed")
+    assert (embed.waiting, embed.errored) == (5, 0)
+
+
+def test_a_stage_count_stops_at_the_cap_and_says_over(con, monkeypatch):
+    """COUNT(*) walks the waiting rows: 16.6 s for wikidata's 72.9 M during
+    discovery, and `node show` took 20-33 s (München, 2026-10-27). Exact
+    below the cap; at it, the cap and `over`; the state does not change."""
+    monkeypatch.setattr(health, "WAITING_CAP", 3)
+    _docs(con, 5, rdf=0, fts=0)
+    _docs(con, 2, start=100)
+    _scope(monkeypatch, "all")
+    got = {s.name: s for s in health.inspect(con, Collection()).stages}
+    assert (got["rdf"].waiting, got["rdf"].over, got["rdf"].state) == (3, True, health.RUNNING)
+    assert (got["embed"].waiting, got["embed"].over) == (2, False), "exact below the cap"
+    assert "over 3" in got["rdf"].line()
+    plan = " ".join(r[3] for r in con.execute(
+        f"EXPLAIN QUERY PLAN SELECT COUNT(*) FROM (SELECT 1 FROM {health._INDEXED} "
+        f"WHERE {health._WAITING['rdf']} LIMIT 4)"))
+    assert "COVERING INDEX idx_documents_scope" in plan and "TEMP B-TREE" not in plan
 
 
 def test_the_stages_are_reported_in_pipeline_order(con, monkeypatch):
@@ -489,3 +534,23 @@ def test_every_command_a_status_line_names_exists():
                 parser.parse_args(argv)
             except SystemExit as e:
                 raise AssertionError(f"`louise {cmd}` does not parse") from e
+
+
+def test_a_stage_the_node_profile_pauses_says_so(con, monkeypatch):
+    """Operator, 2026-10-31: wikipedia's rdf and fts read "waiting" in a quiet
+    band, and only the worker's log said "profile quiet: paused until 13:30".
+    The stage is HELD with that reason; embedding is not paused by a profile."""
+    from datetime import datetime
+    from app import cpu_limit
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.Limit(
+        0, "quiet", datetime.now().replace(hour=13, minute=30, second=0, microsecond=0)))
+    _docs(con, 3, rdf=0, fts=0)
+    _docs(con, 2, rdf=1, fts=1, embed=0, start=10)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="running")
+    by = {s.name: s for s in got.stages}
+    assert by["rdf"].state == health.HELD and "profile quiet: paused until 13:30" in by["rdf"].reason
+    assert by["embed"].state == health.RUNNING, "a profile never pauses embedding"
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.Limit(8, "day"))
+    assert next(s for s in health.inspect(con, Collection(), mode="running").stages
+                if s.name == "rdf").state == health.RUNNING

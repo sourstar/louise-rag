@@ -32,13 +32,13 @@ Assisted-by: Claude Code
  create mode 100644 backend/cpp/llama-cpp/embedding_tokens_test.cpp
 
 diff --git a/backend/cpp/llama-cpp/CMakeLists.txt b/backend/cpp/llama-cpp/CMakeLists.txt
-index 3c195c3..a2e875d 100644
+index a25f338..65327a5 100644
 --- a/backend/cpp/llama-cpp/CMakeLists.txt
 +++ b/backend/cpp/llama-cpp/CMakeLists.txt
-@@ -141,4 +141,10 @@ if(LLAMA_GRPC_BUILD_TESTS)
-     target_include_directories(stream_peer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-     target_compile_features(stream_peer_test PRIVATE cxx_std_17)
-     add_test(NAME stream_peer_test COMMAND stream_peer_test)
+@@ -180,4 +180,10 @@ if(LLAMA_GRPC_BUILD_TESTS)
+         target_compile_features(realtime_chat_check PRIVATE cxx_std_17)
+         add_test(NAME realtime_chat_check COMMAND realtime_chat_check "${CMAKE_SOURCE_DIR}/models/templates/LFM3.jinja")
+     endif()
 +
 +    # Special tokens around Embedding's token ids (standard library only).
 +    add_executable(embedding_tokens_test embedding_tokens_test.cpp embedding_tokens.h)
@@ -132,18 +132,18 @@ index 0000000..322e252
 +    return failed == 0 ? 0 : 1;
 +}
 diff --git a/backend/cpp/llama-cpp/grpc-server.cpp b/backend/cpp/llama-cpp/grpc-server.cpp
-index 3b90873..f03cc02 100644
+index a84f35d..a90c179 100644
 --- a/backend/cpp/llama-cpp/grpc-server.cpp
 +++ b/backend/cpp/llama-cpp/grpc-server.cpp
-@@ -60,6 +60,7 @@
- #include "passthrough_options.h"
+@@ -78,6 +78,7 @@
  #include "stream_peer.h"
+ #include "realtime_session.h"
  #include "tts_request_options.h"
 +#include "embedding_tokens.h"
+ #include "transcription_prompt.h"
  #include <getopt.h>
  #include <grpcpp/ext/proto_server_reflection_plugin.h>
- #include <grpcpp/grpcpp.h>
-@@ -2898,6 +2899,21 @@ public:
+@@ -3760,6 +3761,21 @@ public:
          // for the shape of input/content, see tokenize_input_prompts()
          json prompt = body.at("embeddings");
  
@@ -166,13 +166,13 @@ index 3b90873..f03cc02 100644
          auto tokenized_prompts = tokenize_input_prompts(ctx_server.impl->vocab, ctx_server.impl->mctx, prompt, true, true LOCALAI_MTMD_INIT_OPT_ARG(ctx_server.impl->init_opt));
          for (const auto & tokens : tokenized_prompts) {
 diff --git a/backend/cpp/llama-cpp/prepare.sh b/backend/cpp/llama-cpp/prepare.sh
-index a7fe9ab..409ed87 100644
+index d3659fe..fb35bb4 100644
 --- a/backend/cpp/llama-cpp/prepare.sh
 +++ b/backend/cpp/llama-cpp/prepare.sh
-@@ -75,6 +75,10 @@ cp -r parent_watch_test.cpp llama.cpp/tools/grpc-server/
- # test (run via backend/cpp/run-unit-tests.sh; also buildable under ctest).
- cp -r stream_peer.h llama.cpp/tools/grpc-server/
- cp -r stream_peer_test.cpp llama.cpp/tools/grpc-server/
+@@ -94,6 +94,10 @@ cp -r realtime_chat_check.cpp llama.cpp/tools/grpc-server/
+ # unit test (compiled only when -DLLAMA_GRPC_BUILD_TESTS=ON).
+ cp -r slot_cache.h llama.cpp/tools/grpc-server/
+ cp -r slot_cache_test.cpp llama.cpp/tools/grpc-server/
 +# Special tokens around Embedding's token ids (included by grpc-server.cpp)
 +# and its standalone unit test.
 +cp -r embedding_tokens.h llama.cpp/tools/grpc-server/

@@ -114,6 +114,7 @@ def test_seeding_withholds_an_unacknowledged_collection(tmp_path, monkeypatch):
 
     class _FakeSeeder:
         def set_paused(self, p): pass
+        def finish_draining(self): return []
         def retain(self, live): retained.append(set(live)); return []
         def ensure(self, collection, entry): started.append(collection.name); return True
         def account(self): pass

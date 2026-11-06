@@ -289,7 +289,7 @@ BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
 PUBLISH_BEAT_S = float(os.getenv("PUBLISH_BEAT_S", "300"))
 PUBLISH_BUDGET_S = float(os.getenv("PUBLISH_BUDGET_S", "600"))
 
-# ---- model work by priority (app/dispatch.py; docs/notes/scheduling.md §12)
+# ---- model work by priority (app/rage/dispatch.py; docs/notes/scheduling.md §12)
 # How long a reading of the node's interactive claim is reused in-process.
 GATE_POLL_S = float(os.getenv("GATE_POLL_S", "0.1"))
 # The claim's lifetime, refreshed at half of it while an interactive call
@@ -302,6 +302,11 @@ GOVERNOR_FREQ_DIR = os.getenv("GOVERNOR_FREQ_DIR", "/gpufreq")
 GOVERNOR_POLL_S = float(os.getenv("GOVERNOR_POLL_S", "0.25"))
 GOVERNOR_HEARTBEAT_S = float(os.getenv("GOVERNOR_HEARTBEAT_S", "5"))
 GOVERNOR_STALE_S = float(os.getenv("GOVERNOR_STALE_S", "30"))
+# ...and the card's hwmon, bound writable for the profile's power limit
+# (app/gpu_level.py): the card's `device/hwmon/` (hwmonN inside, N changing
+# across boots) or a hwmonN itself. Absent, the read-only one under
+# GOVERNOR_DRM_DIR is used and the level falls back to `max_freq`.
+GOVERNOR_HWMON_DIR = os.getenv("GOVERNOR_HWMON_DIR", "/gpuhwmon")
 # ...and the card's history it keeps (fan, temperatures, power, clock): one
 # sample every 10 s, a week of them (3.6 MB, flat once pruning starts;
 # measured 2026-09-19), found under this /sys/class/drm.
@@ -389,7 +394,57 @@ LLM_KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE", "30m")
 # lock — measured on the reference node as one thread at 87 % and eleven
 # idle cores. Batches are cut into sub-batches for this many low-priority
 # child processes; 1 = in-process, serial (tests, small nodes).
-PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or 2) - 1))))
+def available_cpus(cgroup: str = "/sys/fs/cgroup") -> int:
+    """The CPUs this process may actually use: its affinity, and the cgroup
+    CPU QUOTA where one is set — `cpu.max` (v2) or `cpu.cfs_quota_us` /
+    `cpu.cfs_period_us` (v1), rounded up. `os.cpu_count()` sees the HOST: a
+    container capped at 4 of 12 cores read 12 and ran 11 parse children in 4
+    cores' time, the batches overran the pool's timeout and were re-done
+    serially (wikipedia-v8's records build, München's profile 2026-10-24).
+    The standard container answer: what the JVM, Go (automaxprocs) and .NET
+    read; Python's own `os.process_cpu_count()` (3.13) has affinity only."""
+    try:
+        n = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        n = os.cpu_count() or 1
+    quota = None
+    try:
+        with open(f"{cgroup}/cpu.max", encoding="ascii") as f:
+            q, period = f.read().split()[:2]
+        if q != "max":
+            quota = int(q) / int(period)
+    except (OSError, ValueError):
+        try:
+            with open(f"{cgroup}/cpu/cpu.cfs_quota_us", encoding="ascii") as f:
+                q = int(f.read().strip())
+            with open(f"{cgroup}/cpu/cpu.cfs_period_us", encoding="ascii") as f:
+                period = int(f.read().strip())
+            if q > 0 and period > 0:
+                quota = q / period
+        except (OSError, ValueError):
+            pass
+    if quota is not None:
+        n = min(n, max(1, -(-int(quota * 1000) // 1000)))
+    return max(1, n)
+
+
+PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, available_cpus() - 1))))
+
+
+def build_parse_processes() -> int:
+    """The records build's pool: the WHOLE quota, unless PARSE_PROCESSES is
+    set. Its parent only feeds and writes, while the worker's runs the round
+    loop and the API, which is why the worker keeps quota − 1. Measured on
+    wikipedia-v8's en/2M, first 250,000 records (München, 2026-10-25, every
+    part byte-identical): on a 4-cpu quota, 4 children took 543.8 s wall
+    against 629.5 s for 3 (1.16×), at 0.00730 against 0.00710 cpu-s a
+    record (+3 %), 336 % mean utilisation, and no fallback."""
+    return int(os.environ["PARSE_PROCESSES"]) if os.getenv("PARSE_PROCESSES") else max(1, available_cpus())
+
+
+#: whether `hold records build` widens the pool to `build_parse_processes()`
+#: (the test suite turns it off: it pins PARSE_PROCESSES to 1)
+BUILD_WHOLE_QUOTA = True
 # a child is replaced after this many sub-batches: its plugin caches (row
 # groups, streams) grow with what it has parsed — measured +4 GB across
 # eleven children in fifteen minutes — and a fresh child starts small
@@ -404,6 +459,14 @@ PARSE_TIMEOUT_S = float(os.getenv("PARSE_TIMEOUT_S", "120"))
 # Consecutive pool failures after which this process stops using children
 # altogether and computes in-process until the next restart.
 PARSE_MAX_FAILURES = int(os.getenv("PARSE_MAX_FAILURES", "3"))
+# An idle parse pool is RELEASED after this many seconds with no caller
+# inside it (app/parallel.release_idle): its children hold the plugin caches
+# they grew while parsing — measured 10.8 GiB in 12 children, resident 26-42
+# min after the quiet profile stopped parsing and while the node was paused,
+# and they would have stayed until 22:30 (München, 2026-10-28). The next
+# parse starts a fresh pool. 0 keeps the pool for the process's life. loky's
+# reusable executor does the same with its `timeout` (300 s by default).
+PARSE_IDLE_RELEASE_S = float(os.getenv("PARSE_IDLE_RELEASE_S", "600"))
 
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —
@@ -483,6 +546,23 @@ VECTOR_INDEX_PRUNE_S = int(os.getenv("VECTOR_INDEX_PRUNE_S", "3600"))
 #: for a handful. Separate from the version cleanup since the same day:
 #: `Table.optimize()` welds the two together, `pylance` reaches them apart.
 VECTOR_INDEX_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_COMPACT_FRAGMENTS", "4000"))
+#: Small fragments that make a LIGHT compaction due: the small fragments
+#: alone merged (no deletions materialized, so no large fragment is
+#: rewritten) and the book_id index's new rows indexed. Every delete-then-
+#: insert and every held-chunks read scans each small fragment the book_id
+#: index does not cover: wikipedia at 2,368 of them, 2.4–3.4 s per
+#: 128-document read and a third of its pipeline thread in genesis's delete
+#: (München, 2026-10-30). Measured on a bench: 2,000 small fragments, a
+#: 128-id delete 0.36–0.66 s; merged (1.3 s for 100k rows), 0.011–0.022 s.
+VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", "256"))
+#: How often the index maintainer asks each table for its small fragments,
+#: apart from the index's own pass (VECTOR_INDEX_REFRESH_S, 30 minutes). Run
+#: only inside that pass, the light compaction left wikipedia's table to drift
+#: from 206 small fragments to 2,101 in half an hour — ~65 a minute from
+#: genesis and embed commits — and held_chunks of 128 documents from 0.43 s
+#: to 2.45 s, almost linearly (München, 2026-10-30, #107's AFTER). Asked every
+#: minute, the 256 threshold is crossed every ~4 minutes and merged in 4–6 s.
+VECTOR_INDEX_LIGHT_CHECK_S = float(os.getenv("VECTOR_INDEX_LIGHT_CHECK_S", "60"))
 #: Rows a compaction aims to put in each fragment it writes (lance's own
 #: default). Bounding the output is what keeps one pass from rewriting the
 #: table into a shape the next pass has to undo.
@@ -494,9 +574,6 @@ VECTOR_INDEX_FRAGMENT_ROWS = int(os.getenv("VECTOR_INDEX_FRAGMENT_ROWS", "104857
 #: pubmed's 40M take about ten turns.
 CATALOG_BACKFILL_WINDOW = int(os.getenv("CATALOG_BACKFILL_WINDOW", "200000"))
 CATALOG_BACKFILL_BUDGET_S = float(os.getenv("CATALOG_BACKFILL_BUDGET_S", "60"))
-# The well-known root where PACKS are mounted (pack-format.md). The create
-# dialog offered them to the `packed` plugin, boxed in attic/ (2026-09-14).
-PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
 # generic lowercase analyzer (still perfectly searchable, just unstemmed).

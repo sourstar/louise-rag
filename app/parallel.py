@@ -29,22 +29,113 @@ import os
 import sys
 import threading
 import time
+import weakref
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, CancelledError, ProcessPoolExecutor, wait
+from concurrent.futures import process as _cf_process
 from concurrent.futures.process import BrokenProcessPool
 
-from . import config
+from . import config, cpu_limit
 
 # config knobs a child must share with the parent: everything that shapes
 # a chunk, a record or a plugin's file access
 KNOBS = ("CHUNK_TOKENS", "CHUNK_OVERLAP", "CHUNK_VERSION", "CLEANING_VERSION",
-         "PUBMED_PACK_DIR", "CACHE_DIR", "CORPUS_DIR", "DATA_DIR")
+         "PUBMED_PACK_DIR", "CACHE_DIR", "CORPUS_DIR", "DATA_DIR", "REFS_DB_PATH")
 
 _lock = threading.Lock()
 _pool: ProcessPoolExecutor | None = None
 _pool_size = 0
 _failures = 0
 _disabled = False
+#: when a caller last asked for the pool or left it (monotonic): the
+#: start of its idleness for `release_idle`. Under `_held_lock`.
+_last_active = time.monotonic()
+#: executors this process has thrown away: a failure surfacing from one of
+#: them later is not a new failure of the pool (`_note_failure`)
+_discarded: "weakref.WeakSet[ProcessPoolExecutor]" = weakref.WeakSet()
+
+
+class _Executor(ProcessPoolExecutor):
+    """ProcessPoolExecutor with CPython's own fix for gh-115634, on an
+    interpreter that lacks it: the node's 3.12 (security fixes only, so it
+    never will have it; 3.13.16 has it).
+
+    A child retires after PARSE_TASKS_PER_CHILD tasks. 3.12's manager thread
+    then calls `_adjust_process_count`, which spawns a replacement only if it
+    cannot take a token from `_idle_worker_semaphore`. That semaphore counts
+    task COMPLETIONS, not idle children, so it holds stale tokens released by
+    children that are gone, and each stale token trusted leaves the pool a
+    child short. It ends with no child and parts still queued. Nothing
+    answers, the watchdog throws the pool away, and the interpreter's exit
+    joins that pool's manager thread for ever. München, 2026-10-25:
+    wikipedia-v8's build did not exit on SIGTERM, with no parse child left.
+    Reproduced on 3.12.3 (8 parts, 2 children retiring after 2 tasks each):
+    4 parts answered, 0 children left. 3.13 replaces a retired child
+    unconditionally (`_replace_dead_worker`). This does the same when the
+    manager calls, and defers to the library everywhere else."""
+
+    def _adjust_process_count(self):
+        manager = getattr(_cf_process, "_ExecutorManagerThread", None)
+        if manager is None or not isinstance(threading.current_thread(), manager):
+            return super()._adjust_process_count()
+        # a child retired (3.12's only call from the manager), under the
+        # executor's shutdown lock, which the manager holds: 3.13's rule
+        if self._processes is None or (self._shutdown_thread and not self._pending_work_items):
+            return
+        if len(self._processes) < self._max_workers:
+            self._spawn_process()
+
+
+#: how long `discard` keeps terminating children before it lets go: the
+#: first terminated child normally ends the manager within milliseconds
+DISCARD_WAIT_S = 5.0
+
+
+def discard(ex: ProcessPoolExecutor, wait_s: float = DISCARD_WAIT_S) -> None:
+    """Stop an executor whose answers nobody will read: its children
+    TERMINATED until its manager thread has ended, then its queue
+    cancelled. Without this the manager ends when the children finish, or
+    never if one is stuck or none is left, and the interpreter's exit joins
+    it with no bound (`concurrent.futures.process._python_exit`).
+
+    Python 3.14's `ProcessPoolExecutor.terminate_workers()` (gh-128041) is
+    the library's call for this, but it shuts the executor down FIRST and
+    terminates after. A child that retires at `max_tasks_per_child` in
+    between is not replaced (the executor is shutting down), and if it was
+    the last one, the parts already handed to the queue have nobody to run
+    them: the manager waits for them for ever. Reproduced with children
+    retiring after every part: 2 exits in 8 hung on 3.12.3. Here a
+    terminated child's sentinel puts the manager on its own broken path
+    (it fails every future, closes the queue's reader so its feeder cannot
+    block, and joins), and the executor is shut down only once that has
+    happened. A child only computes (this module's rule), so terminating one
+    loses nothing anyone waits for: `compute` and `compute_pages` compute an
+    unanswered part in-process."""
+    _discarded.add(ex)
+    manager = getattr(ex, "_executor_manager_thread", None)
+    if manager is None and not hasattr(ex, "_processes"):
+        # not the executor this was written against: the library's call
+        terminate = getattr(ex, "terminate_workers", None)
+        if terminate is not None:
+            terminate()
+        else:
+            ex.shutdown(wait=False, cancel_futures=True)
+        return
+    deadline = time.monotonic() + wait_s
+    while True:
+        for p in list((getattr(ex, "_processes", None) or {}).values()):
+            try:
+                if p.is_alive():
+                    p.terminate()
+            except (ValueError, ProcessLookupError):   # closed, or gone already
+                pass
+        if manager is None or not manager.is_alive() or time.monotonic() >= deadline:
+            break
+        manager.join(0.02)
+    if manager is not None and manager.is_alive():
+        print(f"[parse pool] a stopped pool's manager is still waiting after {wait_s:.0f} s",
+              file=sys.stderr, flush=True)
+    ex.shutdown(wait=False, cancel_futures=True)
 
 
 def _child_init(knobs: dict, base: int | None = None) -> None:
@@ -83,33 +174,153 @@ def processes() -> int:
     return max(1, int(config.PARSE_PROCESSES))
 
 
+def each_part(fn, tasks: list[tuple]):
+    """`fn(*task)` for every task, in the tasks' order: in spawned processes
+    when the node allows more than one (`processes()`), here otherwise.
+
+    For a pass an operator runs over a collection's parts (`hold check`, a
+    snapshot's delta), not for the worker's rounds: its pool is made for
+    the pass and gone after it. LAZY: the caller works on part k while the
+    children compute the parts after it — vectors-sample embeds one part's
+    sixteen texts while the next parts are cut (docs/notes/multicore-audit.md).
+    `fn` is a module-level function, and its tasks and results pickle.
+    """
+    n = processes()
+    if n <= 1 or len(tasks) <= 1:
+        for t in tasks:
+            yield fn(*t)
+        return
+    from collections import deque
+    # BOUNDED: at most 2n tasks in flight or done and not yet taken. Results
+    # the caller has not reached do not pile up when it is the slower side —
+    # the records build's plan commits every window it gets (75.9 M rows).
+    # A CHILD THE KERNEL KILLED (BrokenProcessPool: an OOM, a SIGKILL) does
+    # not end the pass: a pool of half the size takes the parts not yet
+    # answered, in order, and at one process they are computed here
+    # (operator, 2026-10-30: a kill recovers by itself, "not involving this
+    # agent. This applies to any worker").
+    nxt = 0                                 # the next task to submit
+    taken = 0                               # the next result to yield
+    ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
+    window: deque = deque()
+    try:
+        while taken < len(tasks):
+            if ex is None:                  # down to this process
+                yield fn(*tasks[taken])
+                taken += 1
+                continue
+            while nxt < len(tasks) and len(window) < 2 * n:
+                window.append(ex.submit(fn, *tasks[nxt]))
+                nxt += 1
+            try:
+                got = window[0].result()
+            except BrokenProcessPool:
+                ex.shutdown(wait=False, cancel_futures=True)
+                window.clear()
+                nxt = taken                 # the unanswered go again
+                n //= 2
+                print(f"[parse pool] a child was killed: {len(tasks) - taken} part(s) go again "
+                      + (f"on {n} process(es)" if n > 1 else "in this process"),
+                      file=sys.stderr, flush=True)
+                ex = (ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
+                      if n > 1 else None)
+                continue
+            window.popleft()
+            taken += 1
+            yield got
+    finally:
+        # a caller that stopped early (an error, a stop) leaves no part queued
+        if ex is not None:
+            ex.shutdown(wait=True, cancel_futures=True)
+
+
 def pool() -> ProcessPoolExecutor | None:
     """The executor, created on first use; None when serial or DISABLED."""
     global _pool, _pool_size
     n = processes()
     if n <= 1 or _disabled:
         return None
+    old = None
     with _lock:
         if _pool is None or _pool_size != n:
-            if _pool is not None:
-                _pool.shutdown(wait=False, cancel_futures=True)
-            _pool = ProcessPoolExecutor(
+            # resized: the old pool is stopped (`discard`, below, outside the
+            # lock); a failure its callers see is not a new one, and they
+            # compute in-process
+            old = _pool
+            _pool = _Executor(
                 max_workers=n, mp_context=multiprocessing.get_context("spawn"),
                 initializer=_child_init, initargs=(_knobs(), _base_nice()),
                 # bounded memory: a child's plugin caches grow with what it
                 # parsed; it is replaced after this many sub-batches
                 max_tasks_per_child=max(1, int(config.PARSE_TASKS_PER_CHILD)))
             _pool_size = n
-        return _pool
+        ex = _pool
+    _touch()
+    if old is not None:
+        discard(old)
+    return ex
+
+
+def _touch() -> None:
+    global _last_active
+    with _held_lock:
+        _last_active = time.monotonic()
+
+
+def release_idle(idle_s: float, *, now: float | None = None) -> int:
+    """The pool stopped (`discard`) when nobody has been inside it for
+    `idle_s` seconds: no batch in `compute`/`compute_pages`, no slot held,
+    and no `pool()` call meanwhile. Returns how many children it had (0 when
+    nothing was released). The next `pool()` starts a fresh one.
+
+    WHY (München, 2026-10-28): the children keep the plugin caches they grew
+    while parsing — 12 of them held 10.8 GiB, idle and resident for 26-42
+    minutes after the node's quiet profile stopped parsing and through a
+    pause, and wikipedia-v8's first snapshot could not start beside them. A
+    pause stops the work, not the memory. Called by the worker's beat thread
+    (telemetry-shaped, never a pipeline thread); a prefetch in flight is
+    cancelled with the pool, and the stage that needed it pays later, as a
+    failed prefetch always did. loky's reusable executor shuts idle workers
+    down the same way (its `timeout`); this pool stays the standard
+    library's, with the gh-115634 fix above."""
+    global _pool, _pool_size
+    if idle_s <= 0:
+        return 0
+    with _lock:
+        with _held_lock:
+            busy = bool(_wanting) or bool(_held)
+            idle_for = (time.monotonic() if now is None else now) - _last_active
+        if _pool is None or busy or idle_for < idle_s:
+            return 0
+        ex, n, _pool, _pool_size = _pool, _pool_size, None, 0
+    discard(ex)
+    return n
 
 
 def shutdown() -> None:
+    """The pool stopped (`discard`): after a failure, and when the process
+    stops."""
     global _pool, _pool_size
     with _lock:
-        if _pool is not None:
-            _pool.shutdown(wait=False, cancel_futures=True)
-            _pool = None
-            _pool_size = 0
+        ex, _pool, _pool_size = _pool, None, 0
+    if ex is not None:
+        discard(ex)
+
+
+def _stop_at_exit() -> None:
+    """Interpreter exit joins every pool's manager thread with no bound
+    (`concurrent.futures.process._python_exit`). Registered by the library's
+    own mechanism for it, `threading._register_atexit`, after the library's
+    own registration, so it runs first (the hooks run last-in, first-out):
+    by then nobody reads an answer (main has returned), and a stopped build
+    leaves at once instead of after its pages in flight, or never."""
+    shutdown()
+
+
+try:
+    threading._register_atexit(_stop_at_exit)
+except (AttributeError, RuntimeError):     # no such hook, or the exit has begun
+    pass
 
 
 def _note_success() -> None:
@@ -119,11 +330,20 @@ def _note_success() -> None:
             _failures = 0
 
 
-def _note_failure(exc: BaseException) -> None:
+def _note_failure(exc: BaseException, ex: ProcessPoolExecutor | None = None) -> None:
     """A pool that did not answer: rebuild it, and give up on children
     entirely if it keeps happening. Printed, not log_event'd — this module
-    has no manifest connection, and the worker's stdout IS the log."""
+    has no manifest connection, and the worker's stdout IS the log.
+
+    `ex`, the executor that failed: one already thrown away (by another
+    caller's failure, a resize, or the process stopping) is not a new
+    failure. Its answers were never coming, and counting it would throw away
+    the pool that replaced it."""
     global _failures, _disabled
+    if ex is not None and ex in _discarded:
+        print(f"[parse pool] {type(exc).__name__} from a pool already stopped: "
+              f"computing this batch in-process", file=sys.stderr, flush=True)
+        return
     shutdown()
     with _lock:
         _failures += 1
@@ -153,19 +373,78 @@ def health() -> dict:
 
 # ---- the work ---------------------------------------------------------------
 
+_family_contexts: dict[str, object] = {}
+
+
+def _family_context(collection):
+    """`slicing.context_for`, once per child per collection (it reads the
+    map member and the pack's codes; a row asks it 50,000 times a window)."""
+    key = str(getattr(collection, "manifest_path", ""))
+    if key not in _family_contexts:
+        from .pack import slicing
+        _family_contexts[key] = slicing.context_for(collection, log=lambda m: None)
+    return _family_contexts[key]
+
+
 def _one(kind: str, collection, row: dict):
     from . import layers, plugin_io
     plugin = collection.plugin_instance()
     if kind == "chunks":
-        sections = plugin_io.sections(plugin, row)
+        # ONE PARSE (docs/notes/one-parse.md): the fresh record's sections
+        # where there is one, the plugin's parse otherwise
+        from . import record_source
+        sections = record_source.sections(collection, row, lambda: plugin_io.sections(plugin, row))
         return layers.chunks_for_document(collection, row, sections)
+    if kind == "chunks+names":
+        # one parse for both: the chunks the text index cuts, and the names a
+        # record is found by (fts.index_names_of; wikidata)
+        from . import fts
+        doc = plugin_io.canonical_doc(plugin, row)
+        return {"chunks": layers.chunks_for_document(collection, row, doc.sections),
+                "names": fts.index_names_of(collection, doc.extra)}
+    if kind in ("fts", "fts+names"):
+        # the text-index stage's whole per-document work: its chunks, its
+        # names where the plugin gives them (wikidata), and the entities its
+        # text mentions — the tagging the worker's pipeline thread did under
+        # the GIL while this pool sat idle (app/entities.py `entity_ids_of`)
+        from . import entities, refs
+        if kind == "fts+names":
+            from . import fts
+            doc = plugin_io.canonical_doc(plugin, row)
+            chunks = layers.chunks_for_document(collection, row, doc.sections)
+            names = fts.index_names_of(collection, doc.extra)
+        else:
+            from . import record_source
+            chunks = layers.chunks_for_document(collection, row, record_source.sections(
+                collection, row, lambda: plugin_io.sections(plugin, row)))
+            names = None
+        return {"chunks": chunks, "names": names,
+                "entities": entities.entity_ids_of(row.get("title"), [c["text"] for c in chunks],
+                                                   refs.RESOLVER, refs.read_store())}
+    if kind == "slice-hint":
+        # the slice a row is in, without parsing it (app/slice_scope.py): the
+        # family context is built once per child and kept
+        from .pack import slicing
+        return slicing.slice_hint(collection.plugin, row, _family_context(collection))
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
-    if kind == "record":
-        from .pack.build import _record_of
-        return _record_of(collection, plugin, row)
     if kind == "prepare":
         return plugin_io.prepare(plugin, row)
+    if kind == "origin-line":
+        # records-vs-origin's re-parse (app/hold/check.py `verdict`), in a
+        # child: the record's origin unit under the collection's base (a local
+        # origin), parsed by the Codex's toolchain, its line compared here —
+        # the line that travels back is a word, not the record
+        from .hold.check import verdict
+        from .pack import build as pack_build, records as pack_records
+        local, path = plugin_io.local_locator(plugin, row["locator"], collection.corpus_dir)
+        if not local.exists():
+            raise FileNotFoundError(str(local))
+        record, _layer, _blob, _plates = pack_build._record_of(
+            collection, plugin, {"uid": row["uid"], "native_id": row["uid"].rsplit(":", 1)[-1],
+                                 "path": path})
+        shape = int(getattr(collection.codex, "record_line", 1) or 1)
+        return verdict(row["line"], pack_records.canonical_line(record, record_line=shape))
     raise ValueError(f"unknown work kind {kind!r}")
 
 
@@ -173,6 +452,13 @@ def _compute(kind: str, collection, rows: list[dict]) -> list[tuple[bool, object
     """Runs in a child (or inline): one (ok, value) per row, in order.
     A failure is (False, {"type", "msg"}) — never an exception out of the
     task, so one bad document never poisons its sub-batch."""
+    if kind in ("record", "held-record"):
+        # the records build's task: the line encoded here too, in the child
+        # (`with_line`), the task's lines shipped together and its layers
+        # resolved once (`compute_records`; held: the part's lookups in two
+        # queries, `prefetch_held`)
+        from .pack.build import compute_records
+        return compute_records(kind, collection, rows)
     out: list[tuple[bool, object]] = []
     for row in rows:
         try:
@@ -349,7 +635,9 @@ def _occupy(name: str | None, delta: int) -> None:
 
 
 def _want(name: str | None, delta: int) -> None:
+    global _last_active
     with _held_lock:
+        _last_active = time.monotonic()     # entering or leaving: not idle now
         got = _wanting.get(name, 0) + delta
         if got > 0:
             _wanting[name] = got
@@ -492,6 +780,11 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # collection that is really using them.
     name = getattr(collection, "name", None)
     budget = n * IN_FLIGHT_PER_CHILD
+    # THE NODE PROFILE'S CORES (app/cpu_limit.py), read once per unit: at
+    # most that many parts in flight. A unit is never stalled half-way: under
+    # a pause (0) the one already begun finishes on one child, and the pause
+    # itself is its caller's, at the unit boundary (worker._cpu_paused)
+    lim = cpu_limit.current()
     # BOUNDED: the pool is an optimisation, and a caller that waits on it
     # forever is worse than no pool at all — live 2026-08-28, pubmed's
     # pipeline thread sat in the executor with every child gone, so the
@@ -519,7 +812,7 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
         out: list[tuple[bool, object]] = []
         nxt = 0
         while nxt < len(parts) or futures:
-            cap = slots(name, budget)
+            cap = cpu_limit.cap(slots(name, budget), lim, floor=1)
             while nxt < len(parts) and len(futures) < cap:
                 futures.append(ex.submit(_compute, kind, collection, parts[nxt]))
                 nxt += 1
@@ -531,10 +824,12 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
             _occupy(name, -1)
         _note_success()
         return out
-    except (BrokenProcessPool, TimeoutError, OSError) as e:
+    except (RuntimeError, TimeoutError, OSError, CancelledError) as e:
+        # RuntimeError: BrokenProcessPool, or "cannot schedule new futures
+        # after shutdown" from a pool another caller stopped meanwhile
         for f in futures:
             f.cancel()
-        _note_failure(e)
+        _note_failure(e, ex)
         return _compute(kind, collection, plain)
     finally:
         # whatever is still held on the way out — the timeout and the broken
@@ -545,8 +840,243 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
         _want(name, -1)
 
 
+def _finished(f):
+    """A future's result when it finished cleanly, else None."""
+    try:
+        return f.result(timeout=0) if f.done() and not f.cancelled() and f.exception(timeout=0) is None else None
+    except Exception:   # noqa: BLE001 — a part that did not finish is computed again
+        return None
+
+
+#: ROWS `compute_pages` may hold read ahead of the page its caller takes
+#: next — the memory bound of the stream, counted in rows because pages are
+#: not one size (≤500 records parsed, ≤4,000 held). 2026-10-25, München's
+#: profile at 12 children: at two pages ahead, one long article in the
+#: oldest page held back every later page. 2026-10-30, wikidata's build at
+#: 16 pages of 500 (8,000 rows, ~4 s of work): the children waited 47 % of
+#: their samples in the pool's get while the parent waited 51 % for the next
+#: part — one large entity in the oldest page stalled the look-ahead. 64,000
+#: rows is the 16 pages of 4,000 the held build already had, and ~30 s of
+#: wikidata's parsing; a record waiting in it is a few KB.
+ROWS_AHEAD = 64_000
+
+
+def _running(inflight) -> int:
+    """Parts submitted and not answered yet: the children they occupy."""
+    return sum(1 for *_x, f in inflight if f is not None and not f.done())
+
+
+class Interrupted(Exception):
+    """`compute_pages` was paused by the node profile and its `stop` was set
+    meanwhile: what was in flight was handed over, nothing more is coming.
+    The caller handles it as its stop at a page boundary (invariant 2)."""
+
+
+def _submit(ex, kind, collection, part):
+    """A part to the pool, or None — broken, or stopped by another caller
+    meanwhile — and then it is computed in-process."""
+    try:
+        return ex.submit(_compute, kind, collection, part)
+    except RuntimeError as e:
+        _note_failure(e, ex)
+        return None
+
+
+def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
+    """`compute` over a STREAM of pages: one result list per page, in order,
+    with the pool's window kept full ACROSS pages — the parts of page k+1
+    are submitted while page k's are still running and while the caller
+    works on page k's results.
+
+    WHY (München's profile of wikipedia-v8's records build, 2026-10-24):
+    `compute` per page of ≤500 documents waits for its slowest part before
+    the next page is even read, so every page ended on one long article with
+    the other children idle — 47.8 % of all samples were children waiting
+    for work, two children did the parsing, ~1.3 of 4 cpus busy — and its
+    deadline covered the WHOLE batch, so a page past PARSE_TIMEOUT_S was
+    thrown away and parsed again serially (15 times in 18 h).
+
+    Here the timeout bounds the wait for the NEXT result (no progress for
+    PARSE_TIMEOUT_S), the standard watchdog; on a timeout or a broken pool
+    the parts not yet answered — and only they — are computed in-process,
+    the finished ones kept, and the next pages go to a fresh pool. Parts are
+    cut per page by `_partition` (unit boundaries, `work_span`), as before.
+    A generator: closing it cancels what is in flight.
+
+    THE NODE PROFILE (app/cpu_limit.py, operator 2026-10-27): parts are
+    submitted one at a time while the parts RUNNING are below
+    `min(the window, the profile's cores)`, the cores re-read at each page
+    boundary (`say` gets each change, once). `0` pauses: nothing new is
+    submitted or read, what is in flight finishes and its pages are handed
+    over (the caller commits what they complete), and then the stream waits,
+    bounded, until a profile allows cores again — or raises `Interrupted`
+    when `stop` is set meanwhile. Results never depend on the limit: a part
+    is the same part whenever it runs, and pages come out in order."""
+    from collections import deque
+    name = getattr(collection, "name", None)
+    watch = cpu_limit.Watch(say)
+    lim = watch.limit()                   # re-read at each page boundary, below
+    pages = iter(pages)
+    inflight: deque = deque()            # (page_no, part_no, part_rows, future or None = in-process)
+    queued: deque = deque()              # (page_no, part_no, part_rows): cut, waiting for a slot
+    owner: dict = {}                      # future -> the executor it was submitted to
+    results: dict[int, list] = {}         # page_no -> list of per-part results, in part order
+    page_rows: dict[int, int] = {}        # page_no -> its rows, until it is yielded
+    ahead = 0                             # rows read and not yielded yet (ROWS_AHEAD)
+    next_page = 0                         # pages read so far
+    emit = 0                              # the next page to yield
+    exhausted = False
+    _want(name, 1)
+    mine = 0
+    deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+
+    def submit_queued(ex, cap: int) -> None:
+        """What waits, oldest first, while the parts RUNNING are below the
+        cap — a part that answered but waits behind a slower one for its
+        page's turn holds no child, so it holds no slot either."""
+        nonlocal mine
+        while queued and (ex is None or _running(inflight) < cap):
+            page_no, i, part = queued.popleft()
+            fut = _submit(ex, kind, collection, part) if ex is not None else None
+            if fut is not None:
+                owner[fut] = ex
+                mine += 1
+                _occupy(name, 1)
+            inflight.append((page_no, i, part, fut))
+
+    try:
+        while True:
+            ex = pool()
+            n = processes()
+            # THE PROFILE BOUNDS THE PARTS COMPUTING, and a part queued behind
+            # a busy child computes nothing. Clamped to the cores, a window of
+            # exactly one part per child left every child that finished idle
+            # until this generator ran again — and it is suspended while the
+            # build works on a page: wikidata-bge's held build, 12 children,
+            # cap 12, children ~32 % busy, the parent 76 % idle (München,
+            # 2026-10-31). Where the profile allows every child, the window
+            # keeps IN_FLIGHT_PER_CHILD (a task queued behind each); below
+            # that, the cores cap it, as before.
+            window = slots(name, n * IN_FLIGHT_PER_CHILD)
+            cap = window if lim.cores is None or lim.cores >= n else cpu_limit.cap(window, lim)
+            if lim.cores != 0:
+                submit_queued(ex, cap)
+            # read pages ahead, once what was read is all submitted
+            while not exhausted and not queued and lim.cores != 0 \
+                    and (ex is None or _running(inflight) < cap) and (ahead == 0 or ahead < ROWS_AHEAD):
+                page = next(pages, None)
+                if page is None:
+                    exhausted = True
+                    break
+                rows = [dict(r) if not isinstance(r, dict) else r for r in page]
+                page_rows[next_page] = len(rows)
+                ahead += len(rows)
+                parts = ([rows] if ex is None or len(rows) <= 1
+                         else _partition(collection, rows, n * PARTS_PER_CHILD)) if rows else []
+                results[next_page] = [None] * len(parts)
+                if ex is None or len(rows) <= 1:
+                    inflight.extend((next_page, i, part, None) for i, part in enumerate(parts))
+                else:
+                    queued.extend((next_page, i, part) for i, part in enumerate(parts))
+                    submit_queued(ex, cap)
+                next_page += 1
+                if ex is None:
+                    break                 # serial: one page at a time
+            # yield every page whose parts are all in
+            while emit < next_page and all(r is not None for r in results[emit]):
+                out: list = []
+                for r in results.pop(emit):
+                    out.extend(r)
+                ahead -= page_rows.pop(emit)
+                emit += 1
+                yield out
+                # a page boundary: the profile's cores, again (cached, TTL)
+                lim = watch.limit()
+                # the caller's time with a page is not the pool's silence
+                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+            if not inflight:
+                if exhausted and not queued:
+                    return
+                if lim.cores == 0:
+                    # PAUSED, with nothing left in flight: wait at this
+                    # boundary, bounded, honouring the caller's stop
+                    if not cpu_limit.wait_while_paused(stop, watch):
+                        raise Interrupted("stopped while the node profile paused the pool")
+                    lim = watch.limit()
+                    deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+                continue
+            page_no, i, part, fut = inflight[0]
+            if fut is None:
+                inflight.popleft()
+                results[page_no][i] = _compute(kind, collection, part)
+                continue
+            try:
+                # THE WATCHDOG: no part answered for PARSE_TIMEOUT_S, not
+                # "this part took longer" — one long article on a busy core
+                # is progress as long as its neighbours keep finishing
+                if not fut.done():
+                    waiting = [f for *_x, f in inflight if f is not None and not f.done()]
+                    done, _ = wait(waiting, timeout=max(0.0, deadline - time.monotonic()),
+                                   return_when=FIRST_COMPLETED)
+                    if done:
+                        # progress, though perhaps not the oldest part: back to
+                        # the top, which refills the slots the finished ones freed
+                        # (2026-10-25: waiting on the oldest alone left 11 of 12
+                        # children idle behind one long article)
+                        deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+                        continue
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"no part answered for {config.PARSE_TIMEOUT_S:.0f} s")
+                    continue
+                inflight.popleft()
+                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+                got = fut.result()
+                owner.pop(fut, None)
+                mine -= 1
+                _occupy(name, -1)
+                _note_success()
+                results[page_no][i] = got
+            except (BrokenProcessPool, TimeoutError, OSError, CancelledError) as e:
+                if inflight and inflight[0][3] is fut:
+                    inflight.popleft()        # the oldest part, computed in-process below
+                mine -= 1
+                _occupy(name, -1)
+                for _p, _i, _part, f in inflight:
+                    if f is not None:
+                        f.cancel()
+                        mine -= 1
+                        _occupy(name, -1)
+                _note_failure(e, owner.get(fut))
+                owner.clear()
+                # what was not answered, in-process; what finished is kept;
+                # what was still queued goes to the next pool
+                results[page_no][i] = _compute(kind, collection, part)
+                for p_no, j, rest, f in inflight:
+                    results[p_no][j] = (_finished(f) if f is not None else None) \
+                        or _compute(kind, collection, rest)
+                inflight.clear()
+    finally:
+        for _p, _i, _part, f in inflight:
+            if f is not None:
+                f.cancel()
+        for _ in range(max(0, mine)):
+            _occupy(name, -1)
+        _want(name, -1)
+
+
 def chunks_for_rows(collection, rows) -> list[tuple[bool, object]]:
     return compute("chunks", collection, rows)
+
+
+def chunks_names_for_rows(collection, rows) -> list[tuple[bool, object]]:
+    """`chunks_for_rows` plus each record's names: one `{chunks, names}` per
+    row, for a collection whose plugin gives names (fts.names_capable)."""
+    return compute("chunks+names", collection, rows)
+
+
+def fts_for_rows(collection, rows, *, names: bool) -> list[tuple[bool, object]]:
+    """The text-index stage's work per row: `{chunks, names, entities}`."""
+    return compute("fts+names" if names else "fts", collection, rows)
 
 
 def metadata_for_rows(collection, rows) -> list[tuple[bool, object]]:
@@ -557,6 +1087,18 @@ def metadata_for_rows(collection, rows) -> list[tuple[bool, object]]:
 
 _prefetched: OrderedDict = OrderedDict()      # (collection, key) -> True
 _MAX_PREFETCH_MEMO = 512
+
+
+def prefetch_allowed() -> bool:
+    """A pool, and no node-profile limit below its size. A prefetch is fired
+    and forgotten, outside any window, so it is not counted in flight: under
+    a limit it is not sent, and the stage that needs the preparation pays
+    for it inside its own limited window, as it did before prefetch existed
+    (app/cpu_limit.py)."""
+    if pool() is None:
+        return False
+    cores = cpu_limit.current().cores
+    return cores is None or cores >= processes()
 
 
 def prefetch(collection, rows) -> list[str]:
@@ -573,7 +1115,7 @@ def prefetch(collection, rows) -> list[str]:
     preparation simply means the stage pays for it later, as before."""
     from . import plugin_io
     ex = pool()
-    if ex is None:
+    if ex is None or not prefetch_allowed():
         return []
     try:
         plugin = collection.plugin_instance()

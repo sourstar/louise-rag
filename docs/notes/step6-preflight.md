@@ -1,5 +1,8 @@
 # Step 6 pre-flight — what becomes permanent the moment it runs
 
+> **Superseded** (2026-10-25, handover) by the completed migration (2026-10-08); a pre-flight of migration step 6, kept for history.
+
+
 *Written 2026-09-08, on the `louise` branch, before step 6.*
 
 **Read this before running `hold collection create` on real data.**

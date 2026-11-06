@@ -116,3 +116,43 @@ def test_a_mode_that_does_not_embed_settles_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "_stop", Stop())
     worker._settle_runs_for_search()
     assert settled == ["a"], "nothing while seed-only; once running, the held one, never the paused"
+
+
+def test_a_quiet_profile_still_settles_for_search(tmp_path, monkeypatch):
+    """A settle serves searches, and a profile never limits a query
+    (node-profiles-design.md decision 6): a worker restarted in a quiet
+    window settles as by day, or its vector leg would wait for 08:00."""
+    from datetime import datetime, timedelta
+
+    from app import cpu_limit, node_profile, node_state
+    from app.node_profile import Active, GpuLevel, Profile
+    held = tmp_path / "held"
+    (held / "lance" / "chunks.lance").mkdir(parents=True)
+    a = SimpleNamespace(name="a", manifest_path=held / "manifest.sqlite", lance_dir=held / "lance")
+    monkeypatch.setattr(worker.collections_mod, "load_all", lambda: [a])
+    monkeypatch.setattr(run_check, "applies", lambda c: True)
+    monkeypatch.setattr(worker.db, "connect", lambda c: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(worker, "_settled_for_search", set())
+    _running(monkeypatch)
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    cpu_limit.reset()
+    quiet = Active(profile=Profile("quiet", 0, "full", "acquire-only"), level=GpuLevel("full"),
+                   until=datetime.now() + timedelta(hours=1), next="day")
+    monkeypatch.setattr(node_profile, "active", lambda now=None: quiet)
+    assert not node_state.runs("running", node_state.EMBED), "the quiet window holds embedding"
+    settled = []
+
+    class Stop:
+        n = 0
+
+        def wait(self, s):
+            Stop.n += 1
+            return Stop.n > 1
+
+        def is_set(self):
+            return False
+    monkeypatch.setattr(run_check, "embed_allowed",
+                        lambda con, collection, *, stop=None: settled.append(collection.name) or True)
+    monkeypatch.setattr(worker, "_stop", Stop())
+    worker._settle_runs_for_search()
+    assert settled == ["a"]

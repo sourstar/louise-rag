@@ -1,7 +1,7 @@
 # louise-python for AMD GPUs: the same torch, 2.14.0, built for ROCm 7.2 —
 # the ROCm AMD's WSL matrix pairs with the RX 9060 XT (gfx1200) and Adrenalin
 # 26.1.1. The wheel carries its own HIP runtime; on WSL2 the card is reached
-# through /dev/dxg and the host's librocdxg (deploy/localai-wsl/compose.yaml).
+# through /dev/dxg and the host's librocdxg (deploy/localai-wsl/compose.yaml@c572c3b).
 # torch's word for the card is `cuda`: a model's YAML says device:cuda.
 # OpenVINO has no AMD plugin: MedCPT's tasks run with device:cpu here.
 --extra-index-url https://download.pytorch.org/whl/rocm7.2

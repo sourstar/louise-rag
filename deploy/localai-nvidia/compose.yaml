@@ -73,10 +73,10 @@ services:
         source: localai-backends
         target: /run/vega
         volume:
-          subpath: vega-llama-cpp/run
+          subpath: vega-louise-llama-cpp/run
       - vega-state:/state
 
 volumes:
   localai-backends:
-    name: localai_backends     # where cuda13-llama-cpp and vega-llama-cpp are installed
+    name: localai_backends     # where cuda13-llama-cpp and vega-louise-llama-cpp are installed
   vega-state:

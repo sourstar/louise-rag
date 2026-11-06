@@ -347,7 +347,7 @@ writes, is created on the main thread at boot (`refuse_boot`) and stays at
 node's modes were redefined on 2026-09-19 — *pause*: nothing runs;
 *download/seeding only*: exactly that — and every test passed. Watched
 on the node, "download/seeding only" took no new document and the two in
-flight went on: RAGE served 470 embedding requests in the next 100 s,
+flight went on: the model pool served 470 embedding requests in the next 100 s,
 and the largest book is 5.3 h of them. An archive pass did the same, to
 the end of its 300 s budget, and a scan to the end of the corpus (1,083
 s on wikivec). Each already had a unit it stops at — a slice, a row, a
@@ -432,6 +432,46 @@ starved while a bundle lands, the cut moves to the parse pool
 (`app/parallel.py`, children at nice 10), as the embed stage's own
 chunking did in amendment 50.
 
+**19. A pool that runs out of children, and an exit that waits for it.**
+München, 2026-10-25: wikipedia-v8's records build was stopped with SIGTERM.
+It committed its part, returned from main, and never exited. py-spy showed
+the main thread in `concurrent.futures.process._python_exit`, joining two
+pool manager threads. No parse child was left in the container, and two
+queue feeders were blocked writing to a pipe nobody read. Two causes, both
+reproduced on 3.12.3:
+- CPython gh-115634. A child that retires at `max_tasks_per_child` is
+  replaced only if no stale "idle" token says otherwise. So a 3.12 pool
+  runs out of children with parts still queued: 8 parts, 2 children retiring
+  after 2 tasks each, 4 answered and 0 children left. The watchdog then
+  throws the pool away, and 2026-10-24's 15 pages re-parsed serially in
+  18 h fit this cause.
+- `shutdown(wait=False)` leaves a pool's manager thread waiting for its
+  children: for ever if one is stuck or none is left. The interpreter's
+  exit joins every manager thread with no bound.
+
+→ The library's fix is backported where the interpreter lacks it
+(`parallel._Executor`). A pool thrown away is STOPPED (`parallel.discard`):
+its children are terminated until its manager has ended, and only then is
+it shut down. Doing it in the other order, as 3.14's `terminate_workers()`
+does, lets the last child retire unreplaced in between: 2 exits in 8 hung,
+then 0 in 12. The exit stops the pool before the library joins it. Tests:
+tests/test_parallel_exit.py, in this interpreter and in 3.12 when present.
+The lesson: an optimisation's WORKERS can disappear too, so a wait on them
+needs a bound (§6, 5), and so does the exit that cleans them up.
+
+**20. A plan checked at a size the code never sends.** A walk that re-read
+the same 65,536 of wikipedia's 14.6 M candidates every 10 s (23.5 % of its
+pipeline thread) was replaced by demand that fts announces and a lookup by
+uid (#255/#256). Its plan test passed with 2 uids in the `IN` list. The
+code sends 500, and from 50 up, with no `sqlite_stat1`, SQLite preferred
+idx_documents_scope's four equalities to the primary key. That cost 11.8 s
+per 500 uids, and wikipedia's fts fell ~8× the hour it was deployed
+(2026-11-03 04:40, py-spy 89.4 % in the lookup). → Plan-check a query at the
+sizes it is sent, the largest included. Where an index must not be chosen,
+take its columns out of selection with SQLite's unary plus (`+col=?`; #257:
+0.30 ms per 500). And deploy one change at a time, with its AFTER profile
+taken at once: that is what caught this one within the hour.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first
@@ -442,7 +482,8 @@ chunking did in amendment 50.
    into the change's commit message. If you cannot say what the current
    cost IS, you are guessing.
 3. **Plan-check AND time every query** you add or touch, against a real
-   manifest (`tools/sched_report.py --queries`). Reject `SCAN`,
+   manifest (`tools/sched_report.py --queries`), at every size the code
+   sends it — an `IN` list of 500 is not planned like one of 2 (§5, 20). Reject `SCAN`,
    `TEMP B-TREE`, `LIST SUBQUERY`, and anything over ~100 ms whose cost
    grows with the corpus.
 4. **Ask where the same defect sits one layer down.** Six of these
@@ -497,7 +538,7 @@ chunking did in amendment 50.
 | concern | file |
 |---|---|
 | the round, stage selection, batching, pipeline threads, prefetch, embed producers | `app/worker.py` |
-| model requests by priority: levels, gates, the interactive claim (§12) | `app/dispatch.py` |
+| model requests by priority: levels, gates, the interactive claim (§12) | `app/rage/dispatch.py` |
 | the parse pool | `app/parallel.py` |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
@@ -788,7 +829,11 @@ The worker logs each resource's accounting every `SHARES_LOG_INTERVAL_S`
 (stage `sched`), from the stats thread — telemetry is never published by
 the thread doing the work. `python -m tools.sched_report --shares` prints
 the recent lines. Without this the fair share is an assertion; with it, a
-change can be judged on the general picture.
+change can be judged on the general picture. **The figures are CUMULATIVE since the worker start** — turns, units and
+seconds add up across rounds, and the line says "(since start)" since
+2026-10-28, when `pubmed: 99% in 36 turns (1102s, 1 units, units cost
+1067.1s)` was read as 1,067 s a round: it was ONE unit, the facets pass
+after a worker start, in 36 idle turns.
 
 ### The rest of the model, as built
 
@@ -914,6 +959,44 @@ Neither of these touches the GPU feed: the embed thread does not use the
 pool, and children sit at the worker's nice + 10, so feeding the encoder
 outranks parsing by construction (§12).
 
+**The node profile's cores (2026-10-27, `app/cpu_limit.py`).** Admission
+has a second ceiling: the profile's `cpu_cores`
+(node-profiles-design.md). The pool keeps its children; what is capped is
+the parts in flight, `min(window, cores)`, and the page stream now submits
+part by part instead of a whole page at once, so the cap holds exactly.
+The limit is read once per page or batch, from a cache trusted 30 s or until
+the profile's own end. `0` is a pause at that boundary. In the worker it is
+`_cpu_paused`, which stands rdf, fts and the archive pass down; embedding,
+bundles and scans go on. A prefetch is not counted in any window, so it is
+not sent while a limit binds. Wikidata's pack pass (its entity slices and its
+passes over the chunk files, two pools of its own) follows the same limit and
+pause, and gets the scan's stop through `DiscoverState.stop`.
+
+Measured on a 4-core VM shared with other jobs (7 alternating runs, median;
+before = the code without the applier):
+
+| | before | no profile | profile 12 (not binding) | profile 2 |
+|---|---|---|---|---|
+| records build, 6,000 gutenberg books, 3 children | 3.85 s | 3.98 s | 3.74 s | 4.75 s |
+| wikidata pack pass, 30,000 entities, 3 workers | 4.92 s | 4.76 s | 4.95 s | 5.16 s |
+
+The check is within the ±4 % noise. A cached read costs 10.6 µs and a
+re-read 0.32 ms. The first records figures (4.18/4.06/4.20/5.01 s, 5 runs)
+came from a harness that set things up at import time, which spawned
+children re-ran. They were taken again with the setup inside `main()`.
+
+**Not reached by the profile, and why:**
+- `lbzip2 -n <workers>` under the wikidata pass: its thread count is fixed
+  at start. Its pipe is read only as fast as the limited pool takes slices,
+  so it decompresses ahead by a pipe buffer at most, and it sits blocked
+  during a pause.
+- tantivy's writer threads (fts) and the Lance runtime (the index
+  maintainer): native threads, not a pool Python sizes. fts stands down at
+  0; the maintainer is not limited.
+- `tools/wikidata_coverage.py`: a hand-run tool, not the node's work.
+- The `ThreadPoolExecutor`s in app/ wait on HTTP (embedding, transfers,
+  retrieval), and embedding runs in every profile (decision 3).
+
 **And the reason it survived six reworks: nothing measured occupancy.** A
 starved pool and a slow pool look identical from outside — both show long
 batches. The batch log has duration and size, `docker stats` has the
@@ -970,6 +1053,18 @@ embedding. The operator's rules:*
 - *The threads feeding the GPU outrank indexing and parsing: "the CPU
   load to feed the GPU is trivial but crucial".*
 
+**Amended 2026-10-25 (operator): "Embedding shall have the lower
+priority and query processing the highest; the subsequent steps of a query
+in process shall be processed first to avoid wasting the effort spent for
+the previous steps."**
+- The levels are now a query's steps in order: CORPUS < TRANSLATE < QUERY <
+  RERANK < CHAT.
+- Corpus work stands aside on the WHOLE CARD while a query holds the claim:
+  its next request waits, bounded by its own timeout, and wakes on stop.
+- The device-wide yield removed on 2026-09-20 returns, because the GPU
+  governor now holds the clock that its absence cost chat.
+- Why: the night of 2026-10-24 (scheduling-log.md).
+
 ### What was measured first
 
 All on the live node, read-only, with the `xe` driver's per-client
@@ -1000,7 +1095,7 @@ now (§2's row on the encoders is stale on this point).
 ### The model
 
 **Levels.** `CORPUS < TRANSLATE < CHAT < RERANK < QUERY`
-(`app/dispatch.py`). Every model request carries one.
+(`app/rage/dispatch.py`). Every model request carries one.
 
 **One gate per endpoint.** All requests to one model server pass its
 gate (`embeddings._request_vectors`, the reranker, chat, translation).
@@ -1032,7 +1127,14 @@ and translation when TRANSLATE_URL is unset.
 **Two batches submitted, a third prepared (the operator's rule).**
 - Each collection has an embed PRODUCER thread. It selects candidates,
   loads chunks and reads what is held: all the CPU work of a batch.
-- A batch is one document's requests.
+- A batch is one document's requests. **Amended 2026-11-01 (GPU plan,
+  step 1 lever 2): a batch is one REQUEST, which may carry several short
+  documents' texts up to the gated `[encoder] batch`
+  (`embeddings.Coalescer`).** wikidata (1.04 chunks a document) sent ~1
+  text a request and its card computed 82 % of the time. The rule's
+  purpose is kept: still at most `slots` requests per collection at the
+  gate, a successor always waiting. What waits now is up to
+  EMBED_COALESCE_DOCS documents whose texts fill the next request.
 - At most two batches per (collection, level) hold a slot at the gate,
   and a third is prepared meanwhile.
 - When a batch returns, its slot passes at once to the prepared one,
@@ -1071,7 +1173,7 @@ claim is live, which was its behaviour before any of this.
 
 | piece | where | proved by |
 |---|---|---|
-| levels, gates, the claim | `app/dispatch.py` | `tests/test_dispatch.py` |
+| levels, gates, the claim | `app/rage/dispatch.py` | `tests/test_dispatch.py` |
 | every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
 | the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
 | producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |

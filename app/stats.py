@@ -101,12 +101,31 @@ class Recorder:
         # "awaiting the encoder" tells an operator nothing is happening while
         # the encoder is at 300% CPU.
         self._in_flight: dict[str, int] = {}
+        # Collections whose embedding has work it could send NOW: candidates
+        # left after its stream, and nothing holding it back (a pause, a
+        # deferral). The card recorder counts a card idle while one of
+        # these waits as a GAP the engine left (gpu-saturation-plan.md, I3);
+        # idle with nothing waiting is no gap.
+        self._backlog: set[str] = set()
+        # Documents and chunks embedded since the process started, per
+        # collection: never pruned, so the card recorder can write the
+        # per-second difference and a window's chunks/s comes from the same
+        # record as its busy share (app/rage/bench.py).
+        self._done: dict[str, list[int]] = {}
 
     def record_embed(self, collection: str, *, seconds: float, docs: int,
                      chunks: int, chars: int) -> None:
         with self._lock:
             self._embed.setdefault(collection, _Stream()).add(
                 seconds, {"docs": docs, "chunks": chunks, "chars": chars})
+            done = self._done.setdefault(collection, [0, 0])
+            done[0] += int(docs)
+            done[1] += int(chunks)
+
+    def done(self) -> dict[str, tuple[int, int]]:
+        """(documents, chunks) embedded since start, per collection."""
+        with self._lock:
+            return {name: (d[0], d[1]) for name, d in self._done.items()}
 
     def record_fetch(self, collection: str, *, seconds: float, bytes_moved: int) -> None:
         """Bytes that actually crossed the network. Adopted files are
@@ -125,6 +144,21 @@ class Recorder:
                 self._in_flight[collection] = n
             else:
                 self._in_flight.pop(collection, None)
+
+    def set_backlog(self, collection: str, waiting: bool) -> None:
+        with self._lock:
+            if waiting:
+                self._backlog.add(collection)
+            else:
+                self._backlog.discard(collection)
+
+    def feeders(self) -> dict[str, dict]:
+        """Each embedding collection's documents in flight and whether it
+        has work waiting — what the card recorder samples every second."""
+        with self._lock:
+            return {name: {"in_flight": self._in_flight.get(name, 0),
+                           "backlog": name in self._backlog}
+                    for name in set(self._in_flight) | self._backlog}
 
     def snapshot(self) -> dict:
         now = time.time()
@@ -150,6 +184,8 @@ class Recorder:
             self._embed.clear()
             self._fetch.clear()
             self._in_flight.clear()
+            self._backlog.clear()
+            self._done.clear()
 
 
 _recorder = Recorder()

@@ -18,6 +18,26 @@ language, in wikivec's own numbering, so every wiki of the collection
 coexists and a document the pre-embedded archive covers keeps the id its
 vectors are keyed by. A page read from a DUMP is numbered above the
 archive's whole range, which makes the layer a pure function of the id.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). Wikimedia publishes each wiki as XML dumps (plain and
+multistream), Cirrus search dumps, HTML dumps and the live API. Taken:
+
+  * the dated MULTISTREAM `pages-articles-multistream.xml.bz2` with its
+    index, and the run's `page_props.sql.gz` (parser 5: the QIDs) — the
+    wikitext the origin versions by run; the index makes the dump seekable
+    per page, so a record is re-derived from its one stream without
+    re-reading the dump. Cirrus and HTML dumps are pre-rendered and lossy
+    for our purposes; the API has no dated form a verifier can re-fetch;
+  * where the credited pre-embedded archive (wikivec's parquet, layer 1)
+    covers an article, its text is read from the archive instead, and
+    `extra.source` says per record which of the two it came from
+    (`"archive"` or `"dump"`; docs/notes/wikipedia-two-layers.md);
+  * figures: Commons' PNG rendition at a fixed width, not the `.svg` (08
+    §8.7 refuses SVG; the record's `origin` still locates the `.svg`).
+
+The full reasoning: docs/notes/pack-format.md, "Which origin form, and
+why".
 """
 import bz2
 import hashlib
@@ -29,6 +49,7 @@ from xml.etree import ElementTree as ET
 
 from ... import chunking
 from .. import cursor
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import archive, page_props, wikitext
@@ -304,6 +325,11 @@ class WikipediaSource:
     # The one source here that revises in place, indefinitely, and
     # the reason content-defined chunking exists in this codebase.
     mutability = Mutability.MUTABLE
+    #: app/backend.py: a page is a bz2 stream of the multistream dump or a row
+    #: range of the archive's shards; page_props is a SQL dump read from its pack
+    backend = (OriginForm("the pages-articles multistream dump", Template.MEMBER),
+               OriginForm("the page_props SQL dump", Template.CONTAINER_PACK, ("wikipedia-page-props",)),
+               OriginForm("the pre-embedded archive's Parquet shards", Template.MEMBER))
     protocol_version = PROTOCOL_VERSION
     #: 2 since 2026-09-12: promise 9. Version 1 published the prose and
     #: nothing else, so an article's categories, citations, infobox,
@@ -330,6 +356,9 @@ class WikipediaSource:
     #: sections do not move, so neither does a chunk (02 §2.4 A1d;
     #: docs/notes/wikipedia-qids.md).
     PARSER_VERSION = 5
+    #: 06 §6.2: the origin keeps its history — every page's earlier revisions stay fetchable by revision id —
+    #: so a superseded part version stays checkable and is kept (02 §2.3).
+    origin_versions = "history"
     #: 09 §9.5's `origin` is `<dump>#<start>::<end>`: the member is the
     #: stream's byte range, TWO fields (plugin_io.origin_locator). Without
     #: these the record carried the raw `::` locator, which the reparse
@@ -366,7 +395,8 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
-        dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
+        from .. import walk
+        dumps = walk.files(root, f"*{_DUMP_SUFFIX}")   # through links (walk.py)
         # THE PINNED SNAPSHOT ONLY. Dated dumps coexist in one corpus by
         # design (acquire/specs.py `_wiki_files`), and the node keeps the
         # legacy `latest/` beside them: two dumps of one wiki mint the same
@@ -622,6 +652,31 @@ class WikipediaSource:
             return f"{dump}|{start}", max(1, size)
         except (ValueError, IndexError):
             return None
+
+    def stale_unit(self, row, collection=None) -> str | None:
+        """A locator with no page_props segment for a page its run's
+        page_props HAS rows for: a locator from before parser 5, whose
+        record would lack the page's QID (München, 2026-10-31: the 10-28
+        archive-layer records). None when the segment is there, the page
+        has no rows, or the run's table is not on disk (discovery then
+        defers the language itself)."""
+        body, seg = props_segment(str(row["path"]))
+        if seg is not None:
+            return None
+        lang, page_id, _ = decode_native_id(int(row["native_id"]))
+        if archive.is_archive_locator(body):
+            pin = getattr(collection, "snapshot", None)
+            root = getattr(collection, "corpus_dir", None)
+            if not pin or root is None:
+                return None
+            w = f"{lang}wiki"
+            props = Path(root) / w / pin / f"{w}-{pin}{page_props.SUFFIX}"
+        else:
+            props = page_props.props_path_of(Path(split_locator(body)[0]))
+        if not props.is_file() or page_props.unit_of(props, page_id) is None:
+            return None
+        return (f"page {page_id} ({lang}) has rows in {props.name} that its locator does not "
+                f"name — a locator from before parser 5; a scan re-locates it")
 
     def fetch(self, ref: DocRef) -> RawDoc:
         """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`

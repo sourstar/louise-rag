@@ -1,5 +1,8 @@
 # The pack: how a collection is packaged, shared and checked
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` and `docs/09-formats.md` (the SHARD); `pack build` / `verify` are retired (`docs/07-commands.md` §7.6). Kept for the pack's on-disk details the plugins still read.
+
+
 *Design, 2026-08-26. Status: PARTLY BUILT the same day — the record
 shards, slicing, `pack build` / `verify`, the `packed` plugin, per-slice
 torrents, chunker layers and the local vector index exist (amendment 43;
@@ -207,10 +210,28 @@ scheme, not a convention:
 | Wikipedia (text) | `lang` / `pages` (page-id range) | `lang=de/pages=0-2M` | page ids are stable and monotonic in creation time — the honest proxy for "created before ~2010"; creation dates are not in the dumps |
 | wikivec (pre-embedded Wikipedia) | `lang` / `pages` | `lang=tr/pages=0-1M` | same; today's per-language torrents (5h) are the `lang` level alone |
 | Gutenberg | `lang` | `lang=it` | 70k books; language is the only split anyone wants |
+| Wikidata (from 2026-10-24) | `family` / `range` (id ÷ 10⁷) | `family=heritage/range=3` | what a person chooses — monuments, events, people — as a language is chosen in Wikipedia; the family from a map pinned at creation (below) |
 
 ```json
 "slicing": {"keys": ["year"], "year": {"field": "date", "bins": ["<1950", "5y<2000", "1y"]}}
 ```
+
+**Amended 2026-10-24 (operator: "Go with A"; docs/notes/wikidata-family-slices.md).**
+A mutable collection may slice by a value its plugin derives from a MAP
+pinned at the collection's creation — its sha256 in the Codex's slicing
+block (09 §9.3), its bytes the SHARD member `slicing/<sha256 hex>.json`
+(09 §9.4, §9.16). The map never changes for the collection's life, so a
+record moves between slices only when its own fields change — the change
+that re-issues it anyway; a new map is a new collection (a daughter, 02
+§2.7). First use: Wikidata's families — the class tree of the creation
+dump gives each class its family once (app/plugins/wikidata/families.py).
+A class created after the creation dump is placed by the current dump's
+own links (deterministic per dump, logged per pass): the one way a later
+edit can move a record that was not edited. Such a collection cuts its
+parts BY CONTENT (02 §2.2, 09 §9.3 `parts`), so its layout is a pure
+function of its records and its map: a new map (a family added) is a
+daughter that reuses every record and vector and comes out byte for byte
+as a collection created from scratch with that map.
 
 **Shard** — the unit inside a slice: ~7,000 chunks (≈ 1 GPU-hour, so
 that a shard is also one lease — amendment 37's unit; ~30,000 PubMed
@@ -457,10 +478,19 @@ verifier needs, so it is recorded here with its reason:
 
 | plugin | form taken | why, and what is left behind |
 |---|---|---|
-| gutenberg | the per-book **`.txt`** (`pg_text.scan_dir`), hashed as it is read | plain text is the form the chunker actually consumes; epub/mobi/html are re-renderings of it. A title published *solely* as epub/mobi/html is recorded `no txt file` — declared unindexable, never silently dropped. **What that costs, counted on the node 2026-09-11**: of 1,454 such titles, 255 do have an `.epub` (159 a `.mobi`, 8 an `.html`) and the remaining ~1,199 carry no text in any form — an `.rdf` and a cover `.jpg`, some only a converter log. So the rule forgoes 255 readable books out of 79,320, and the other 1,199 are unreadable however they are approached. Those 255 are not lost: the epub is the origin form of the Gutenberg-with-plates collection (decision 2026-09-08), which is where they belong, together with the plates that are only in the epub |
+| gutenberg | **since parser 7: the first readable epub (the illustrated edition first), else the `.txt`, else the catalogue entry alone** (`source.pick_form`, operator 2026-09-11), with `pg<id>.rdf` beside it in `origin_hash` (parser 9); `extra.form` names it per record. *Before parser 7, as follows:* the per-book **`.txt`** (`pg_text.scan_dir`), hashed as it is read | the plates are only in the epub, and the rule is one pure function of the book directory, so a verifier reaches the same form (the plugin's note, `app/plugins/gutenberg/source.py`). *Before parser 7:* plain text is the form the chunker actually consumes; epub/mobi/html are re-renderings of it. A title published *solely* as epub/mobi/html is recorded `no txt file` — declared unindexable, never silently dropped. **What that costs, counted on the node 2026-09-11**: of 1,454 such titles, 255 do have an `.epub` (159 a `.mobi`, 8 an `.html`) and the remaining ~1,199 carry no text in any form — an `.rdf` and a cover `.jpg`, some only a converter log. So the rule forgoes 255 readable books out of 79,320, and the other 1,199 are unreadable however they are approached. Those 255 are not lost: the epub is the origin form of the Gutenberg-with-plates collection (decision 2026-09-08), which is where they belong, together with the plates that are only in the epub |
 | pubmed | the **baseline `*.xml.gz`** containers + `updatefiles` deltas | the archival form the origin itself versions and checksums (`.md5` sidecars), and the only one carrying `DeleteCitation` tombstones. The E-utilities API returns the same records without the versioning |
 | wikipedia | the **multistream `pages-articles.xml.bz2`** + its index | the index makes the dump seekable per page, so a record can be re-derived without re-reading the dump. Cirrus/HTML dumps are pre-rendered and lossy for our purposes |
 | wikipedia — **figures** | Commons' **pre-rendered PNG rendition** at a fixed width, not the `.svg` | operator decision 2026-09-11. The dump carries `[[File:…]]` references, not bytes, so figures are a separate acquisition against Commons either way. 08 §8.7 refuses SVG — "an SVG is a document, not an image: it carries script, external references and its own fetches" — and that refusal was costed against epubs, where SVG is 0.34 % of images. On Wikipedia it is neither rare nor incidental: the diagrams, maps, charts, chemical structures and coats of arms are overwhelmingly SVG, which is the load-bearing share of an encyclopaedia's illustration. MediaWiki already rasterises every SVG and serves it, so the PNG rendition is the ORIGIN's own bytes fetched from the origin, not a local derivation — it stays inside "a figure travels as the origin's own bytes" (01, promise 1) without touching the closed type list. What is left behind is resolution independence; the record's `origin` still locates the `.svg`, so the original is always one fetch away. The width must be named in the acquisition spec and fixed, or two peers fetch different bytes for one figure |
+| normattiva | the **Akoma Ntoso** precompiled zips, **multivigente** (every version), **originale** for the repealed acts | the only form carrying structure and metadata together; the plugin's note, `app/plugins/normattiva/source.py` |
+| wikidata | the official **JSON entity dump** of the dated run, with its md5/sha1 sums | complete and checksummed; the Hugging Face corpus drops `snaktype`, statement ids, `datatype`, badges, `modified`, `lastrevid` (D1); the plugin's note, `app/plugins/wikidata/source.py` |
+| deposit | **the bytes as the client sent them**; a URL source's page as fetched | no other copy exists anywhere; the plugin's note, `app/plugins/deposit/source.py` |
+| embedded | the producer's **parquet shards** as published | the only rows its vectors attach to; the plugin's note, `app/plugins/embedded/source.py` |
+
+Each registered plugin records its choice in its own `source.py`, under
+"THE ORIGIN FORM, and why", beside the plugin as invariant 11 asks;
+`tests/test_invariant_11_origin_form.py` fails for a registered plugin
+without one.
 
 The rule for a new plugin: prefer the form the ORIGIN versions and
 checksums, at the lowest level of processing we can consume, because that

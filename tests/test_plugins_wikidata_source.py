@@ -84,6 +84,14 @@ def test_a_stopped_pass_resumes_at_the_chunk_without_parsing_what_it_has(tmp_pat
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        # the passes after the chunks (names, class tree, families) parse what
+        # they need from the pack's own lines: not the chunk pass counted here
+        monkeypatch.setattr(dump_mod.json, "loads", real)
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2)
     assert meta["complete"] and meta["chunks"] == 3 and meta["entities"] == 6
     assert calls["n"] == 4, "the two entities of the complete chunk were skipped, not parsed"
@@ -112,8 +120,9 @@ def _pack_bytes(dump: Path) -> dict:
     meta.pop("mtime_ns"), meta.pop("size")            # two dumps' own signatures
     con = sqlite3.connect(d / "labels.sqlite")
     labels = con.execute("SELECT id, lang, label FROM label ORDER BY id, lang").fetchall()
+    names = con.execute("SELECT id, lang, label FROM name ORDER BY id").fetchall()
     con.close()
-    return {"meta": meta, "labels": labels,
+    return {"meta": meta, "labels": labels, "names": names,
             "chunks": {p.name: p.read_bytes() for p in sorted(d.glob("*.parquet"))},
             "stray": sorted(p.name for p in d.glob("*.tmp"))}
 
@@ -127,10 +136,134 @@ def test_the_parallel_pass_writes_the_serial_pass_byte_for_byte(tmp_path, chunk)
     m2 = pack.build(parallel, languages=("en", "fr"), chunk=chunk, workers=3, log=said.append)
     assert m2["complete"] and m2["entities"] == m1["entities"] == 6 and m2["pruned"] == m1["pruned"] == 1
     a, b = _pack_bytes(serial), _pack_bytes(parallel)
-    assert a["meta"] == b["meta"] and a["labels"] == b["labels"]
+    assert a["meta"] == b["meta"] and a["labels"] == b["labels"] and a["names"] == b["names"]
     assert a["chunks"] == b["chunks"], "every chunk file the same bytes"
     assert b["stray"] == [], "no tmp file left"
-    assert "3 processes" in said[-1]
+    assert any("3 processes" in m for m in said), "the chunk pass's last line (the names follow it)"
+
+
+# ---- the node profile's cores (app/cpu_limit.py, operator 2026-10-27) ---------------------------
+
+def _profile(monkeypatch, *cores):
+    """node_profile.active scripted: the n-th look answers cores[n] (the last
+    for ever after), every look a fresh read, a pause looking every 5 ms."""
+    from app import cpu_limit, node_profile
+    from app.node_profile import Active, GpuLevel, Profile
+    looks = {"n": 0}
+
+    def active(now=None):
+        c = cores[min(looks["n"], len(cores) - 1)]
+        looks["n"] += 1
+        return Active(Profile("quiet" if c == 0 else "day", c, "full"), GpuLevel("full"), None, None)
+    monkeypatch.setattr(node_profile, "active", active)
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    monkeypatch.setattr(cpu_limit, "PAUSE_TICK_S", 0.005)
+    cpu_limit.reset()
+    return looks
+
+
+class _CountingPool:
+    """ProcessPoolExecutor's stand-in on threads (a monkeypatch cannot reach
+    a spawned child): counts the jobs running at once. The initializer runs
+    once in-process, except the children's nice."""
+    import threading as _t
+    peak = 0
+    #: a job waits (≤ 0.25 s) until this many run at once: a LOWER bound on
+    #: the jobs in flight then measures the pool, not whether the next
+    #: submission outran a 10 ms sleep on a loaded machine (the node,
+    #: 2026-11-01, the same pattern in the parse pool's test)
+    hold_until: int | None = None
+
+    def __init__(self, max_workers, mp_context=None, initializer=None, initargs=()):
+        from concurrent.futures import ThreadPoolExecutor
+        self._ex = ThreadPoolExecutor(max_workers=max_workers)
+        self._lock, self._now = self._t.Lock(), 0
+        if initializer is not None and initializer is not pack._child_nice:
+            initializer(*initargs)
+
+    def submit(self, fn, *args):
+        def run():
+            import time
+            with self._lock:
+                self._now += 1
+                type(self).peak = max(type(self).peak, self._now)
+            try:
+                if type(self).hold_until is not None:
+                    deadline = time.monotonic() + 0.25
+                    while type(self).peak < type(self).hold_until and time.monotonic() < deadline:
+                        time.sleep(0.001)
+                time.sleep(0.01)
+                return fn(*args)
+            finally:
+                with self._lock:
+                    self._now -= 1
+        return self._ex.submit(run)
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        self._ex.shutdown(wait=wait, cancel_futures=cancel_futures)
+
+
+def test_the_pack_pass_runs_no_more_than_the_profile_s_cores(tmp_path, monkeypatch):
+    """Four workers, a profile of one core: one slice, one chunk file at a
+    time, in the entity pass and in the passes over the chunk files; the
+    pack is the serial one."""
+    serial = a_dump(tmp_path / "serial")
+    limited = a_dump(tmp_path / "limited")
+    pack.build(serial, languages=("en", "fr"), chunk=2, workers=1)
+    monkeypatch.setattr(pack, "SUB", 1)
+    monkeypatch.setattr(pack, "ProcessPoolExecutor", _CountingPool)
+    _CountingPool.peak = 0
+    _profile(monkeypatch, 1)
+    assert pack.build(limited, languages=("en", "fr"), chunk=2, workers=4)["complete"]
+    assert _CountingPool.peak == 1
+    assert _pack_bytes(limited) == _pack_bytes(serial)
+    # unlimited, the same pool runs several at once (the measure measures)
+    again = a_dump(tmp_path / "again")
+    _CountingPool.peak = 0
+    _profile(monkeypatch, None)
+    monkeypatch.setattr(_CountingPool, "hold_until", 2)
+    pack.build(again, languages=("en", "fr"), chunk=2, workers=4)
+    assert _CountingPool.peak > 1
+
+
+def test_the_pack_pass_under_a_changing_profile_writes_the_serial_bytes(tmp_path, monkeypatch):
+    """Real children, the profile going 3 -> 0 (paused) -> 1 -> 2 through the
+    pass: every chunk file, label and name the serial pass's."""
+    serial = a_dump(tmp_path / "serial")
+    changing = a_dump(tmp_path / "changing")
+    pack.build(serial, languages=("en", "fr"), chunk=2, workers=1)
+    monkeypatch.setattr(pack, "SUB", 1)
+    looks = _profile(monkeypatch, 3, 3, 0, 0, 0, 0, 1, 1, 2)
+    said: list[str] = []
+    meta = pack.build(changing, languages=("en", "fr"), chunk=2, workers=3, log=said.append)
+    assert meta["complete"]
+    assert any("paused" in m for m in said) and any(": 1 core" in m for m in said), said
+    assert looks["n"] >= 9
+    assert _pack_bytes(changing) == _pack_bytes(serial)
+
+
+def test_a_stop_while_the_profile_pauses_the_pack_resumes_losing_nothing(tmp_path, monkeypatch):
+    serial = a_dump(tmp_path / "serial")
+    paused = a_dump(tmp_path / "paused")
+    pack.build(serial, languages=("en",), chunk=2, workers=1)
+    monkeypatch.setattr(pack, "SUB", 1)
+    _profile(monkeypatch, 2, 2, 2, 0)
+    import threading
+    stop = threading.Event()
+    real = pack.cpu_limit.wait_while_paused
+
+    def waiting(s=None, watch=None):
+        stop.set()                         # SIGTERM arrives during the pause
+        return real(s, watch)
+    monkeypatch.setattr(pack.cpu_limit, "wait_while_paused", waiting)
+    meta = pack.build(paused, languages=("en",), chunk=2, workers=2, stop=stop.is_set)
+    assert not meta["complete"] and 1 <= meta["chunks"] < 3, meta
+    assert not list(pack.pack_dir(paused).glob("*.tmp")), "no uncommitted file left"
+    monkeypatch.undo()
+    from app import cpu_limit
+    cpu_limit.reset()
+    assert pack.build(paused, languages=("en",), chunk=2, workers=2)["complete"]
+    assert _pack_bytes(paused) == _pack_bytes(serial)
 
 
 def test_a_stopped_parallel_pass_resumes_at_its_last_committed_chunk(tmp_path):
@@ -262,6 +395,12 @@ def test_a_pack_built_beside_the_dump_is_adopted_into_the_cache_and_resumes_ther
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        monkeypatch.setattr(dump_mod.json, "loads", real)     # the passes after the chunks: not counted
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2, workers=1, log=said.append)
     assert meta["complete"] and meta["chunks"] == 3
     assert calls["n"] == 4, "resumed after the adopted chunk: its two entities were not parsed again"
@@ -313,6 +452,27 @@ def test_the_pass_follows_the_parse_pools_size(monkeypatch):
     monkeypatch.setattr(pack, "_parallel_failed", True)
     monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
     assert pack.processes() == 1, "after a failed pool, this process goes serial"
+
+
+def test_the_scan_s_stop_reaches_the_pack_pass(tmp_path, monkeypatch):
+    """The pass discover runs is hours on the node: it ends at a chunk on the
+    scan's stop (SIGTERM, the node's mode), and so does a profile's pause in it."""
+    import threading
+    a_dump(tmp_path)
+    seen = {}
+
+    def build(dump, **kw):
+        seen["stop"] = kw.get("stop")
+        return {"complete": False}
+    monkeypatch.setattr(pack, "build", build)
+    stop = threading.Event()
+    state = DiscoverState(corpus_root=tmp_path, state_dir=tmp_path / "state", stop=stop)
+    (tmp_path / "state").mkdir()
+    refs = list(WikidataSource(languages=("en",)).discover(state))
+    assert refs and refs[0].scope == "container"
+    assert seen["stop"] is not None and seen["stop"]() is False
+    stop.set()
+    assert seen["stop"]() is True
 
 
 def test_discover_fetch_and_parse_over_the_pack(tmp_path):
@@ -375,3 +535,30 @@ def test_the_pinned_snapshot_alone_is_read_and_a_bad_dump_is_one_container_error
     (broken / "wikidata-20261020-all.json.bz2").write_bytes(b"not bz2 at all")
     refs = list(src.discover(DiscoverState(corpus_root=tmp_path, snapshot="20261020")))
     assert len(refs) == 1 and refs[0].scope == "container" and "not usable" in refs[0].error
+
+
+def test_parse_adds_a_history_section_after_the_language_s_text(tmp_path):
+    """Parser 2 (operator, 2026-10-24): what the best-rank filter drops, as a
+    section `en:history` after the English text, which stays byte for byte;
+    an entity whose filter drops nothing has no such section."""
+    extra = [b'{"type":"property","id":"P137","datatype":"wikibase-item","labels":{"en":{"language":"en",'
+             b'"value":"operator"}},"claims":{}}',
+             b'{"type":"property","id":"P582","datatype":"time","labels":{"en":{"language":"en",'
+             b'"value":"end time"},"fr":{"language":"fr","value":"date de fin"}},"claims":{}}',
+             b'{"type":"item","id":"Q2874","labels":{"en":{"language":"en","value":"Grand Lyon"}},"claims":{}}']
+    dump = a_dump(tmp_path, lines=entity_lines() + extra)
+    src = WikidataSource(languages=("en", "fr"))
+    (tmp_path / "state").mkdir()
+    refs = {r.native_id: r for r in src.discover(DiscoverState(corpus_root=tmp_path, state_dir=tmp_path / "state"))}
+    raw = src.fetch(refs["3331"])
+    doc = src.parse(raw)
+    assert [h for h, _ in doc.sections] == ["en", "en:history", "fr", "fr:history"]
+    labels, obj = pack.labels(dump), json.loads(raw.data)
+    assert doc.sections[0][1] == textify.entity_text(obj, "en", labels), "the English text as before"
+    assert doc.sections[1][1] == textify.history_text(obj, "en", labels)
+    assert doc.sections[1][1].endswith("Other statements include:\n- instance of: Q2354973\n"
+                                       "- operator: Grand Lyon (end time: 1 January 2015)")
+    assert doc.sections[3][1] == textify.history_text(obj, "fr", labels)
+    assert "Les autres déclarations incluent:\n" in doc.sections[3][1], "French: its own connective"
+    assert [h for h, _ in src.parse(src.fetch(refs["2711"])).sections] == ["en", "fr"], \
+        "nothing dropped by the rank filter: no history section"

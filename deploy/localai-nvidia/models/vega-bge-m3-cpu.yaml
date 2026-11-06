@@ -2,7 +2,7 @@
 # no layers, no op offload, and CUDA shown no device (a CUDA context alone
 # moves a few hundred MiB, which a CPU run must not; vega_wrapper.device_on_nvidia).
 name: vega-bge-m3-cpu
-backend: vega-llama-cpp
+backend: vega-louise-llama-cpp
 embeddings: true
 pinned: false
 context_size: 8192

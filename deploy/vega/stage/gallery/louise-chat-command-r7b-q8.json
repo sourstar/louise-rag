@@ -1,0 +1,60 @@
+{
+  "url": "github:mudler/LocalAI/gallery/virtual.yaml@master",
+  "name": "louise-chat-command-r7b-q8",
+  "files": [
+    {
+      "filename": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf",
+      "uri": "https://huggingface.co/bartowski/c4ai-command-r7b-12-2024-GGUF/resolve/bfc7a934c45cb839d84c8ca01d87f1cfa51aaa3f/c4ai-command-r7b-12-2024-Q8_0.gguf",
+      "sha256": "cd7281ec7974bb5810d8f6c922801d6fff3e8bd761073942757dcef990ca9b4d"
+    }
+  ],
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "draft_model": "",
+    "function": {
+      "automatic_tool_parsing_fallback": true,
+      "grammar": {
+        "disable": true
+      }
+    },
+    "gpu_layers": 999,
+    "known_usecases": [
+      "chat"
+    ],
+    "mmap": true,
+    "mmproj": "",
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf",
+      "batch": 2048,
+      "seed": 0,
+      "temperature": 0.3,
+      "top_p": 0.75,
+      "top_k": 0,
+      "min_p": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "repeat_penalty": 1,
+      "repeat_last_n": 64
+    },
+    "stopwords": [
+      "<|END_OF_TURN_TOKEN|>"
+    ],
+    "template": {
+      "use_tokenizer_template": true
+    },
+    "threads": 6
+  }
+}

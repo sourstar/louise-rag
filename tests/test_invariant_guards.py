@@ -15,6 +15,9 @@ the moment it drifts.
   one maintenance regime, for every collection.
 - Logging: every stdout line names its collection (db.ManifestConnection),
   because seven collections share one worker stdout.
+
+Invariants 5 (bandwidth), 6 (storage), 8 (secrets, by behaviour) and 11
+(the origin-form note) have their own files: tests/test_invariant_<n>_*.py.
 """
 import re
 from pathlib import Path
@@ -40,7 +43,9 @@ def test_app_never_imports_a_gpu_stack():
 # embeddings, maintained (prune, compact, refresh) by vector_index, and
 # checked against the Codex by spaces. A plugin or stage that opened Lance
 # itself would be a second maintenance regime nobody schedules.
-_LANCE_LAYER = {"app/embeddings.py", "app/spaces.py", "app/vector_index.py"}
+_LANCE_LAYER = {"app/embeddings.py", "app/spaces.py", "app/vector_index.py",
+                # the table rewritten with stable row ids (2026-10-31): the same layer
+                "app/vector_rewrite.py"}
 _LANCE_TOUCH = re.compile(
     r"^\s*(?:import|from)\s+(?:lancedb|lance)\b|lancedb\.connect\(|\.to_lance\(",
     re.MULTILINE)

@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -36,6 +37,13 @@ PARTS = "part-uids"
 
 #: (collection dir) -> (fingerprint, Possession) for this process
 _memo: dict[str, tuple[str, "Possession"]] = {}
+#: (collection dir) -> the lock its cold build is made under: ONE thread
+#: builds, the others wait for its memo. Without it each of the embed
+#: stage's threads built the whole index at once after a restart — four
+#: copies of pubmed's, the worker at 46 GB and OOM-killed (München's py-spy,
+#: 2026-10-30: all four threads in `index`)
+_build_locks: dict[str, Any] = {}
+_build_locks_lock = __import__("threading").Lock()
 #: (collection dir, fingerprint, snapshot) -> covered chunks per part, the last one
 _covered_memo: dict[tuple[str, str, str], dict[str, int]] = {}
 #: (collection dir) -> index rebuilds in this process
@@ -107,6 +115,22 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     got = _memo.get(key)
     if got and got[0] == fp:
         return got[1]
+    with _build_locks_lock:
+        # re-entrant: a build that asks the index again on its own thread
+        # (a hook, a nested caller) builds again, as before, rather than wait
+        # on itself; other threads still wait for the one build
+        lock = _build_locks.setdefault(key, __import__("threading").RLock())
+    with lock:
+        got = _memo.get(key)            # built by the thread this one waited for
+        if got and got[0] == fp:
+            return got[1]
+        return _index_cold(root, name, codex, con, pre, own, fp, key)
+
+
+def _index_cold(root: Path, name: str, codex, con, pre, own, fp: str, key: str) -> "Possession":
+    """`index`'s build, under its collection's lock: from the on-disk cache
+    when it matches the fingerprint, else from the bundles' files."""
+    from app.share import contribute
     path = _share_dir(root, name) / INDEX
     try:
         cached = json.loads(path.read_bytes())
@@ -143,9 +167,17 @@ def index(root: Path, name: str, codex, con) -> "Possession":
             bundles.setdefault(uid, {}).setdefault(h, []).append(bundle_id)
     result = Possession({u: sorted(hs) for u, hs in held.items()}, bundles, producers, fileless, shards)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
-    os.replace(tmp, path)
+    # a temp file of its OWN, as `part_records`' (f386934): the worker's round
+    # and a CLI `hold vectors show` rebuild the index at once when a bundle
+    # lands, and one shared `.json.tmp` let the second rename find nothing
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     _memo[key] = (fp, result)
     # every rebuild said, with its cost: a fetch beat that accepts bundles
     # one by one rebuilds once per bundle (review, 2026-10-22), and this
@@ -168,10 +200,69 @@ def part_records(root: Path, name: str, snapshot, shard) -> list[tuple[str, str]
     got = [(r["uid"], r.get("content_hash")) for r in
            landing.records_for(Path(root), name, snapshot, f"{shard.slice}/{shard.n:05d}", None)]
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_bytes(json.dumps(got).encode())
-    os.replace(tmp, p)
+    # a temp file of its OWN (tempfile.mkstemp): the worker's round and a CLI
+    # `hold vectors show` fill the same missing entry at once, and one shared
+    # `.json.tmp` let the second rename find nothing — the exception sent
+    # `counting.view_kwargs` to its row-count fallback, 114,154 of 10.47 M
+    # covered for one call (Perugia, 2026-10-25)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(json.dumps(got).encode())
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return got
+
+
+def explain_part(root: Path, name: str, codex, con, part: str, snapshot=None) -> dict[str, Any]:
+    """Why a part counts what it counts — read-only, for a person: every
+    accepted coverage row that could hold its records (this collection's
+    and its predecessors', whatever the shard key, as `index` reads them),
+    with the test each one passes or fails:
+    - `counted`: its shard id carries a prefix `index` reads (`prefixes`);
+    - `files`: its `possession.json` is under `bundle_dir`;
+    - `uids`, `same_hash`: of this part's records, how many uids the bundle
+      holds, and how many with the record's CURRENT content hash.
+    Then the part's own figures: records, chunks, and what `covered` gives."""
+    from app.hold import seed
+    from app.share import contribute
+    snapshot = snapshot or seed.latest_snapshot(Path(root), name)
+    sl, n = part.rsplit("/", 1)
+    shard = next(s for s in snapshot.shards if s.slice == sl and s.n == int(n))
+    recs = part_records(root, name, snapshot, shard)
+    want = dict(recs)
+    pre = prefixes(root, name, codex)
+    cids = {p.split("/", 1)[0] for p in pre}
+    rows = []
+    for bundle_id, sh, producer, accepted_at in con.execute(
+            "SELECT bundle_id, shard, producer, accepted_at FROM coverage WHERE accepted_at IS NOT NULL"):
+        if sh.split("/", 1)[0] not in cids:
+            continue
+        sid = "/".join(sh.rsplit("/", 2)[1:])
+        try:
+            got = json.loads((contribute.bundle_dir(root, name, codex, sid, bundle_id)
+                              / "possession.json").read_bytes())
+            files = True
+        except (OSError, ValueError):
+            got, files = {}, False
+        uids = [u for u in want if u in got]
+        if not uids and (files or sid != part):
+            continue                    # holds nothing of this part
+        rows.append({"bundle_id": bundle_id, "shard": sh, "producer": producer, "accepted_at": accepted_at,
+                     "counted": any(sh.startswith(p) for p in pre), "files": files, "uids": len(uids),
+                     "same_hash": sum(1 for u in uids if got[u] == want[u])})
+    ids = [u for u, _ in recs]
+    chunks = 0
+    for i in range(0, len(ids), 900):
+        chunk_ids = ids[i:i + 900]
+        chunks += con.execute(f"SELECT COALESCE(SUM(chunks), 0) FROM documents WHERE uid IN "
+                              f"({','.join('?' * len(chunk_ids))})", chunk_ids).fetchone()[0]
+    from app.share import coverage as cov
+    return {"part": part, "records": len(recs), "chunks": int(chunks), "shard_chunks": int(shard.chunks),
+            "covered": covered(root, name, codex, con, snapshot).get(cov.shard_id(codex, part)),
+            "prefixes": pre, "bundles": sorted(rows, key=lambda r: (r["shard"], r["bundle_id"]))}
 
 
 def covered_uids(held: dict[str, list[str]], records: Iterable[tuple[str, str]]) -> set[str]:
@@ -307,6 +398,65 @@ def record_hashes(root: Path, name: str) -> dict[str, str]:
     _hash_memo.clear()
     _hash_memo[key] = out
     return out
+
+#: the latest snapshot, by its file and mtime: `record_hash_of` runs per
+#: document and a snapshot of wikipedia-v8 lists 26,551 parts
+_snap_memo: dict[str, tuple] = {}
+#: (uid, hash) lists of the last parts read, by part root (documents come in
+#: part order, so a part is read once for its documents)
+_part_memo: dict[str, dict[str, str]] = {}
+_PART_KEEP = 4
+
+
+def current_snapshot(root: Path, name: str):
+    from app.hold import collection as col
+    d = col.shard_dir_of(Path(root), name) / "snapshots"
+    try:
+        newest = max((p for p in d.glob("*.json") if not p.name.endswith(".sig.json")),
+                     key=lambda p: p.stem)
+        stamp = newest.stat().st_mtime_ns
+    except (OSError, ValueError):
+        return None
+    got = _snap_memo.get(str(d))
+    if got is not None and got[0] == (str(newest), stamp):
+        return got[1]
+    from app.hold import seed
+    try:
+        snap = seed.latest_snapshot(Path(root), name)
+    except Exception:   # noqa: BLE001 — no SHARD here: nothing is known
+        return None
+    _snap_memo[str(d)] = ((str(newest), stamp), snap)
+    return snap
+
+
+def record_hash_of(root: Path, name: str, held: "Possession", uid: str) -> str | None:
+    """The record's content hash in the current snapshot, read from the
+    parts the bundles holding it name — one part's (uid, hash) list, never
+    the whole collection's (`record_hashes`: 40 M entries on pubmed, built
+    by each of the embed stage's threads at once; the worker grew to 46 GB
+    and was OOM-killed, München 2026-10-30). None where none of those parts
+    still holds it: the record is then embedded, as on any doubt."""
+    wanted = {held.shards.get(b) for bs in (held.bundles.get(uid) or {}).values() for b in bs}
+    wanted.discard(None)
+    if not wanted:
+        return None
+    snap = current_snapshot(root, name)
+    if snap is None:
+        return None
+    for s in snap.shards:
+        if f"{s.slice}/{s.n:05d}" not in wanted:
+            continue
+        key = str(s.root)
+        got = _part_memo.get(key)
+        if got is None:
+            got = {u: h for u, h in part_records(root, name, snap, s) if h}
+            while len(_part_memo) >= _PART_KEEP:
+                _part_memo.pop(next(iter(_part_memo)))
+            _part_memo[key] = got
+        if uid in got:
+            return got[uid]
+    return None
+
 
 #: the vectors of the last bundles read, by bundle id (documents come part by
 #: part, so a part's bundle is read once for its documents, not once each)

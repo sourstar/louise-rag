@@ -1,9 +1,12 @@
+# temperature 0.2: what Ask sent it on every request until 2026-11-03, now in its own
+# file — Ask sends none and every chat model runs its file's sampling — so the live
+# model runs as it was measured.
 {
-  "backend": "vega-llama-cpp-gen",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
   "env": {
-    "GGML_SYCL_ENABLE_OPT": "0",
     "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
   },
   "flash_attention": "on",
@@ -21,6 +24,7 @@
     "model": "weights/chat/qwen3-8b.gguf",
     "repeat_penalty": 1,
     "seed": 0,
+    "temperature": 0.2,
     "top_k": 20,
     "top_p": 0.95
   },

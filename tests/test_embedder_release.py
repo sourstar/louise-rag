@@ -249,3 +249,33 @@ def test_the_lease_queries_walk_the_primary_key(isolated_config):
         plan = " ".join(str(r[-1]) for r in con.execute(
             "EXPLAIN QUERY PLAN INSERT OR REPLACE INTO encoder_leases VALUES (?,?,?,?)", ("s", "m", "h", 1.0)))
         assert "TEMP B-TREE" not in plan
+
+
+def test_a_command_holds_its_encoder_for_the_whole_block(isolated_config, monkeypatch):
+    """München, 2026-11-01: `hold embedder cpu-reference` held no lease, and the
+    sweep unloaded its CPU twin every minute under a call of hours. The lease
+    is written before the block, renewed beside it by a thread (one call may
+    outlive a lease), and released when the block ends — by an error too."""
+    from app import encoder_use, node_state
+    recipe = collections_mod.EmbedRecipe(url=URL + "/v1/embeddings", api="vega",
+                                         model="vega-4b-cpu", dtype="f16", ctx=512)
+    renewed = []
+    real = node_state.lease_encoder
+    monkeypatch.setattr(node_state, "lease_encoder",
+                        lambda *a, **k: renewed.append(time.monotonic()) or real(*a, **k))
+    with encoder_use.held(recipe, holder="hold embedder cpu-reference pid 9", every_s=0.05):
+        assert node_state.leased_encoders() == {(URL, "vega-4b-cpu")}
+        time.sleep(0.3)                          # one long call
+        assert len(renewed) >= 3, "renewed while the call runs"
+    assert node_state.leased_encoders() == set()
+    with pytest.raises(RuntimeError):
+        with encoder_use.held(recipe, holder="hold embedder cpu-reference pid 9", every_s=0.05):
+            raise RuntimeError("the twin failed")
+    assert node_state.leased_encoders() == set(), "released however the block ends"
+
+
+def test_the_embedder_commands_take_the_lease():
+    import inspect
+    from app import louise
+    for fn in (louise.cmd_embedder_cpu_reference, louise._embedder_check_runs, louise._gate):
+        assert "encoder_use.held(" in inspect.getsource(fn), fn.__name__

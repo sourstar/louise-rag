@@ -292,7 +292,8 @@ def test_the_command_creates_it_and_show_prints_what_it_annotates(tmp_path, monk
     claims.write_bytes(claims_file(a_claim()))
     base = ["hold", "collection", "create", "annotations", "--root", str(tmp_path)]
     assert louise.main(base + ["--annotates", "pubmed", "--name", "same"]) == 2
-    assert "takes --from-snapshot, --claims" in capsys.readouterr().err
+    # the targets and their snapshots may be the claims' (RULE 2, 2026-10-25); the file may not
+    assert "takes --claims" in capsys.readouterr().err
     assert louise.main(base + ["--annotates", "pubmed", "--from-snapshot", TARGET_SNAPSHOT,
                                "--claims", str(claims), "--name", "same", "--snapshot", "2026-09",
                                "--platform-image", PLATFORM, "--title", "Same works"]) == 0
@@ -319,7 +320,7 @@ def test_the_command_creates_it_and_show_prints_what_it_annotates(tmp_path, monk
 
 
 def test_a_dry_run_checks_the_claims_against_the_target_and_writes_nothing(tmp_path, monkeypatch, capsys):
-    """Operator, 2026-10-19 (the gutenberg graph collection): thousands of
+    """Operator, 2026-10-19 (the wiki-gutenberg collection): thousands of
     claims about a live collection are measured before they are written."""
     from app import louise
     target, hashes = a_target(tmp_path)
@@ -370,7 +371,7 @@ def test_create_promotes_across_filesystems_when_the_shard_lives_elsewhere(tmp_p
 
 
 # ---- the graph amendment (operator, 2026-10-20): three claim types, several targets ----------------
-# docs/notes/gutenberg-graph-amendments.md A-K1–A-K4; 02 §2.10, 09 §9.3, §9.5, §9.14
+# docs/notes/wiki-gutenberg-amendments.md A-K1–A-K4; 02 §2.10, 09 §9.3, §9.5, §9.14
 
 from app import layers as layers_mod                      # noqa: E402
 from app.hold.records import order_key                     # noqa: E402

@@ -4,7 +4,7 @@ TWO PROTOCOLS, ONE CLIENT (`config.CHAT_API`):
 - `ollama` — `/api/chat`, newline-delimited JSON, `think`, `keep_alive` and a
   per-request `num_ctx`. What the node has always run.
 - `openai` — `/v1/chat/completions`, server-sent events. What llama-server
-  serves, and so what RAGE serves (docs/notes/rage.md §4): the same Qwen3
+  serves, and so what the model pool serves (model-pool.md@c572c3b §4): the same Qwen3
   file Ollama holds, run by the node's model container. Thinking is turned
   off through the model's own chat template (`enable_thinking`, which the
   node's file knows — checked 2026-09-19); the context size is the
@@ -19,8 +19,9 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from . import config, dispatch, model_load
-from .dispatch import Level
+from . import config, model_load
+from .rage import dispatch
+from .rage.dispatch import Level
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.S)
 
@@ -28,19 +29,38 @@ def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
 
-def _request(messages: list[dict], *, stream: bool, temperature: float,
-             max_tokens: int | None, num_ctx: int) -> tuple[str, dict]:
-    """(url, body) in the protocol CHAT_URL speaks."""
+#: the sampling values a caller may send with a request (`sampling`); both
+#: dialects name them alike (LocalAI's request fields, Ollama's options)
+SAMPLING_KEYS = frozenset({"temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                           "frequency_penalty", "repeat_penalty", "seed"})
+
+
+def _request(messages: list[dict], *, stream: bool, temperature: float | None,
+             max_tokens: int | None, num_ctx: int,
+             sampling: dict | None = None) -> tuple[str, dict]:
+    """(url, body) in the protocol CHAT_URL speaks. `temperature` None sends
+    none: the model's own file decides, with the rest of its sampling.
+    `sampling` overrides the file's values for this request only (the chat
+    benchmark's arms, tools/measure/chat_eval.py), `temperature` included;
+    a key outside SAMPLING_KEYS is refused, never sent to be ignored."""
+    unknown = set(sampling or ()) - SAMPLING_KEYS
+    if unknown:
+        raise ValueError(f"sampling: not a sampling value: {', '.join(sorted(unknown))}")
     if config.CHAT_API == "openai":
         body: dict = {"model": config.CHAT_MODEL, "messages": messages, "stream": stream,
-                      "temperature": temperature,
                       "chat_template_kwargs": {"enable_thinking": False}}
+        if temperature is not None:
+            body["temperature"] = temperature
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        body.update(sampling or {})
         return f"{config.CHAT_URL}/v1/chat/completions", body
-    options: dict = {"temperature": temperature, "num_ctx": num_ctx}
+    options: dict = {"num_ctx": num_ctx}
+    if temperature is not None:
+        options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = max_tokens
+    options.update(sampling or {})
     return f"{config.CHAT_URL}/api/chat", {
         "model": config.CHAT_MODEL, "messages": messages, "stream": stream,
         "think": False, "keep_alive": config.LLM_KEEP_ALIVE, "options": options}
@@ -58,12 +78,12 @@ def warm(level: Level = Level.CHAT) -> None:
     url, body = _request([{"role": "user", "content": "OK"}], stream=False,
                          temperature=0.0, max_tokens=1, num_ctx=0)
 
-    def send(bound_s: float) -> None:
+    def send(bound_s: float):
         with dispatch.interactive(level):
-            httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
+            return httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
 
     model_load.ensure_loaded(config.CHAT_URL, config.CHAT_MODEL, send,
-                             caller=level.name.lower())
+                             caller=level.name.lower(), max_age_s=0.0)
 
 
 @dataclass(frozen=True)
@@ -187,16 +207,24 @@ def _arguments(raw) -> dict:
     return {}
 
 
-def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float = 0.2,
+def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float | None = None,
                max_tokens: int = 1500, num_ctx: int = 16384, *,
-               level: Level = Level.CHAT) -> tuple[str, list[ToolCall], dict]:
+               level: Level = Level.CHAT,
+               sampling: dict | None = None) -> tuple[str, list[ToolCall], dict]:
     """One round with function tools declared (`ask chat`, 05 §5.4):
     `(content, calls, assistant_message)` — the assistant message as the
     protocol wants it appended before the tool messages. `tools` None
-    declares none, and the model must answer."""
+    declares none, and the model must answer.
+
+    NO TEMPERATURE OF ITS OWN (2026-11-03): each chat model runs its
+    maker's sampling, from its own model file. This sent 0.2 to every
+    model; Qwen3.6-35B-A3B's pilot looped ("Rouge-Profond ? Non, …" to the
+    token bound) at that near-greedy setting, which Qwen's card warns
+    against, and the cards say 0.7. A caller that wants one passes it;
+    `sampling` sets any of SAMPLING_KEYS for this request (`_request`)."""
     warm(level)
     url, body = _request(messages, stream=False, temperature=temperature,
-                         max_tokens=max_tokens, num_ctx=num_ctx)
+                         max_tokens=max_tokens, num_ctx=num_ctx, sampling=sampling)
     if tools:
         body["tools"] = tools
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
@@ -441,6 +469,11 @@ LANGUAGE_NAMES = {
     "es": "Spanish", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
     "ru": "Russian", "ja": "Japanese", "zh": "Chinese", "tr": "Turkish",
     "fa": "Persian",
+    # every language app/query_language.py can guess, so Ask's loop names
+    # the reader's language rather than its code (2026-11-03)
+    "da": "Danish", "eo": "Esperanto", "fi": "Finnish", "hu": "Hungarian",
+    "la": "Latin", "no": "Norwegian", "ro": "Romanian", "sv": "Swedish",
+    "tl": "Tagalog", "el": "Greek", "ar": "Arabic", "he": "Hebrew", "ko": "Korean",
 }
 
 

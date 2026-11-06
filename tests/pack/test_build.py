@@ -1,7 +1,7 @@
 """`pack build`: a collection's documents become sliced record shards + a
 manifest — resumably, for gutenberg, pubmed and a synthesized wikipedia
 dump. (Reading a pack back as a collection, the `packed` plugin, is boxed
-in attic/ with its round-trip checks, 2026-09-14.)"""
+in attic/ (removed 2026-11-01) with its round-trip checks, 2026-09-14.)"""
 import bz2
 import threading
 from pathlib import Path
@@ -139,14 +139,16 @@ def test_build_is_resumable_and_idempotent(isolated_config, tmp_path, corpus_dir
         return info
     monkeypatch.setattr(records, "write_shard", stop_after_first)
     r1 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, stop=stop, log=lambda *_: None)
-    assert r1.interrupted and written == ["00001.jsonl.zst"]
+    # the parts handed to the writer threads before the stop was seen are
+    # finished and recorded (2026-10-30), never left half-written
+    assert r1.interrupted and "00001.jsonl.zst" in written
+    assert r1.shards == len(written), "every part written is recorded"
     assert not (pack_dir / manifest_mod.FILENAME).exists()
     monkeypatch.setattr(records, "write_shard", real)
     said: list[str] = []
     r2 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *a: said.append(" ".join(map(str, a))))
     assert not r2.interrupted and r2.shards == 3 and r2.records == 3
-    assert any(m.endswith("lang=en: 2 shard(s)") for m in said), said   # the shards written, not the next index
-    assert any(m.endswith("lang=fr: 1 shard(s)") for m in said), said
+    assert any(m.endswith("lang=fr: 1 shard(s)") for m in said), said   # the shards written, not the next index
     first = (pack_dir / "records/lang=en/00001.jsonl.zst").stat().st_mtime_ns
     r3 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
     assert r3.shards == 3
@@ -199,6 +201,96 @@ def test_the_plan_walk_is_a_rowid_scan_and_pubmed_hints_read_no_abstracts(isolat
         assert pubmed_pack.record_dates(container)[index] == real(container, index)["date"]
         assert hints[r["uid"]].startswith("year=")
     con.close()
+
+
+def _planned(c, pack_dir, *, stop=None):
+    con_src, con_build = db.connect(c), pack_build._build_db(pack_dir)
+    try:
+        pack_build.plan(c, con_src, con_build, log=lambda *_: None, stop=stop)
+        return (sorted(tuple(r) for r in con_build.execute("SELECT uid, slice, ord FROM plan")),
+                sorted(tuple(r) for r in con_build.execute("SELECT uid, reason FROM skipped")),
+                pack_build._meta(con_build, "plan_done"))
+    finally:
+        con_src.close()
+        con_build.close()
+
+
+def test_the_plan_is_walked_in_rowid_windows_by_the_children(isolated_config, tmp_path, monkeypatch):
+    """wikidata's plan walked 75.9 M rows on one core, 17–19 min (München,
+    2026-10-30; multicore-audit.md item 11). The walk is cut into rowid
+    windows the parse pool's children read and slice, committed in rowid
+    order: the plan is the serial one, a stop between windows resumes."""
+    import threading
+    from app import config, parallel
+    c = _discovered(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    serial = _planned(c, tmp_path / "serial")
+    assert serial[0] and serial[2] == "1"
+    plan = " ".join(r[3] for r in db.connect(c).execute("EXPLAIN QUERY PLAN " + pack_build.PLAN_WINDOW_SQL, (-1, 9)))
+    assert "TEMP B-TREE" not in plan and "USING INTEGER PRIMARY KEY" in plan, plan
+    pools = []
+
+    class Spy(parallel.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    monkeypatch.setattr(pack_build, "PLAN_WINDOW", max(1, len(serial[0]) // 5))
+    assert _planned(c, tmp_path / "pooled") == serial and pools == [2]
+    # stopped after its first window, then resumed: the same plan
+    stop = threading.Event()
+    real = pack_build._set_meta
+
+    def stop_after_first(con, key, value):
+        real(con, key, value)
+        if key == "plan_rowid":
+            stop.set()
+    monkeypatch.setattr(pack_build, "_set_meta", stop_after_first)
+    first = _planned(c, tmp_path / "resumed", stop=stop)
+    assert first[2] is None and 0 < len(first[0]) < len(serial[0])
+    assert not _has_plan_index(tmp_path / "resumed"), "the read order is built once the plan is done"
+    monkeypatch.setattr(pack_build, "_set_meta", real)
+    assert _planned(c, tmp_path / "resumed") == serial
+    assert _has_plan_index(tmp_path / "resumed")
+
+
+def _has_plan_index(pack_dir) -> bool:
+    con = pack_build._build_db(pack_dir)
+    try:
+        return con.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_plan_slice'"
+                           ).fetchone() is not None
+    finally:
+        con.close()
+
+
+def test_the_plan_s_read_order_is_indexed_once_the_plan_is_done(isolated_config, tmp_path, monkeypatch):
+    """Bulk load, then index: the plan's commit is the build DB's single
+    writer, and a second growing B-tree per row was half its cost
+    (multicore-audit.md item 11). A build DB made before — the index there
+    from its creation, the plan not done — has it dropped and made again at
+    the end; the build's read of a slice is indexed, never sorted."""
+    c = _discovered(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    pack_dir = tmp_path / "old"
+    con = pack_build._build_db(pack_dir)
+    con.execute("CREATE INDEX idx_plan_slice ON plan(slice, ord, uid)")     # the layout before
+    con.close()
+    calls = []
+    real = pack_build._set_meta
+
+    def watched(con, key, value):
+        if key == "plan_rowid":
+            calls.append(con.execute("SELECT 1 FROM sqlite_master WHERE name='idx_plan_slice'").fetchone())
+        real(con, key, value)
+    monkeypatch.setattr(pack_build, "_set_meta", watched)
+    planned = _planned(c, pack_dir)
+    assert planned[2] == "1" and calls and all(x is None for x in calls), "no index while the rows went in"
+    con = pack_build._build_db(pack_dir)
+    try:
+        q = " ".join(r[3] for r in con.execute(
+            "EXPLAIN QUERY PLAN SELECT uid, ord FROM plan WHERE slice=? ORDER BY ord, uid", ("x",)))
+    finally:
+        con.close()
+    assert "idx_plan_slice" in q and "TEMP B-TREE" not in q, q
 
 
 def test_slicing_rules():
@@ -331,3 +423,24 @@ def test_an_out_of_order_native_id_aborts_the_build(isolated_config, tmp_path,
         pack_build.build(origin, tmp_path / "packs" / "g-bad", snapshot="2026-08-26",
                          records_per_shard=2, sign=False, log=lambda *_: None)
     assert calls["n"] >= 2
+
+
+def test_parts_are_written_off_the_main_thread_and_recorded_in_order(isolated_config, tmp_path, corpus_dir,
+                                                                    monkeypatch):
+    """München's samples of wikipedia-v8's rebuild (2026-10-30): compression
+    and the pieces root in the build's own thread were most of its time,
+    while the pool's children waited for it. The parts are written by the
+    writer threads; the build database records them in their order."""
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    threads: list[str] = []
+    real = records.write_shard
+
+    def spy(path, recs, **kw):
+        threads.append(threading.current_thread().name)
+        return real(path, recs, **kw)
+    monkeypatch.setattr(records, "write_shard", spy)
+    pack_dir = tmp_path / "packs" / "g"
+    r = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
+    assert r.shards == 3 and threads and all(t.startswith("part-writer") for t in threads), threads
+    m = manifest_mod.load(pack_dir)
+    assert [s["ids"][0] for s in m["shards"]] == ["gutenberg:10001", "gutenberg:10002", "gutenberg:10003"]

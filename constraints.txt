@@ -36,12 +36,16 @@ lance-namespace==0.8.6
 lance-namespace-urllib3-client==0.8.6
 lancedb==0.40.0
 libtorrent==2.1.1
+# not on PyPI: the wheel the image builds from native/louise_cdc (Dockerfile,
+# stage `cdc-build`); its version here is what the install checks
+louise-cdc==0.1.0
 lxml==6.1.3
 MarkupSafe==3.0.4
 multidict==7.1.0
 mwparserfromhell==0.7.2
 numpy==2.5.4
 opentelemetry-api==1.45.1
+orjson==3.13.0
 oscrypto==1.3.0
 packaging==26.3
 pluggy==1.7.0

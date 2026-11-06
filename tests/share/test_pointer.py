@@ -112,7 +112,13 @@ def test_the_well_known_path_when_the_dht_gives_nothing(node):  # noqa: F811
     got = pointer.current(codex, node_con=node_con, session=FakeSession(), client=client, now=1.0, log=said.append)
     assert got["seq"] == 1 and client.urls == [pointer.well_known_url(codex)] and "well-known" in said[0]
     assert pointer.get_well_known(codex, client=FakeClient(404, b"")) is None
-    assert pointer.get_well_known(codex, client=FakeClient(200, b"<html>")) is None
+    drawn = []
+    real_draw, pointer._draw = pointer._draw, drawn.append
+    try:
+        assert pointer.get_well_known(codex, client=FakeClient(200, b"<html>")) is None
+    finally:
+        pointer._draw = real_draw
+    assert drawn == [len(b"<html>")], "invariant 5: the pointer's bytes are drawn, even when refused"
     forged = env.sign(env.POINTER, dict(doc["body"], key=env.key_text(OTHER.verify_key)), OTHER)
     assert pointer.get_well_known(codex, client=FakeClient(200, json.dumps(forged).encode())) is None
     assert pointer.current(codex, node_con=sqlite3.connect(":memory:"), session=None,

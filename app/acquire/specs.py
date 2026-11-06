@@ -170,10 +170,12 @@ def wikipedia_snapshots(wiki: str = "enwiki", timeout: float = 30.0) -> tuple[st
     """
     import httpx
 
+    from . import budget
     url = f"https://dumps.wikimedia.org/{wiki}/"
     headers = {"User-Agent": _WIKI_USER_AGENT}
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         response = client.get(url, headers=headers)
+        budget.acquire_bytes(len(response.content))      # invariant 5: a listing moves bytes
         response.raise_for_status()
     found = {m for m in re.findall(r'href="(\d{8})/"', response.text)
              if _SNAPSHOT_RE.match(m)}
@@ -183,7 +185,7 @@ def wikipedia_snapshots(wiki: str = "enwiki", timeout: float = 30.0) -> tuple[st
 # Wikimedia returns 403 to generic library user agents (learned the hard
 # way against the dumps host); the listing endpoint is under the same
 # policy as the files.
-_WIKI_USER_AGENT = ("louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
+_WIKI_USER_AGENT = ("louise-rag/0.1 (+https://github.com/sourstar/project-louise) "
                     "httpx")
 
 
@@ -215,6 +217,9 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
         "all": Filter(),
     },
     profile_mode="additive",
+    # a language's dump holds every `lang=<code>/pages=…` slice of it: the
+    # slices the origin delivers whole (07 §7.3 `records fetch --slice`)
+    slice_profiles={f"lang={lang}": lang for lang in _WIKI_DUMP_BYTES},
     estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"] + _WIKI_PROPS_BYTES["tr"],
                      **{lang: n + _WIKI_PROPS_BYTES[lang] for lang, n in _WIKI_DUMP_BYTES.items()},
                      "all": sum(_WIKI_DUMP_BYTES.values()) + sum(_WIKI_PROPS_BYTES.values())},
@@ -259,6 +264,7 @@ EMBEDDED_SPEC = AcquisitionSpec(
     # perfectly coherent corpus. Growing adds a language rather than
     # replacing one.
     profile_mode="additive",
+    slice_profiles={f"lang={lang}": lang for lang in _EMBEDDED_LANG_BYTES},
     estimated_bytes={
         "demo": _EMBEDDED_LANG_BYTES["tr"],
         **_EMBEDDED_LANG_BYTES,
@@ -396,6 +402,8 @@ NORMATTIVA_SPEC = AcquisitionSpec(
         "demo": "the constitutional laws, every version (Leggi costituzionali)",
         "starter": "constitutional laws, codes and consolidated texts, every version",
         "full": "every precompiled collection, every version; the repealed acts in original",
+        "archive": "the whole body of state law: the 23 collections and every act's yearly "
+                   "export (the normattiva-archive collection's)",
     },
     license_class=LicenseClass.YELLOW,          # CC BY 4.0, after an NC window (TERMS.txt)
     terms_text_path=Path(__file__).parent.parent / "plugins" / "normattiva" / "TERMS.txt",
@@ -409,6 +417,21 @@ NORMATTIVA_SPEC = AcquisitionSpec(
 _WIKIDATA_DUMP_BYTES = 103_409_622_204
 _WIKIDATA_CHECKSUM_BYTES = 401 + 449
 _WIKIDATA_DIR = "wikidatawiki/entities"
+#: the families of the map a collection is created on (app/plugins/wikidata/
+#: families.py FAMILIES, lexemes excepted: they join later, option 3); the
+#: glosses are what the Library shows beside each
+_WIKIDATA_FAMILIES = ("person", "work", "place", "organization", "event", "heritage", "built",
+                      "scholarly", "property", "taxon", "astronomy", "molecular", "internal",
+                      "other")
+_WIKIDATA_FAMILY_LABELS = {
+    "person": "people", "work": "creative and scholarly works", "place": "places",
+    "organization": "organizations", "event": "events", "heritage": "heritage sites",
+    "built": "buildings and structures", "scholarly": "scholarly articles",
+    "property": "Wikidata's properties", "taxon": "living things (taxa)",
+    "astronomy": "astronomical objects", "molecular": "genes, proteins, chemicals",
+    "internal": "Wikimedia pages (categories, templates, lists)",
+    "other": "everything no family claims",
+}
 
 
 def _wikidata_files(snapshot: str) -> tuple[RemoteFile, ...]:
@@ -431,14 +454,18 @@ def wikidata_snapshots(timeout: float = 30.0, *, probe: int = 6) -> tuple[str, .
     newest dump — each of the newest `probe` directories is listed and kept
     only where `wikidata-<date>-all.json.bz2` is among its files."""
     import httpx
+
+    from . import budget
     headers = {"User-Agent": _WIKI_USER_AGENT}
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         r = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/", headers=headers)
+        budget.acquire_bytes(len(r.content))             # invariant 5: a listing moves bytes
         r.raise_for_status()
         dates = sorted({m for m in re.findall(r'href="(\d{8})/"', r.text) if _SNAPSHOT_RE.match(m)}, reverse=True)
         out = []
         for date in dates[:probe]:
             listing = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/{date}/", headers=headers)
+            budget.acquire_bytes(len(listing.content))
             if listing.status_code != 200:
                 continue
             if f"wikidata-{date}-all.json.bz2" in listing.text:
@@ -464,8 +491,18 @@ WIKIDATA_SPEC = AcquisitionSpec(
     delta=DeltaSpec(mode="dated-dumps"),
     snapshot_files=_wikidata_files,
     snapshot_index=wikidata_snapshots,
-    profiles={"all": Filter()},
+    # A FAMILY IS A PROFILE (operator, 2026-10-31: "As for other collections
+    # the grow profile should drive what's fetched and processed"). Each
+    # fetches the one dump — every family is in it — and what differs is
+    # what the node PROCESSES: the collection file's slices narrow in_scope
+    # (app/slice_scope.py). Additive, as Wikipedia's languages: the Library
+    # grows a collection by a family. `all` first: it is the everything
+    # profile (`everything_profile` takes the first unfiltered one).
+    profiles={"all": Filter(), **{f: Filter() for f in _WIKIDATA_FAMILIES}},
     all_profile="all",
+    profile_mode="additive",
+    slice_profiles={f"family={f}": f for f in _WIKIDATA_FAMILIES},
+    profile_labels=_WIKIDATA_FAMILY_LABELS,
     estimated_bytes={"all": _WIKIDATA_DUMP_BYTES + _WIKIDATA_CHECKSUM_BYTES},
     license_class=LicenseClass.GREEN,            # CC0: no terms to acknowledge
 )

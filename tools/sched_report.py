@@ -9,6 +9,9 @@ measurement, and each one missed what the next had to fix:
     python -m app.louise dev schedule-report --rates --seconds 120  documents/s per stage
     python -m app.louise dev schedule-report --pool                 parse pool health
     python -m app.louise dev schedule-report --shares               fair-share accounting
+    python -m app.louise dev schedule-report --gpu --minutes 15     card busy, gaps, who held it
+    python -m app.louise dev schedule-report --bench wikipedia --since 22:32 --until 22:47
+                                                                    one collection's BEFORE/AFTER row
     python -m app.louise dev schedule-report --all                  all of the above
 
 Run it INSIDE the worker container (it needs the manifests and the app):
@@ -21,6 +24,7 @@ import time
 from pathlib import Path
 
 from app import collections as c_mod, config, db, parallel, worker
+from app.rage import bench as rage_bench, card_record
 from app.bundles import genesis
 
 BAD_PLAN = ("SCAN documents", "TEMP B-TREE", "LIST SUBQUERY", "CORRELATED")
@@ -92,7 +96,8 @@ def queries(names) -> bool:
              (1_000_000, 1_999_999)),
             ("archive pending-in-range", genesis.pending_in_range_sql(con),
              (1_000_000, 1_999_999)),
-            ("local-archive candidates page", genesis._CANDIDATES_PAGE_SQL, (-1, 2048)),
+            ("local-archive seed window", genesis._CANDIDATES_PAGE_SQL,
+             (0, genesis._SEED_WINDOW)),
         ]
         # the encoder's backfill with the archive's range held back — the
         # worker's own predicate, ONE window from the cursor's cold start
@@ -249,6 +254,81 @@ def shares(names, limit: int = 12) -> None:
               " disables the rotation entirely.")
 
 
+def gpu(minutes: int, card: str | None = None) -> None:
+    """The card, minute by minute, from the worker's record
+    (app/rage/card_record.py): its mean busy, the seconds a query held the claim,
+    the seconds with work waiting and of those the GAPS (card idle) and the
+    LOST card time (Σ 1 − busy), and each collection's request-seconds held
+    on the encoder gates. The targets are docs/notes/gpu-saturation-plan.md's:
+    busy ≥ 90 % for one collection alone, gaps under 1 s a minute."""
+    since = time.time() - minutes * 60
+    rows = list(card_record.read(since))
+    print(f"=== the card over the last {minutes} min ({len(rows)} s recorded, "
+          f"{card_record.directory()}):")
+    if not rows:
+        print("  nothing recorded — the worker records only with GPU_PROBE_URL set "
+              "and a probe answering GET /busy")
+        return
+
+    def line(label: str, w) -> str:
+        busy = "   —  " if w.busy is None else f"{w.busy:6.1%}"
+        held = ", ".join(f"{p} {s:.0f}" for p, s in sorted(w.served.items(), key=lambda x: -x[1]))
+        return (f"  {label}  busy {busy}  query {w.query:3d}s  waiting {w.waiting:3d}s  "
+                f"gaps {w.gaps:3d}s  lost {w.lost:5.1f}s  held: {held or '—'}")
+    for w in card_record.summarize(rows, card=card):
+        print(line(time.strftime("%H:%M", time.gmtime(w.start)) + "Z", w))
+    total = card_record.summarize(rows, minute=False, card=card)[0]
+    print(line("all   ", total))
+    per_min = 60.0 / total.seconds if total.seconds else 0.0
+    print(f"  gaps {total.gaps * per_min:.1f} s/min, lost {total.lost * per_min:.1f} s/min "
+          f"(target: gaps under 1 s/min; busy ≥ 90 % for a collection alone)")
+
+
+def parse_when(text: str, *, now: float | None = None) -> float:
+    """A window's edge: seconds since the epoch, an ISO 8601 time (with its
+    zone, else local), or HH:MM[:SS] today in the node's local time — the
+    time the scheduling log writes."""
+    import datetime as dt
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    if len(text) <= 8 and text.count(":") in (1, 2):
+        parts = [int(x) for x in text.split(":")]
+        base = dt.datetime.fromtimestamp(time.time() if now is None else now)
+        t = base.replace(hour=parts[0], minute=parts[1],
+                         second=parts[2] if len(parts) == 3 else 0, microsecond=0)
+        return t.timestamp()
+    return dt.datetime.fromisoformat(text).timestamp()
+
+
+def bench(collection: str, since: float, until: float, *, card: str | None = None,
+          as_json: bool = False) -> None:
+    """One collection's row for a window (app/rage/bench.py), and the RAGE
+    settings command a row measured alone can be recorded with."""
+    import json
+    from app import embeddings
+    r = rage_bench.row(collection, since, until, card=card)
+    col = c_mod.by_name(collection)
+    settings = None
+    if col is not None:
+        try:
+            recipe = c_mod.recipe_for(col)
+            settings = {"batch": embeddings.batch_size(recipe),
+                        "concurrency": int(recipe.concurrency or 1)}
+        except Exception:   # noqa: BLE001 — a row stands without its settings
+            settings = None
+    if as_json:
+        print(json.dumps({**r.to_dict(), "settings_now": settings}))
+        return
+    print(rage_bench.text(r))
+    if settings is not None:
+        print(f"  RAGE settings now: batch {settings['batch']}, concurrency "
+              f"{settings['concurrency']} (what the window ran with if nothing changed since)")
+        cmd = rage_bench.record_command(r, **settings)
+        print(f"  record it: {cmd}" if cmd else f"  not a setting's measurement: {rage_bench.why_not_recorded(r)}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -258,13 +338,22 @@ def main(argv=None) -> int:
     ap.add_argument("--pool", action="store_true", help="parse pool health")
     ap.add_argument("--shares", action="store_true",
                     help="what each collection got from each resource")
+    ap.add_argument("--gpu", action="store_true",
+                    help="the card: busy, gaps and who held it, per minute")
+    ap.add_argument("--minutes", type=int, default=15, help="the --gpu window")
+    ap.add_argument("--card", help="the --gpu card's PCI address (default: the busiest)")
     ap.add_argument("--all", action="store_true",
-                    help="queries + shares + rates + pool")
+                    help="queries + shares + rates + pool + gpu")
     ap.add_argument("--seconds", type=int, default=120, help="rates sampling window")
+    ap.add_argument("--bench", metavar="COLLECTION",
+                    help="one collection's row for a window: busy, chunks/s, lost, gaps, alone")
+    ap.add_argument("--since", help="the --bench window's start: HH:MM[:SS] local, ISO, or epoch")
+    ap.add_argument("--until", help="its end (default: now)")
+    ap.add_argument("--json", action="store_true", help="--bench as one JSON line")
     ap.add_argument("collections", nargs="*")
     args = ap.parse_args(argv)
     if not any((args.queries, args.phases, args.rates, args.pool, args.shares,
-                args.all)):
+                args.gpu, args.all, args.bench)):
         ap.print_help()
         return 2
     ok = True
@@ -278,6 +367,12 @@ def main(argv=None) -> int:
         rates(args.collections, args.seconds)
     if args.pool or args.all:
         pool_health()
+    if args.gpu or args.all:
+        gpu(args.minutes, args.card)
+    if args.bench:
+        until = parse_when(args.until) if args.until else time.time()
+        since = parse_when(args.since) if args.since else until - args.minutes * 60
+        bench(args.bench, since, until, card=args.card, as_json=args.json)
     return 0 if ok else 1
 
 

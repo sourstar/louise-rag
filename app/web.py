@@ -21,6 +21,8 @@ them (pause/resume, per-collection reset, rescan) stay frictionless
 one-click calls with no CLI-equivalent string in their modal, rather than
 fabricating one.
 """
+import asyncio
+import contextlib
 import json
 import re
 from collections import OrderedDict
@@ -44,8 +46,12 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import (auth, cancel, collections as collections_mod, config, db, discovery, gpu, llm,
-                node_state, platform_config, query_service, reader, retrieval, spaces)
+                node_state, platform_config, query_service, reader, relay, retrieval, spaces)
 from . import translate as mt
+from . import collection_file
+# the collection file's one writer, moved to app/collection_file.py (2026-10-25);
+# the names stay importable from here
+from .collection_file import _codex_id, _write_collection_toml  # noqa: F401
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import claim
@@ -94,7 +100,7 @@ TEMPLATES.env.globals["asset_v"] = _asset_version()
 # does not do, whoever builds the context.
 TEMPLATES.env.globals.update(mode_labels=node_state.MODE_LABELS,
                              mode_says=node_state.MODE_SAYS,
-                             mode_runs=node_state.runs)
+                             mode_runs=node_state.mode_runs)
 # Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
 # half the world — an operator read "+377,217/h" as 377.217 docs/h and
 # computed an 11-year ETA from a 4-day one. Dots as thousands separators,
@@ -153,6 +159,11 @@ def _human_eta(seconds: float | None) -> str | None:
     if days < 400:
         return f"~{days:.0f}d"
     return f"~{days / 365:.0f}y"
+
+
+# the same coarse duration in the Library's confirmations ("reprocess
+# lexical index…" quotes how long redoing the index takes at the rate measured)
+TEMPLATES.env.filters["eta"] = _human_eta
 
 ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
@@ -333,6 +344,24 @@ def _remember(lang: str, text: str, value: str) -> None:
     if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
         _translation_cache.clear()
     _translation_cache[(lang, text)] = value
+
+
+def _log_translation(lang: str, items: int, got: int, cached: int, missed: int, secs: float) -> None:
+    """One log line per stream request, so what the page did with a
+    translation can be read back from the web log (2026-10-28: the answer
+    stayed untranslated and nothing recorded whether it was asked for,
+    translated or missed). Through the default collection's manifest, as
+    the query log is; never fatal."""
+    try:
+        con = db.connect()
+        try:
+            db.log_event(con, "info", "translate",
+                         f"stream into {lang}: {items} items — {got} translated ({cached} cached), "
+                         f"{missed} missed, {secs:.1f} s")
+        finally:
+            con.close()
+    except Exception:   # noqa: BLE001 — a log line never fails the page
+        pass
 
 
 def _mt_items(lang: str, items: list[tuple[str, str, str]]
@@ -541,13 +570,15 @@ def ask_translate_stream(body: TranslateBody):
         if not lang or lang == "original":
             yield line({"done": True, "failed": False, "missed": []})
             return
-        got = 0
+        t0 = time.monotonic()
+        got = cached = 0
         missed: list[str] = []
         pending: list[tuple[str, str, str]] = []
         for cid, text, src in items:
             hit = _translation_cache.get((lang, text))
             if hit is not None:
                 got += 1
+                cached += 1
                 yield line({"id": cid, "text": hit})
             else:
                 pending.append((cid, text, src))
@@ -612,6 +643,7 @@ def ask_translate_stream(body: TranslateBody):
             else:
                 missed.append(cid)
                 yield line({"id": cid, "missed": True})
+        _log_translation(lang, len(items), got, cached, len(missed), time.monotonic() - t0)
         yield line({"done": True, "failed": got == 0 and bool(missed), "missed": missed})
 
     return StreamingResponse(gen(), media_type="application/x-ndjson",
@@ -727,6 +759,153 @@ async def ask_query(request: Request, body: AskQueryBody):
     resp = TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
     resp.headers["X-Louise-Search"] = keep_search(body.query, result)
     return resp
+
+
+# ---- the relay: the page's questions as jobs (operator, 2026-10-28) ----------
+#
+# "Prepare a web proxy so that the web gui session is not reset by the
+# browser dropping a query. Also if the query is stuck or dropped I should
+# see a notification in the gui." The page starts a job here and listens to
+# it as Server-Sent Events; a connection the browser drops is picked up
+# again where it stopped (the page's `?after=`, or `Last-Event-ID`), a reload finds the job again, and
+# a job that is stuck or dropped says so (app/relay.py). /ask/query and
+# /v1/chat/completions stay as they are for every other client.
+
+class RelayBody(BaseModel):
+    kind: str = Field(pattern="^(search|answer)$")
+    search: AskQueryBody | None = None
+    answer: dict | None = None          # /v1/chat/completions' body (api.ChatBody)
+    replaces: list[str] = []            # this page's earlier jobs, cancelled first
+
+
+def _relay_owner(request: Request) -> str:
+    v = getattr(request.state, "viewer", None)
+    return f"{v.role}:{v.name}" if v is not None else "nobody"
+
+
+def _relay_search(job: relay.Job, body: AskQueryBody) -> None:
+    result = _ask_result(body)
+    html = TEMPLATES.env.get_template("_ask_results.html").render(result=result)
+    job.emit("result", html=html, search_id=keep_search(body.query, result),
+             hits=len(result.get("hits") or []))
+
+
+def _relay_answer(job: relay.Job, chat) -> None:
+    """The answer as /v1/chat/completions writes it (`api.answer_parts`), its
+    words relayed as `delta` events. Each word is progress; a keepalive is
+    not (a model that writes nothing for STUCK_S is stuck)."""
+    from . import api
+    user = [m for m in chat.messages if m.get("role") == "user"]
+    if not user:
+        raise ValueError("no user message")
+    query = api._text_of(user[-1].get("content", ""))
+    t0 = time.time()
+    kept = kept_search(chat.search_id, query)
+    if kept is not None:
+        result = {**kept, "timings": {"total": 0.0, "search": "reused"}}
+    else:
+        result = api._run_search(
+            api.collections_for_model(chat.model, chat.collections), query, chat.limit, "hybrid", True,
+            verify=chat.verify, rerank_depth=chat.rerank_depth, all_languages=chat.all_languages,
+            **({"show_in": chat.answer_lang} if chat.answer_lang else {}),
+            **({"annotations": chat.annotations} if chat.annotations is not None else {}))
+    job.touch("answer: waiting for the model")
+    with contextlib.closing(api.answer_parts(chat, query, result, t0)) as parts:
+        for kind, value in parts:
+            job.token.check()               # cancelled: closing() stops the model writing
+            if kind == "delta":
+                job.touch("answer")
+                job.emit("delta", text=value)
+            elif kind == "cut":
+                job.emit("delta", text=f"\n[answer cut: {value}]")
+                job.emit("cut", why=value)
+
+
+@ask_router.post("/ask/relay")
+def relay_start(request: Request, body: RelayBody):
+    """Start the page's search or answer as a job; `{"id"}` to listen to."""
+    owner = _relay_owner(request)
+    if body.kind == "search":
+        if body.search is None:
+            raise HTTPException(422, "a search job needs `search`")
+        q = body.search
+        job = relay.start("search", owner, lambda j: _relay_search(j, q), label=q.query,
+                          replaces=body.replaces)
+    else:
+        from .api import ChatBody
+        try:
+            chat = ChatBody(**{**(body.answer or {}), "stream": True})
+        except Exception as e:   # noqa: BLE001 — pydantic's message, to the page
+            raise HTTPException(422, f"an answer job needs /v1/chat/completions' body: {e}")
+        job = relay.start("answer", owner, lambda j: _relay_answer(j, chat),
+                          label=str((chat.messages or [{}])[-1].get("content", ""))[:80],
+                          replaces=body.replaces)
+    return {"id": job.id}
+
+
+def _relay_job(request: Request, job_id: str) -> relay.Job:
+    job = relay.get(job_id, _relay_owner(request))
+    if job is None:
+        raise HTTPException(404, "the node does not hold this question: it restarted, or the "
+                                 f"question ended more than {relay.KEEP_S / 60:.0f} minutes ago")
+    return job
+
+
+@ask_router.get("/ask/relay/{job_id}")
+def relay_status(request: Request, job_id: str):
+    return _relay_job(request, job_id).status()
+
+
+@ask_router.delete("/ask/relay/{job_id}")
+def relay_cancel(request: Request, job_id: str):
+    _relay_job(request, job_id)
+    return {"cancelled": relay.cancel_job(job_id, _relay_owner(request), "cancelled by the reader")}
+
+
+def _sse(seq: int | None, kind: str, data: dict) -> str:
+    return ((f"id: {seq}\n" if seq is not None else "") + f"event: {kind}\n"
+            + "data: " + json.dumps(data, ensure_ascii=False, default=str) + "\n\n")
+
+
+#: how often the events stream looks at its job, and sends a comment when
+#: it has had nothing to say, so nothing on the way thinks it idle
+RELAY_POLL_S = 0.25
+RELAY_KEEPALIVE_S = 5.0
+
+
+@ask_router.get("/ask/relay/{job_id}/events")
+async def relay_events(request: Request, job_id: str, after: int = 0):
+    """The job's events from the one after `Last-Event-ID` (the browser's
+    reconnect) or `after`. First a `status` without an id — where the job
+    stands now, never replayed — then every event with its number; the
+    stream ends with the job's `end`. The job keeps running when this
+    connection goes; it is cancelled only when nobody has listened for
+    relay.GRACE_S."""
+    job = _relay_job(request, job_id)
+    last = request.headers.get("last-event-id", "")
+    start_at = int(last) if last.strip().isdigit() else max(0, after)
+
+    async def gen():
+        seq, quiet = start_at, 0.0
+        job.attach()
+        try:
+            yield "retry: 2000\n\n" + _sse(None, "status", job.status())
+            while True:
+                for ev in job.since(seq):
+                    yield _sse(ev.seq, ev.kind, ev.data)
+                    seq, quiet = ev.seq, 0.0
+                if job.state != relay.RUNNING and seq >= job.last_seq:
+                    return
+                await asyncio.sleep(RELAY_POLL_S)
+                quiet += RELAY_POLL_S
+                if quiet >= RELAY_KEEPALIVE_S:
+                    yield ": keepalive\n\n"
+                    quiet = 0.0
+        finally:
+            job.detach()
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ONE QUESTION, ONE SEARCH (München, 2026-10-22, measured on the node: the
@@ -926,9 +1105,12 @@ def login_page(request: Request):
 
 @ask_router.post("/admin/login")
 def login(body: LoginBody, response: Response):
-    if not config.ADMIN_TOKEN or not secrets.compare_digest(body.token, config.ADMIN_TOKEN):
+    # stripped, as /login strips and as the token FILE is read (config): a
+    # space or newline a copy picked up refused the right token (2026-10-30)
+    token = body.token.strip()
+    if not config.ADMIN_TOKEN or not secrets.compare_digest(token, config.ADMIN_TOKEN):
         raise HTTPException(401, "invalid token")
-    response.set_cookie("admin_token", body.token, httponly=True, samesite="lax",
+    response.set_cookie("admin_token", token, httponly=True, samesite="lax",
                          max_age=60 * 60 * 24 * 30)
     return {"ok": True}
 
@@ -1015,6 +1197,23 @@ def connect_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "connect.html", {
         "active": "connect", "base": _public_base(request), "viewer": v, "token": token,
         "models": model_ids(), "users_exist": users.any_active()})
+
+
+@ask_router.get("/connect/louise-skill.md")
+def connect_skill(request: Request):
+    """The skill (app/ask/skill.py), this node's address in it, as a file:
+    Claude Code's ~/.claude/skills/louise/SKILL.md, or any agent's prompt."""
+    from .ask import skill
+    return Response(skill.text(_public_base(request)), media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="SKILL.md"'})
+
+
+@ask_router.get("/connect/louise-skill.zip")
+def connect_skill_zip(request: Request):
+    """The skill as the Claude apps take it: louise/SKILL.md in a zip."""
+    from .ask import skill
+    return Response(skill.zip_bytes(_public_base(request)), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="louise-skill.zip"'})
 
 
 def model_ids() -> list[str]:
@@ -1123,9 +1322,19 @@ def _profile_order(plugin: str) -> list[dict]:
         # declare none and read exactly as before.
         gloss = spec.profile_labels.get(n)
         label = f"{n} — {gloss}" if gloss else n
-        out.append({"name": n,
-                    "label": f"{label} (~{_human_bytes(spec.estimated_bytes.get(n))})"})
+        out.append({"name": n, "label": _sized(label, spec.estimated_bytes.get(n))})
     return out
+
+
+def _sized(label: str, n: int | None, *, files: int | None = None) -> str:
+    """A grow option's label with its size where one is known; nothing
+    after the name where none applies (operator, 2026-11-01: wikidata's
+    families come from one dump and have no size of their own — a "?"
+    there reads as a fault)."""
+    bits = [f"~{_human_bytes(n)}"] if n else []
+    if files is not None:
+        bits.append(f"{files} files")
+    return f"{label} ({', '.join(bits)})" if bits else label
 
 
 def _offered_by_torrent_collection(collection: collections_mod.Collection) -> list[dict] | None:
@@ -1153,8 +1362,53 @@ def _offered_by_torrent_collection(collection: collections_mod.Collection) -> li
             gloss = spec.profile_labels.get(s["name"]) if spec else None
             label = f"{s['name']} — {gloss}" if gloss else s["name"]
             offered.append({"name": s["name"],
-                            "label": f"{label} (~{_human_bytes(s['bytes'])}, {s['files']} files)"})
+                            "label": _sized(label, s["bytes"], files=s["files"])})
     return offered if found else None
+
+
+def _embed_select_view(collection) -> dict | None:
+    """The card's "Embed which" control, where the plugin can group its
+    documents (`embed_select.SMART_PLUGINS`); None elsewhere."""
+    from . import embed_select
+    if getattr(collection, "plugin", None) not in embed_select.SMART_PLUGINS:
+        return None
+    return {"policy": embed_select.policy(collection),
+            "stated": getattr(collection, "embed_select", None)}
+
+
+def _profile_label(collection: collections_mod.Collection) -> str:
+    """The card's profile: the file's, else the profiles of the slices it
+    holds, by name (operator, 2026-11-02: wikipedia read "(hand-populated)"
+    while holding eleven languages); "(hand-populated)" only where the file
+    names neither."""
+    return collection.profile or ",".join(_profile_held(collection)) or "(hand-populated)"
+
+
+def _profile_held(collection: collections_mod.Collection) -> list[str]:
+    """The profiles a collection holds, as the additive grow dialog marks
+    them (operator, 2026-11-01: wikipedia's held languages showed no check).
+    A file holding `slices = "all"` holds every slice — each profile, and
+    the everything one, which checks the dialog's "everything" box; a list
+    of slices holds the profiles their delivered slices name; an older
+    `profile` its parts."""
+    from .acquire.specs import ACQUIRE_REGISTRY as specs
+    spec = specs.get(collection.plugin)
+    parts = acquire_spec.profile_parts(collection.profile or "")
+    if spec is None:
+        return parts
+    everything = acquire_spec.everything_profile(spec)
+    slices = getattr(collection, "slices", None)
+    if slices == "all" or (everything is not None and collection.profile == everything):
+        return list(spec.profiles)
+    if slices:
+        held = []
+        for s in slices:
+            key = acquire_spec.delivered_slice(spec, s)
+            name = spec.slice_profiles.get(key) if key else None
+            if name and name not in held:
+                held.append(name)
+        return held or parts
+    return parts
 
 
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
@@ -1189,8 +1443,20 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     order = _profile_order(collection.plugin)
     current = collection.profile
     names = [o["name"] for o in order]
+    start = names.index(current) if current in names else 0
+    end = len(order)
+    # NOTHING BEYOND "ALL" (2026-11-01, operator: "the entries are weird").
+    # A spec that declares what `slices = "all"` fetches (`all_profile`)
+    # declares the collection's whole; a larger profile is another
+    # collection's — Normattiva's `archive` is `normattiva-archive`'s, and
+    # growing the live collection into it would start exporting every act
+    # against the operator's decision of 2026-10-13. A collection already
+    # beyond it (that daughter) keeps its own as the re-sync.
+    whole = spec.all_profile
+    if whole in names and names.index(whole) >= start:
+        end = names.index(whole) + 1
+    order = order[start:end]
     if current in names:
-        order = order[names.index(current):]
         order[0] = {**order[0], "label": order[0]["label"] + " — current, re-sync"}
     return order
 
@@ -1221,6 +1487,9 @@ _COUNTS_TTL_S = 120.0
 #: control key holding the last counts, so a restarted process can show
 #: what was true instead of zeros while it re-scans (see _stored_counts)
 _COUNTS_CONTROL_KEY = "document_counts"
+#: every count a Library card reads (`_document_counts_query` writes them)
+_COUNT_KEYS = ("total", "in_scope", "rdf_done", "fts_done", "embed_done", "declined", "blocked",
+               "unindexable", "embed_ready", "chunks_pending", "docs_unindexed")
 #: A refresh may not cost more than this share of the time between
 #: refreshes. THE INSTRUMENT MUST NOT COST WHAT IT MEASURES: the scan is a
 #: full pass over `documents`, so its cost grows with the corpus while a
@@ -1262,6 +1531,10 @@ _COUNTS_MAX_AGE_S = 1800.0
 # how long a COLD page view waits for the first scan before rendering
 # "counting…" instead — small manifests answer well inside this
 _COUNTS_COLD_WAIT_S = 2.0
+#: when `invalidate_counts` last dropped a collection's counts (or all):
+#: stored counts older than that are not served in place of the cold wait
+_counts_invalidated_at: dict[str, float] = {}
+_counts_all_invalidated_at = 0.0
 
 
 def _archive_spans(collection) -> list[tuple[int, int]]:
@@ -1308,7 +1581,7 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
     stage_error = ("(" + " OR ".join(
         f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed")) + ")")
     pending = (f"in_scope=1 AND fts_done=1 AND error IS NULL AND retries<:max "
-               f"AND (embed_done=0 OR embed_version<:ver)")
+               f"AND (embed_done=0 OR (embed_done=1 AND embed_version<:ver))")
     params: dict = {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}
     archive_sums = ""
     if spans:
@@ -1365,6 +1638,9 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
           SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
           SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
+          -- not embedded here by choice (07 §7.8 `embed_slices`): out of the
+          -- dense stage's target, never counted as embedded
+          SUM(CASE WHEN in_scope=1 AND embed_done=-1 THEN 1 ELSE 0 END) declined,
           SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
                    THEN 1 ELSE 0 END) blocked,
           -- PER STAGE, because "blocked" is collection-wide and says
@@ -1435,7 +1711,21 @@ def _document_counts(collection) -> tuple[dict | None, float]:
         if now - at > _counts_ttl_for(name) or _counted_over_another_range(collection, counts):
             _refresh_counts_async(collection)
         return counts, now - at
+    # THE STORED COUNTS AT ONCE where the manifest has them (below): a
+    # restart's first views waited the cold wait for every collection whose
+    # scan had not landed — 2 s each, on every view, 4.6-13 s for the
+    # first five minutes after a deploy (München, 2026-10-27). The wait is
+    # for a collection that never stored any.
+    # Not after an action (`invalidate_counts`): stored counts older than it
+    # are what the operator just changed.
+    # Read BEFORE the refresh starts, so a refresh that lands at once is
+    # the synchronous answer, never mistaken for a stored one.
+    stored = _stored_counts(collection)
     _refresh_counts_async(collection)
+    if stored is not None and stored[1] > max(_counts_invalidated_at.get(name, 0.0),
+                                              _counts_all_invalidated_at):
+        counts, at = stored
+        return counts, max(0.0, time.time() - at)
     deadline = time.time() + _COUNTS_COLD_WAIT_S
     while time.time() < deadline:
         with _counts_lock:
@@ -1479,7 +1769,11 @@ def _stored_counts(collection) -> tuple[dict, float] | None:
         return None        # simply no answer, never a broken page
     if not isinstance(counts, dict) or not at:
         return None
-    return {k: int(v or 0) for k, v in counts.items()}, at
+    # A ROW WRITTEN BY AN OLDER RELEASE lacks the counts added since: 0 for
+    # those until the next refresh writes them. Read as it was, the
+    # `declined` count #137 added broke every Library card whose stored row
+    # predated the deploy (KeyError, the page down; 2026-10-31)
+    return {**{k: 0 for k in _COUNT_KEYS}, **{k: int(v or 0) for k, v in counts.items()}}, at
 
 
 def _persist_counts(collection, counts: dict) -> bool:
@@ -1585,15 +1879,17 @@ def invalidate_counts(collection=None) -> None:
     And bumps the generation, so a refresh already in flight — counted
     before the action — is discarded when it lands instead of standing in
     for the fresh count the view straight after the action starts."""
-    global _counts_epoch
+    global _counts_epoch, _counts_all_invalidated_at
     with _counts_lock:
         if collection is None:
             _counts_cache.clear()
             _counts_epoch += 1
+            _counts_all_invalidated_at = time.time()
         else:
             key = _counts_key(collection)
             _counts_cache.pop(key, None)
             _counts_gen[key] = _counts_gen.get(key, 0) + 1
+            _counts_invalidated_at[key] = time.time()
 
 
 def _worker_stats() -> dict:
@@ -1630,6 +1926,66 @@ def _copy_state(collection) -> dict:
                 "vector_leg": True, "vector_leg_reason": ""}
 
 
+def _issue_counts(con) -> dict[str, int]:
+    """{code: documents} for the card; {} rather than an error — the Library
+    never raises for a count."""
+    from . import issues
+    try:
+        return issues.counts(con)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+#: the prefix VeGa gives every model it serves (deploy/vega/stage/models/
+#: vega-*.yaml): the platform's, not the embedder's — the one part of the
+#: served name the Library's tag leaves out
+_SERVED_PREFIX = "vega-"
+
+
+def _shelf_recipe(collection) -> "collections_mod.EmbedRecipe | None":
+    """`collections.recipe_for`, the worker's own resolution (invariant 10),
+    or None where none resolves: a card is drawn whatever its recipe. It was
+    called bare for the device badge, so one collection whose recipe raised
+    answered the whole Library with a 500."""
+    try:
+        return collections_mod.recipe_for(collection)
+    except Exception:  # noqa: BLE001 — NoEncoder, or a recipe that does not resolve: no encoder shown
+        return None
+
+
+def _embedder_quant(collection) -> str | None:
+    """The weights' quantization where the collection's Codex STATES it: the
+    file its reference engine loaded (`space.encoder.engine.options.Model`,
+    Codex version 4 and later), read by the gate's own `quant_level`. The
+    weights are the space's (by digest), so every run admitted to it loads
+    the same file. None where the Codex names no file (an engine started by
+    `args` alone, `${WEIGHTS}`) or the name carries no type tag — never read
+    from the model server's YAML, never guessed."""
+    from .hold.embedder import quant_level
+    try:
+        engine = collection.codex.space.encoder.engine
+        return quant_level(engine.to_dict()) if engine is not None else None
+    except Exception:  # noqa: BLE001 — no Codex, no space (annotations), an older shape: nothing stated
+        return None
+
+
+def _embedder_tag(collection, recipe) -> dict | None:
+    """The Library's embedder tag (operator, 2026-11-02: "Library tab, add a
+    tag with the embedder used"): the document-side model `recipe_for`
+    resolves, without VeGa's prefix, and the quantization where the Codex
+    states it; the full served name(s) for the tooltip. None — no tag —
+    where no encoder resolves."""
+    model = getattr(recipe, "model", None) if recipe is not None else None
+    if not model:
+        return None
+    served = model
+    query = getattr(recipe, "query_model", None)
+    if query and query != model:
+        served += f" · queries: {query}"
+    return {"name": model.removeprefix(_SERVED_PREFIX), "quant": _embedder_quant(collection),
+            "served": served}
+
+
 def _collection_shelf(collection: collections_mod.Collection,
                        measured: dict | None = None,
                        worker_state: str = "running") -> dict:
@@ -1640,9 +1996,7 @@ def _collection_shelf(collection: collections_mod.Collection,
     counts, counts_age = _document_counts(collection)
     counts_pending = counts is None
     if counts_pending:
-        counts = {k: 0 for k in ("total", "in_scope", "rdf_done", "fts_done",
-                                 "embed_done", "blocked", "unindexable",
-                                 "embed_ready", "chunks_pending", "docs_unindexed")}
+        counts = {k: 0 for k in _COUNT_KEYS}
     # How many of the "awaiting" documents are in fact inside the encoder
     # right now. A document commits only when all of its chunks are done, so
     # on a slow CPU encoder several sit in flight for many minutes — and
@@ -1803,7 +2157,8 @@ def _collection_shelf(collection: collections_mod.Collection,
         }
         indexable = max(0, (counts["in_scope"] or 0) - unindexable)
         stage_targets = {
-            "rdf": indexable, "fts": indexable, "embed": indexable,
+            "rdf": indexable, "fts": indexable,
+            "embed": max(0, indexable - (counts["declined"] or 0)),
             # `remote_total` is the file count `complete` compares against:
             # max(the origin's recorded listing, the ledger). Same unit as
             # `cur["fetch"]` above, by construction.
@@ -1997,6 +2352,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                   "to indexing while a full batch is ready, and parsing "
                   "resumes when indexing catches up")
 
+    recipe = _shelf_recipe(collection)
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         # the file's word and the file's `share`, for the Library's two
@@ -2005,9 +2361,20 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_mode_file": collection.embed_mode_default,
         "embed_mode_note": getattr(collection, "embed_mode_note", None),
         "share": bool(getattr(collection, "share", False)),
+        # the SHARE box on every collection that can be served (a public
+        # Codex, 04 §4.3) — never only where the p2p line happens to be
+        # cached (operator, 2026-11-01: "some collections are missing it")
+        "shareable": _shareable(collection),
         "p2p": _p2p_summary(collection),
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
+        # where its data came from: "remove…" defaults to forgetting a copy
+        # taken from peers and to retiring one built here (collection_remove);
+        # without it the dialog called every copy "built here from a corpus"
+        "source": getattr(collection, "source", "origin"),
+        # WHICH documents the encoder spends on (07 §7.8 `embed_select`,
+        # app/embed_select.py): offered where the plugin can group them
+        "embed_select": _embed_select_view(collection),
         "stage_rates": stage_rates,
         "stage_etas": stage_etas,
         # the tooltip for the slot above, in words — built HERE because
@@ -2016,7 +2383,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         # what each stage counts up to: one answer for the bar, the colour
         # and the ETA, so they cannot disagree about what done means
         "stage_targets": stage_targets,
-        "profile": collection.profile or "(hand-populated)",
+        "profile": _profile_label(collection),
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten
         # hex chars and a truncated display would call them equal
@@ -2039,15 +2406,20 @@ def _collection_shelf(collection: collections_mod.Collection,
         # a torrent-collection peer combines slices like an additive source
         "profile_mode": ("additive" if _offered_by_torrent_collection(collection) is not None
                          else (spec.profile_mode if spec else "incremental")),
-        "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
+        "profile_parts": _profile_held(collection),
         "blocked": blocked, "unindexable": unindexable,
+        # the origin's inconsistencies flagged, per code (06 §6.1, amended
+        # 2026-10-25): the code index alone, a cost in issues not documents
+        "issues": _issue_counts(con),
         "embed_ready": embed_ready,
         "embed_in_flight": min(in_flight, embed_ready),
         "embed_waiting": max(0, embed_ready - in_flight),
         "gate": backend_gate.gate_state(con),
         # which processor this collection's encoder spends — the GPU is the
         # scarce one, so "turn embedding on" means something different here
-        "embed_device": collections_mod.recipe_for(collection).spends,
+        "embed_device": recipe.spends if recipe is not None else None,
+        # the embedder, by the same resolution (operator, 2026-11-02)
+        "embedder": _embedder_tag(collection, recipe),
         "grow_options": _grow_options(collection),
         # EXTRA formats: what the source offers, what this collection holds
         "extras_offered": sorted(spec.extras) if spec is not None else [],
@@ -2058,28 +2430,6 @@ def _collection_shelf(collection: collections_mod.Collection,
                                   None if counts_pending else counts,
                                   fetched=fetched),
     }
-
-
-def _annotatable(served: list) -> list[dict]:
-    """The served Codex collections an annotations collection can be about,
-    with the id of the snapshot each holds now — the default for `from
-    snapshot`, since claims are checked against a snapshot this peer holds
-    (02 §2.10). Never raises; a collection with no snapshot yet says so."""
-    from .hold import collection as col
-    from .share import seeder
-    root = collections_mod.louise_root() / "collections"
-    out = []
-    for c in served:
-        if getattr(c, "codex", None) is None or collections_mod.is_annotations(c) \
-                or c.codex.plugin == "deposit":
-            continue
-        try:
-            snap = seeder.cached_snapshot(col.shard_dir_of(root, c.name))
-            snapshot = snap.snapshot_id if snap is not None else None
-        except Exception:  # noqa: BLE001
-            snapshot = None
-        out.append({"name": c.name, "snapshot": snapshot})
-    return out
 
 
 def _annotations_shelf(collection, served: list) -> dict:
@@ -2372,9 +2722,11 @@ def library_page(request: Request):
         "shelves": shelves,
         "annotations": annotations,
         "offered": offered,
-        # the Add panel's annotations type (02 §2.10): the collections a new
-        # one can annotate, each with the snapshot its claims would hold from
-        "annotatable": _annotatable(collections),
+        # the Add panel (RULE 2, 2026-10-25): the plugins this node holds a
+        # recipe for, and where — a create names the plugin and a name only
+        "plugin_recipes": {p: str(collections_mod.recipe_path(p))
+                           for p in collections_mod.PLUGIN_REGISTRY
+                           if collections_mod.recipe_path(p).is_file()},
         # oldest cached count on the page — a stale bar should look stale
         "counts_age": max((s["counts_age"] for s in shelves), default=0),
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
@@ -2437,40 +2789,25 @@ def grow_run(name: str, body: GrowBody):
         extras = tuple(body.extras)
     slices = collection.slices
     if collection.codex is not None:
-        # A Codex collection's file holds SLICES (07 §7.8), and today a node
-        # holds "all" of one or none: part of one is `hold records fetch
-        # --slice` (07 §7.3), not built yet. So growing means everything.
+        # A Codex collection's file holds SLICES (07 §7.8): growing here
+        # means everything, and part of one is the command line's `hold
+        # records fetch --slice` (07 §7.3, built 2026-10-25), which records
+        # the slices it fetched in the file.
         everything = acquire_spec.everything_profile(spec)
         if body.profile != everything:
             raise HTTPException(
                 409, f"{name} is held by its Codex: its file names slices "
-                     f"(07 §7.8), and a node holds all of them ({everything!r}) "
-                     f"or none until `hold records fetch --slice` exists")
+                     f"(07 §7.8), and growing here takes all of them ({everything!r}); "
+                     f"part of them is `louise hold records fetch {name} --slice …`")
         slices = "all"
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no collection file to "
                                   f"declare the profile in")
-    _write_collection_toml(
-        toml_path, codex=_codex_id(collection),
-        plugin=collection.plugin, profile=body.profile,
-        acquire_enabled=True, corpus_dir=collection.corpus_dir,
-        manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive,
-        # Tier-2 TOML is DESIRED STATE (invariant 10): every rewrite
-        # materializes the EFFECTIVE recipe, so an env-fallback collection
-        # becomes explicit on its first touch. Byte-equal recipe → same
-        # space id → the pin never notices. embed_mode carried for the same
-        # reason the [embed] block is: a rewrite that drops it would reset
-        # the collection to 'lazy' at the next restart.
-        embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default, layers=collection.layers,
-        snapshot=collection.snapshot, extras=extras,
-        peer_source=collection.peer_source, title=collection.title,
-        slices=slices, kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker, source=collection.source,
-        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
+    # the file's one writer, every other field carried as loaded
+    # (app/collection_file.py)
+    collection_file.rewrite(collection, profile=body.profile, acquire_enabled=True,
+                            extras=extras, slices=slices)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -2592,294 +2929,6 @@ def new_collection_preview(body: NewCollectionBody):
 # ---------------- collection management (create / remove / bundle I/O) ----
 
 
-def _codex_id(collection) -> str | None:
-    """The `collection_id` a rewrite must carry through, or None for a
-    collection that predates the migration. One helper so no call site
-    has to remember the `.codex and .codex.collection_id` dance."""
-    cx = getattr(collection, "codex", None)
-    return None if cx is None else cx.collection_id
-
-
-def _toml_scalar(v) -> str:
-    """A layer param as TOML. Ints and floats bare, bools lowercase,
-    everything else quoted — the set `Chunker.params` actually holds."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    return '"%s"' % str(v).replace('"', '\\"')
-
-
-#: 07 §7.8 spells the middle mode `on-demand`; the stored value is `lazy`
-#: (app/collections.py's `_EMBED_MODE_ALIASES`). A Codex file is written in
-#: the DOCUMENT's word — CLAUDE.md: the documents fix the vocabulary.
-_MODE_ON_DISK = {"lazy": "on-demand"}
-
-
-def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
-                       acquire_enabled: bool, corpus_dir: Path,
-                       genesis_archive: str | None, encoder,
-                       embed_mode: str | None, snapshot: str | None,
-                       extras: tuple[str, ...], title: str | None = None,
-                       slices=None, kinds=None, share: bool = False,
-                       reranker=None, source: str = "origin",
-                       share_slices=None, share_kinds=None) -> None:
-    """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
-    `share`, `[encoder]` naming where this node reaches the encoder, and
-    `[reranker]` where it reaches the collection's reranker (05 §5.6).
-
-    What is NOT written is the point. `plugin`, the chunker `[[layers]]`
-    and the `[paths]` tree are the CODEX's answers — all three are inside
-    `collection_id` or derived from `<LOUISE_ROOT>/collections/<name>/` —
-    and a file that repeated them could disagree with them; so are the
-    space's `dtype`, `ctx` and `dim`, which `[encoder]` no longer states,
-    and its `query.instruction` — which a file that stated it would have
-    refused on the next load (collections.parse_recipe).
-    07 §7.8: "A file's `codex` is never edited: a name holds one collection
-    for its life, and another collection is another name." So this function
-    carries the id through every rewrite and never invents one.
-
-    The keys a Codex file carried before §7.8 spelled the file out —
-    `profile`, `acquire_enabled`, `genesis_archive`, `snapshot`,
-    `corpus_dir`, `extras` — are written only where loading the file back
-    without them would give a different value (`collections.codex_defaults`
-    is the one derivation both sides use), so a rewrite never changes what
-    a collection does.
-
-    `license_ack` is absent for the same reason as `plugin`: a Codex
-    collection's acknowledgement is `state/ack.json` (09 §9.13), read by
-    `collections._codex_ack`, not a line in this file.
-    """
-    name = path.stem
-    cx = collections_mod.codex_at(name)
-    kinds = tuple(kinds or collections_mod.DEFAULT_KINDS)
-    if slices is None and profile and \
-            profile == collections_mod.codex_defaults(cx, name, None, kinds)["everything"]:
-        slices = "all"
-    derived = collections_mod.codex_defaults(cx, name, slices, kinds, source or "origin")
-    lines = [f'codex = "{codex}"']
-    if source and source != "origin":
-        # 07 §7.8 `source` (2026-10-07): a fetched collection reads the
-        # shards it holds; a rewrite that dropped this would turn it back
-        # into a collection scanning an origin it does not have
-        lines.append(f'source = "{source}"')
-    if title:
-        lines.append(f"title = {_toml_scalar(title)}")
-    if slices == "all":
-        lines.append('slices = "all"')
-    elif slices is not None:
-        lines.append("slices = [%s]" % ", ".join(_toml_scalar(s) for s in slices))
-    elif profile:
-        # a profile that selects PART of the corpus has no §7.8 spelling
-        # until `hold records fetch --slice` exists: kept, not translated
-        lines.append(f"profile = {_toml_scalar(profile)}")
-    lines.append("kinds = [%s]" % ", ".join(_toml_scalar(k) for k in kinds))
-    if embed_mode:
-        lines.append(f'embed = "{_MODE_ON_DISK.get(embed_mode, embed_mode)}"')
-    lines.append(f"share = {'true' if share else 'false'}")
-    # 07 §7.8 `share_slices` / `share_kinds` (2026-10-07): what serving is
-    # narrowed to, carried through every rewrite like `source`
-    if share_slices is not None:
-        lines.append("share_slices = [%s]" % ", ".join(_toml_scalar(s) for s in share_slices))
-    if share_kinds is not None:
-        lines.append("share_kinds = [%s]" % ", ".join(_toml_scalar(k) for k in share_kinds))
-    kept = []
-    if bool(acquire_enabled) != derived["acquire_enabled"]:
-        kept.append(f"acquire_enabled = {'true' if acquire_enabled else 'false'}")
-    if (genesis_archive or None) != derived["genesis_archive"]:
-        kept.append(f"genesis_archive = {_toml_scalar(genesis_archive or '')}")
-    if snapshot and snapshot != derived["snapshot"]:
-        kept.append(f"snapshot = {_toml_scalar(snapshot)}")
-    if Path(corpus_dir) != derived["corpus_dir"]:
-        kept.append(f"corpus_dir = {_toml_scalar(Path(corpus_dir).as_posix())}")
-    if extras:
-        kept.append("extras = [%s]" % ", ".join(_toml_scalar(e) for e in extras))
-    if kept:
-        lines += ["", "# Not keys of 07 §7.8's file: each is kept because the Codex and",
-                  "# <LOUISE_ROOT>/collections/<name>/ do not give the same answer.",
-                  *kept]
-    if encoder is not None:
-        # `[encoder]`, not `[embed]`: on a Codex file the bare `embed` key
-        # above is the MODE (07 §7.8), so the recipe cannot share its name.
-        lines += ["", "[encoder]", f"url = {_toml_scalar(encoder.url)}"]
-        if encoder.query_url:
-            lines.append(f"query_url = {_toml_scalar(encoder.query_url)}")
-        # No query instruction: it is the Codex's (`space.query.instruction`),
-        # and a file that states one is refused (collections.parse_recipe).
-        if encoder.api != "openai":
-            lines.append(f"api = {_toml_scalar(encoder.api)}")
-        # both, always (07 §7.8, amended 2026-10-08): the file names the
-        # model of each side, and one model doing both is named twice
-        lines += [f"embed_model = {_toml_scalar(encoder.model)}",
-                  f"query_model = {_toml_scalar(_query_model_of(encoder))}"]
-        if getattr(encoder, "concurrency", 1) > 1:
-            lines.append(f"concurrency = {encoder.concurrency}")
-        if getattr(encoder, "device", None):
-            lines.append(f"device = {_toml_scalar(encoder.device)}")
-    lines += _reranker_lines(reranker)
-    lines.append("")
-    tmp = path.with_suffix(".toml.tmp")
-    tmp.write_text("\n".join(lines), encoding="utf-8")
-    tmp.replace(path)
-
-
-def _reranker_lines(reranker) -> list[str]:
-    """A collection's `[reranker]` (05 §5.6), carried through every rewrite
-    like `[encoder]`: node-local and query-time, never the Codex's. The
-    writers used to drop it. On 2026-09-15 pubmed's file was rewritten when
-    its embedding was switched back on, came out without the table, and its
-    searches went unreranked with nothing saying so. The round-trip guard
-    passed throughout: its fixtures declared no reranker, so None == None."""
-    if reranker is None:
-        return []
-    lines = ["", "[reranker]", f"url = {_toml_scalar(reranker.url)}",
-             f"api = {_toml_scalar(reranker.api)}"]
-    if reranker.model:
-        lines.append(f"rerank_model = {_toml_scalar(reranker.model)}")
-    return lines
-
-
-def _query_model_of(encoder) -> str:
-    """The query side's model as the file states it: the recipe's own (every
-    recipe read from a file has one), else — a recipe built by hand — the
-    query URL's model, else the document model when the encoder is
-    symmetric. Never the document model for a separate query endpoint."""
-    if encoder.query_model:
-        return encoder.query_model
-    if encoder.query_url:
-        return collections_mod.model_named_by(encoder.query_url) or ""
-    return encoder.model
-
-
-def _write_collection_toml(path: Path, *, codex: str | None,
-                            plugin: str, profile: str | None,
-                            acquire_enabled: bool, corpus_dir: Path,
-                            manifest: Path, fts: Path, lancedb: Path,
-                            license_ack: str | None = None,
-                            genesis_archive: str | None = None,
-                            embed=None, embed_mode: str | None = None,
-                            snapshot: str | None = None,
-                            extras: tuple[str, ...] = (),
-                            peer_source: str | None = None,
-                            layers=None, title: str | None = None,
-                            slices=None, kinds=None, share: bool = False,
-                            reranker=None, source: str = "origin",
-                            share_slices=None, share_kinds=None) -> None:
-    """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
-    purpose: a call site that forgets it must fail loudly here, because
-    the failure it would otherwise cause is silent and unrepairable.
-
-    Observed live 2026-09-11 on the only peer in existence. gutenberg had
-    been migrated to a Codex; the operator changed its embed mode in the
-    Library; this writer — which had never heard of a Codex — re-emitted
-    the file in the legacy shape. That dropped nothing visible and did two
-    invisible things: it un-migrated the collection back to the legacy
-    load path, and it materialised the plugin's implicit layer as an
-    explicit `[[layers]] chunker = "fixed"` with no `params`, which
-    `chunk_fixed` refuses. 10,212 documents errored at the embed stage and
-    left every selection. Both halves stayed internally consistent, so
-    nothing detected it (invariant 1's failure mode); only the chunker's
-    refusal to guess a window made it visible at all.
-    """
-    if codex:
-        _write_codex_toml(
-            path, codex=codex, profile=profile,
-            acquire_enabled=acquire_enabled, corpus_dir=corpus_dir,
-            genesis_archive=genesis_archive, encoder=embed,
-            embed_mode=embed_mode, snapshot=snapshot, extras=extras,
-            title=title, slices=slices, kinds=kinds, share=share,
-            reranker=reranker, source=source,
-            share_slices=share_slices, share_kinds=share_kinds)
-        return
-    lines = [f'plugin = "{plugin}"']
-    if peer_source:
-        # peer plane: fetch from this magnet/.torrent instead of the origin
-        # (engine.effective_spec). Carried on every rewrite like the rest.
-        # Several (one per language of a pre-embedded corpus, STATUS 5h)
-        # are written as a TOML array, in fetch order.
-        from .acquire.engine import peer_sources as _peer_sources
-        sources = _peer_sources(type("_P", (), {"peer_source": peer_source})())
-        if len(sources) > 1:
-            lines.append("peer_source = [")
-            lines.extend(f'  "{s}",' for s in sources)
-            lines.append("]")
-        else:
-            lines.append(f'peer_source = "{sources[0] if sources else peer_source}"')
-    if embed_mode:
-        lines.append(f'embed_mode = "{embed_mode}"')
-    if snapshot:
-        # carried like the [embed] block and embed_mode: dropping a pinned
-        # snapshot on a rewrite would silently move the collection back to
-        # "whatever the origin calls latest"
-        lines.append(f'snapshot = "{snapshot}"')
-    if profile:
-        lines.append(f'profile = "{profile}"')
-    if acquire_enabled:
-        lines.append("acquire_enabled = true")
-    if license_ack:
-        lines.append(f'license_ack = "{license_ack}"')
-    if genesis_archive:
-        lines.append(f'genesis_archive = "{genesis_archive}"')
-    if extras:
-        # opted-in EXTRA formats (spec.extras) — local-only downloads,
-        # never p2p. Carried on every rewrite like embed_mode: dropping it
-        # would silently stop the extras at the next profile touch.
-        quoted = ", ".join(f'"{e}"' for e in extras)
-        lines.append(f"extras = [{quoted}]")
-    lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
-    if embed is not None:
-        # any rewrite must carry the [embed] block forward — dropping it
-        # would silently flip the collection back to the env recipe, which
-        # the space pin would then refuse at the next boot
-        lines += ["", "[embed]", f'url = "{embed.url}"',
-                  f'api = "{embed.api}"', f'model = "{embed.model}"',
-                  f'dtype = "{embed.dtype}"', f"ctx = {embed.ctx}"]
-        if embed.dim is not None:
-            lines.append(f"dim = {embed.dim}")
-        if embed.query_url:
-            lines.append(f'query_url = "{embed.query_url}"')
-        if getattr(embed, "concurrency", 1) > 1:
-            # not space identity, but VERY MUCH desired state: dropping it
-            # on a rewrite silently serialized a CPU collection's embeds
-            lines.append(f"concurrency = {embed.concurrency}")
-        if getattr(embed, "device", None):
-            lines.append(f'device = "{embed.device}"')
-    if layers:
-        # CHUNKER LAYERS (amendment 41). These are part of space_id
-        # (invariant 1 as amended), so dropping them on a rewrite does not
-        # merely lose a setting — it silently redefines the collection's
-        # SPACE, and the next boot either refuses or, worse, accepts a
-        # collection whose stored vectors belong to a different function.
-        # `version` is deliberately not written: parse_layers derives it
-        # from the chunker, so writing it back would let a stale number
-        # outlive a chunker bump.
-        for layer in layers:
-            lines += ["", "[[layers]]", f'chunker = "{layer.chunker}"',
-                      f'rule = "{layer.rule}"']
-            # `params` ARE the chunker's window and are inside space_id
-            # exactly as the chunker id is (09 §9.3). Omitting them was the
-            # same bug as omitting the layer, one level down: `fixed`
-            # refuses a params-less layer outright, and a chunker that
-            # defaulted instead would have cut a whole collection by a
-            # window its own id does not describe.
-            if layer.params:
-                lines.append("params = { %s }" % ", ".join(
-                    f"{k} = {_toml_scalar(v)}"
-                    for k, v in sorted(layer.params.items())))
-    lines += _reranker_lines(reranker)
-    lines += [
-        "",
-        "[paths]",
-        f'manifest = "{manifest.as_posix()}"',
-        f'fts = "{fts.as_posix()}"',
-        f'lancedb = "{lancedb.as_posix()}"',
-        "",
-    ]
-    tmp = path.with_suffix(".toml.tmp")
-    tmp.write_text("\n".join(lines), encoding="utf-8")
-    tmp.replace(path)
-
-
 def _corpus_mounts() -> list[dict]:
     """The candidate corpus folders: whatever the deployment mounted under
     CORPUS_MOUNTS_DIR, each marked with the collection already using it (a
@@ -2893,8 +2942,6 @@ def _corpus_mounts() -> list[dict]:
             if entry.is_dir():
                 mounts.append({"path": entry.as_posix(),
                                 "used_by": used.get(entry.as_posix()), "kind": "corpus"})
-    # packs under PACK_MOUNTS_DIR are no longer offered: the `packed` plugin
-    # that read them is boxed in attic/ (2026-09-14)
     return mounts
 
 
@@ -3000,33 +3047,21 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     if body.mode not in collections_mod.EMBED_MODES:
         raise HTTPException(400, "mode must be off | lazy | all | p2p")
     collection = _collection_or_404(name)
-    # "all p2p" publishes what it embeds, so it comes with sharing on: the
-    # Library asked before sending (07 §7.8, 2026-10-19); the two settings
-    # are written in one file rewrite, and the response says what changed
-    share = True if body.mode == "p2p" else collection.share
-    share_enabled = share and not collection.share
     # TOML FIRST — a file write never loses a lock race. The old order
     # wrote the runtime scope first, and on a manifest under continuous
     # pipeline writes that raised "database is locked" BEFORE the TOML was
     # ever written: the 500 reloaded the page and the mode reverted
     # (operator report: wikipedia off -> refresh -> on-demand again).
+    # Written as `hold config apply --set embed=…` writes it (07 §7.6): "all
+    # p2p" publishes what it embeds, so it comes with sharing on — the
+    # Library asked before sending (07 §7.8, 2026-10-19) — in the same write
     toml_path = collections_mod.config_toml_path(name)
-    _write_collection_toml(
-        toml_path, codex=_codex_id(collection),
-        plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=collection.acquire_enabled,
-        corpus_dir=collection.corpus_dir,
-        manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive,
-        embed=collections_mod.recipe_for(collection),
-        embed_mode=body.mode, layers=collection.layers,
-        snapshot=collection.snapshot,
-        extras=collection.extras, peer_source=collection.peer_source,
-        title=collection.title, slices=collection.slices,
-        kinds=collection.kinds, share=share,
-        reranker=collection.reranker, source=collection.source,
-        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
+    try:
+        out = collection_file.set_values(name, {"embed": body.mode})
+    except collection_file.SetRefused as e:
+        raise HTTPException(400, str(e)) from None
+    share = out["share"]
+    share_enabled = bool(out["also"].get("share"))
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -3057,6 +3092,27 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
             "it within a round"}
 
 
+class EmbedSelectBody(BaseModel):
+    value: str
+
+
+@admin_router.post("/library/{name}/embed-select")
+def collection_embed_select(name: str, body: EmbedSelectBody):
+    """The Library's embed selection (07 §7.8 `embed_select`; operator,
+    2026-11-02, wikipedia's "smart"): written to the collection's file as
+    `hold config apply --set embed_select=…` writes it. The worker applies
+    it after its next scan (app/embed_select.py), the pipeline waiting for
+    it meanwhile."""
+    _collection_or_404(name)
+    if body.value not in collections_mod.EMBED_SELECT:
+        raise HTTPException(400, f"value is one of {', '.join(collections_mod.EMBED_SELECT)}")
+    try:
+        collection_file.set_values(name, {"embed_select": body.value})
+    except collection_file.SetRefused as e:
+        raise HTTPException(400, str(e)) from None
+    return {"ok": True, "embed_select": body.value, "persisted": True}
+
+
 class ShareBody(BaseModel):
     share: bool
 
@@ -3072,27 +3128,15 @@ def collection_share(name: str, body: ShareBody):
     # an annotations collection embeds nothing: no [encoder], no embed mode
     # (02 §2.10) — the rewrite carries neither, as its file never had them
     annotations = collections_mod.is_annotations(collection)
-    embed_mode = None if annotations else collection.embed_mode_default
-    changed_mode = False
-    if not body.share and embed_mode == "p2p":
-        embed_mode, changed_mode = "all", True
     toml_path = collections_mod.config_toml_path(name)
-    _write_collection_toml(
-        toml_path, codex=_codex_id(collection),
-        plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=collection.acquire_enabled,
-        corpus_dir=collection.corpus_dir,
-        manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive,
-        embed=None if annotations else collections_mod.recipe_for(collection),
-        embed_mode=embed_mode, layers=collection.layers,
-        snapshot=collection.snapshot,
-        extras=collection.extras, peer_source=collection.peer_source,
-        title=collection.title, slices=collection.slices,
-        kinds=collection.kinds, share=body.share,
-        reranker=collection.reranker, source=collection.source,
-        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
+    # written as `hold config apply --set share=…` writes it, the p2p/all
+    # meeting point included (app/collection_file.py)
+    try:
+        out = collection_file.set_values(name, {"share": "true" if body.share else "false"})
+    except collection_file.SetRefused as e:
+        raise HTTPException(400, str(e)) from None
+    changed_mode = "embed" in out["also"]
+    embed_mode = None if annotations else (out["also"].get("embed") or collection.embed_mode_default)
     applied_now = True
     if changed_mode:
         try:
@@ -3118,24 +3162,75 @@ _p2p_cache: dict[str, tuple[float, dict | None]] = {}
 _P2P_TTL_S = 120.0
 
 
+def _shareable(collection) -> bool:
+    codex = getattr(collection, "codex", None)
+    return codex is not None and getattr(codex, "privacy", "public") == "public"
+
+
 def _p2p_summary(collection) -> dict | None:
     """The Library card's two axes beside the embed drop-down (07 §7.8,
     2026-10-19): the bounty list — open parts, the parts this node leads and
     leaves to peers — and availability — chunks from bundles made here and
     taken from peers. From the coverage map and the digests (09 §9.10; 04
-    §4.5), the same functions the command line prints; at most once a
-    `_P2P_TTL_S` per collection (the leader ordering is ~0.4 s for 1,600
-    parts). None for a collection without a Codex or a snapshot."""
-    import time as _time
-    from contextlib import closing
+    §4.5), the same functions the command line prints. None for a
+    collection without a Codex or a snapshot.
+
+    OFF THE REQUEST PATH, as the document counts are: the last value is
+    served at once and refreshed behind it, one refresh per collection at a
+    time, at most once a `_P2P_TTL_S`. A cold cache waits
+    `_COUNTS_COLD_WAIT_S`, then the card renders without the line. On the
+    request path, every bundle gutenberg accepted made the next view
+    recompute coverage over 1,639 parts — 6-14 s each, every 1-3 min, and
+    seven views stacked on the same rebuild (München, 2026-10-27)."""
     codex = getattr(collection, "codex", None)
     if codex is None or getattr(codex, "space", None) is None:
         return None
     key = str(collection.manifest_path)
+    now = time.time()
     hit = _p2p_cache.get(key)
-    now = _time.time()
-    if hit is not None and now - hit[0] < _P2P_TTL_S:
+    if hit is not None:
+        if now - hit[0] >= _P2P_TTL_S:
+            _p2p_refresh_async(collection, key)
         return hit[1]
+    _p2p_refresh_async(collection, key)
+    deadline = now + _COUNTS_COLD_WAIT_S
+    while time.time() < deadline:
+        hit = _p2p_cache.get(key)
+        if hit is not None:
+            return hit[1]
+        time.sleep(0.05)
+    return None
+
+
+_p2p_refreshing: dict[str, float] = {}
+_p2p_lock = threading.Lock()
+
+
+def _p2p_refresh_async(collection, key: str) -> None:
+    """One refresh in flight per collection; the guard expires
+    (`_COUNTS_REFRESH_ABANDON_S`) so a hung one never freezes the line."""
+    now = time.time()
+    with _p2p_lock:
+        started = _p2p_refreshing.get(key)
+        if started is not None and now - started < _COUNTS_REFRESH_ABANDON_S:
+            return
+        _p2p_refreshing[key] = now
+
+    def _run() -> None:
+        try:
+            _p2p_cache[key] = (time.time(), _p2p_compute(collection))
+        finally:
+            with _p2p_lock:
+                _p2p_refreshing.pop(key, None)
+    threading.Thread(target=_run, name=f"p2p:{collection.name}", daemon=True).start()
+
+
+def _p2p_compute(collection) -> dict | None:
+    """`_p2p_summary`'s value, computed (~0.4 s for 1,600 parts warm; the
+    coverage over every part after a bundle lands)."""
+    from contextlib import closing
+    codex = collection.codex
+    now = time.time()
     out: dict | None = None
     try:
         from app.hold import collection as col
@@ -3172,7 +3267,6 @@ def _p2p_summary(collection) -> dict | None:
                         out["left"] = sum(1 for k in lead.values() if k is not None and k != own)
     except Exception:   # noqa: BLE001 — a card line, never a failed page
         out = None
-    _p2p_cache[key] = (now, out)
     return out
 
 

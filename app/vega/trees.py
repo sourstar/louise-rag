@@ -63,6 +63,8 @@ def _brief(e: Mapping[str, Any]) -> str:
                f"{' exec' if e.get('exec') else ''}"
     if t == "link":
         return f"link -> {e.get('target')}"
+    if t == "setting":
+        return f"setting {e.get('value')!r}"
     return str(t)
 
 

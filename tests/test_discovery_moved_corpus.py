@@ -81,3 +81,35 @@ def test_clear_takes_a_plugins_sub_cursors_and_no_other_plugins(tmp_path):
     assert cursor.load(tmp_path, "wikipedia-archive") == {}
     assert cursor.load(tmp_path, "wikipediaX") == {"a": [1, 1]}
     assert cursor.clear(tmp_path, "wikipedia") is False, "nothing left to forget"
+
+
+def test_the_same_bytes_restamped_somewhere_else_take_the_new_path_in_one_scan(tmp_path):
+    """wikipedia-v8 (2026-10-29): 21.9 M carried rows named the old
+    collection's mount, and a corpus reads as moved — a whole re-enumeration
+    at every start — until every locator is under the root. A row whose
+    (mtime, size) moved and whose hash did not kept its old path for one more
+    scan; it takes the new one now, its stage marks untouched."""
+    from types import SimpleNamespace as NS
+    from app.plugins.base import DocRef
+    root = tmp_path / "origin"
+    root.mkdir()
+    c = _collection(tmp_path, root)
+    con = db.connect(c)
+    con.execute(
+        "INSERT INTO documents(uid,source,native_id,path,mtime,size,txt_hash,rdf_done,"
+        "embed_done,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        ("wikipedia:1", "wikipedia", "1", "/old/mount/data/de/000.parquet::0::15",
+         100, 7, "h", 1, 1, int(time.time())))
+    con.commit()
+    plugin = NS(fetch=lambda ref: NS(raw_hash="h"))
+    ref = DocRef(source_id="wikipedia", native_id="1",
+                 locator=f"{root.as_posix()}/data/de/000.parquet::0::15", mtime=200, size=7)
+    counts = {k: 0 for k in ("seen", "added", "changed", "missing", "container_errors",
+                             "relocated", "resigned")}
+    assert discovery._apply_batch(con, plugin, [ref], counts, None, wait=True)
+    row = con.execute("SELECT path,mtime,rdf_done,embed_done FROM documents").fetchone()
+    assert row["path"] == ref.locator and row["mtime"] == 200
+    assert (row["rdf_done"], row["embed_done"]) == (1, 1), "the same bytes: nothing redone"
+    assert counts["relocated"] == 1 and counts["changed"] == 0
+    assert discovery._clear_cursor_if_relocated(con, c, root) is False, "the corpus no longer reads as moved"
+    con.close()

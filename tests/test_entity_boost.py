@@ -1,28 +1,23 @@
-"""The entity boost: which of a search's candidates the named entities tag.
+"""The entities a query names: pinned as facts, and — 05 §5.2 — never a boost.
 
-The node, 2026-09-21: a PubMed search never came back. The boost fetched
-EVERY document tagged with the query's entities before searching, joining
-`doc_keys` to `documents`; a manifest nobody has ANALYZEd has no statistics,
-so the planner took `d.source = ?` for a selective filter and drove the loop
-from all 40.0 M documents. One search was still running after 75 minutes,
-its caller long gone. ONE entity was enough to do it.
-
-Fixing the join order took BRCA2 to 2.5 s — and left the cost scaling with
-the entity: BRCA2 tags 12,053 documents, the heaviest gene 265,237. The boost
-only ever asks whether a CANDIDATE is tagged, so that is now the question,
-put after the merge, for the candidates alone.
+The node, 2026-09-21: a PubMed search never came back. The boost (+1/60 on
+the fused score of a candidate the query's entities tag) fetched EVERY
+document tagged with them before searching; on a manifest nobody had
+ANALYZEd the planner drove the loop from all 40.0 M documents, and one
+search was still running after 75 minutes. Asked for the candidates alone
+after that, it cost nothing — and it was still a boost, which 05 §5.2 never
+allowed. Measured on TREC Precision Medicine 2017–18 (80 topics, NIST's
+judgements; tools/measure/entity_boost_trecpm.py, 2026-10-25) it lost:
+NDCG@10 0.3073 against 0.3143 without it. It is gone.
 
 And the expansion fed it: "BRCA2 breast cancer risk" resolved to the gene and
 expanded to 21,968 ClinVar variants — each a pinned fact in the answer, and
-not ONE of them tagging a single PubMed document (the gene alone and all
-21,969 tag the same 12,053). So the boost takes only what the query names.
-The facts keep docs/05's one hop — P0.3 accepted "a BRCA2 query returns
-pinned HGNC/ClinVar facts" — bounded per link, the rest named in
-`facts_withheld` (operator, the same night: follow docs/05, bounded).
-
-Plans are checked on a fixture manifest, which has no statistics either: the
-planner guesses as it did on the node, and the fixture reproduced the node's
-exact plan when the old query was put back.
+not ONE of them tagging a single PubMed document. So the legs are handed
+only what the query names (what 05 §5.2's restriction would take, if the
+operator keeps it). The facts keep docs/05's one hop — P0.3 accepted "a
+BRCA2 query returns pinned HGNC/ClinVar facts" — bounded per link, the rest
+named in `facts_withheld` (operator, the same night: follow docs/05,
+bounded).
 """
 import shutil
 from pathlib import Path
@@ -61,80 +56,49 @@ def _tag(con, c, book_ids, entity_id: str = GENE_ID) -> None:
     con.commit()
 
 
-class _Recording:
-    """The connection, noting every statement: the plan is taken of the SQL
-    the function really runs, never of a copy of it in this file."""
+class _Plan:
+    """One language group, searched with the query as typed."""
+    core = "BRCA2"
+    translations: dict = {}
+    query_lang = None
+    only = ()
 
-    def __init__(self, con) -> None:
-        self.con, self.seen = con, []
+    def searches(self, group):
+        return True
 
-    def execute(self, sql, params=()):
-        self.seen.append((sql, list(params)))
-        return self.con.execute(sql, params)
+    def variants(self, group, held):
+        return [self.core]
 
-
-def _plan_rows(con, sql, params) -> list[str]:
-    return [str(r[-1]).upper() for r in con.execute("EXPLAIN QUERY PLAN " + sql, params)]
+    def lang_filter(self, group):
+        return None
 
 
-# ---- the question, put for the candidates ------------------------------------------------
+# ---- nothing boosts -------------------------------------------------------------------------
 
-def test_the_loop_runs_over_the_candidates_never_the_collection(tmp_path):
+def test_a_candidate_the_named_entity_tags_keeps_its_fused_score(isolated_config, monkeypatch, tmp_path):
+    """05 §5.2: "a filter restricts; nothing boosts". The third candidate
+    carries the gene the query names; it stays third, at 1/(60+3), exactly
+    as when the query names nothing — the boost would have put it first."""
     c, con = _manifest(tmp_path)
-    rec = _Recording(con)
-    retrieval._tagged_among(rec, c, [GENE_ID], [10001, 10002, 10003])
-    (sql, params), = rec.seen
-    plan = _plan_rows(con, sql, params)
+    ids = _more_documents(con, c, 3)
+    _tag(con, c, ids[2:])
+    hits = [{"chunk_id": f"{c.plugin}:{b}:0:1", "book_id": b, "source": "fts:g"} for b in ids]
+    monkeypatch.setattr(retrieval.fts, "existing_groups", lambda coll: ["g"])
+    monkeypatch.setattr(retrieval.fts, "group_languages", lambda group, coll: ["en"])
+    monkeypatch.setattr(retrieval.fts, "names_capable", lambda coll: False)
+    monkeypatch.setattr(retrieval.fts, "search_records", lambda group, q, limit, **kw: [dict(h) for h in hits])
+    monkeypatch.setattr(retrieval.collections_mod, "reranker_for", lambda coll: None)
 
-    assert "IDX_DOCUMENTS_NATIVE (SOURCE=? AND NATIVE_ID=?)" in plan[0], \
-        f"the outer loop must be the candidates, one row each: {plan}"
-    assert not any(row.endswith("(SOURCE=?)") for row in plan), \
-        f"a search on `source` alone is a walk of the whole collection: {plan}"
-    assert not any("TEMP B-TREE" in row or "SCAN" in row for row in plan), plan
+    def fused(entity_ids):
+        out = retrieval._search_one_collection(con, c, "BRCA2", 5, "fts", False, entity_ids, _Plan())
+        return [(m["book_id"], m["rrf"]) for m in out["merged"]]
 
-
-def test_the_cost_does_not_grow_with_how_many_documents_the_entity_tags(tmp_path):
-    """Counted in SQLite's own VM steps. 400 documents tagged or one, the
-    same three candidates cost the same: the heaviest gene on the node tags
-    265,237 documents, and a boost that paid per tagged document paid that."""
-    c, con = _manifest(tmp_path)
-    ids = _more_documents(con, c, 400)
-    candidates = ids[:3]
-
-    def steps() -> int:
-        n = [0]
-
-        def tick() -> int:
-            n[0] += 1
-            return 0
-        con.set_progress_handler(tick, 1)
-        try:
-            found = retrieval._tagged_among(con, c, [GENE_ID], candidates)
-        finally:
-            con.set_progress_handler(None, 1)
-        assert found == {candidates[0]}
-        return n[0]
-
-    _tag(con, c, [candidates[0]])
-    one = steps()
-    _tag(con, c, ids[3:])                       # 397 more, none of them a candidate
-    many = steps()
-    assert many <= one * 1.2, f"tagging 397 more documents cost {many} steps against {one}"
+    plain = fused([])
+    assert plain == [(b, 1.0 / (retrieval.RRF_K + r)) for r, b in enumerate(ids, 1)]
+    assert fused([GENE_ID]) == plain
 
 
-def test_a_tagged_candidate_is_found_once_and_nothing_else_is(tmp_path):
-    c, con = _manifest(tmp_path)
-    ids = _more_documents(con, c, 5)
-    _tag(con, c, ids[:1])
-    _tag(con, c, ids[:1], "hgnc:HGNC:1100")     # a second key on the same document
-    _tag(con, c, ids[4:])                       # tagged, but not a candidate
-    assert retrieval._tagged_among(con, c, [GENE_ID, "hgnc:HGNC:1100"], ids[:3]) \
-        == {ids[0]}, "no DISTINCT in SQL: the set collapses the repeat"
-    assert retrieval._tagged_among(con, c, [], ids) == set()
-    assert retrieval._tagged_among(con, c, [GENE_ID], []) == set()
-
-
-# ---- the boost takes what the query names; the facts take docs/05's bounded hop -------------
+# ---- the legs are handed what the query names; the facts take docs/05's bounded hop ---------
 
 GENE = Entity(entity_id=GENE_ID, kind="hgnc_gene", source_id="hgnc", label="BRCA2")
 PINNED = tuple(Entity(entity_id=f"clinvar-mini:{i}", kind="clinvar_variant",
@@ -161,21 +125,21 @@ def _names_brca2(monkeypatch):
     monkeypatch.setattr(retrieval.refs.RESOLVER, "expand_bounded", lambda e, s, limit: [
         Reached(table="clinvar_variant", entities=PINNED[:limit], total=21_961, link=TO_GENE),
         Reached(table="homologene", entities=(), total=0, link=ORTHOLOG)])
-    boosted: list[list[str]] = []
+    named: list[list[str]] = []
 
     def one_collection(con, c, q, k, mode, tr, entity_ids, plan=None, depth=0):
-        boosted.append(list(entity_ids))
+        named.append(list(entity_ids))
         return {"catalog": [], "merged": [], "translations": {},
                 "timings": {"catalog": 0.0}, "scope": {}}
 
     monkeypatch.setattr(retrieval, "_search_one_collection", one_collection)
     monkeypatch.setattr(retrieval, "_attach_work_fields", lambda con, c, hits, q: hits)
     monkeypatch.setattr(retrieval, "_attach_metadata_and_enqueue", lambda con, c, hits: None)
-    return boosted
+    return named
 
 
-def _check(out, boosted) -> None:
-    assert boosted == [[GENE_ID]], "the boost: the gene alone, not its variants"
+def _check(out, named) -> None:
+    assert named == [[GENE_ID]], "the legs: the gene alone, not its variants"
     facts = [f["entity_id"] for f in out["facts"]]
     assert facts[0] == GENE_ID and len(facts) == 1 + retrieval.FACTS_PER_LINK, \
         "the facts: the gene, and docs/05's one hop — bounded"
@@ -187,22 +151,22 @@ def _check(out, boosted) -> None:
         "every fact expand reached names the link it was reached through (05 §5.4)"
 
 
-def test_search_boosts_the_named_gene_and_pins_a_bounded_hop(
+def test_search_hands_the_legs_the_named_gene_and_pins_a_bounded_hop(
         isolated_config, monkeypatch, tmp_path):
     c, con = _manifest(tmp_path)
-    boosted = _names_brca2(monkeypatch)
+    named = _names_brca2(monkeypatch)
     _check(retrieval.search(con, "BRCA2 breast cancer risk", k=5, collection=c,
-                            translate=False), boosted)
+                            translate=False), named)
 
 
 def test_federated_search_follows_the_same_rule(isolated_config, monkeypatch, tmp_path):
     """The two paths came in a pair; fixing one would have left the other
-    pinning and boosting every variant."""
+    pinning every variant."""
     c, _ = _manifest(tmp_path)
-    boosted = _names_brca2(monkeypatch)
+    named = _names_brca2(monkeypatch)
     monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda depth=50: 0.4)
     _check(retrieval.federated_search([c], "BRCA2 breast cancer risk", k=5, translate=False),
-           boosted)
+           named)
 
 
 def test_nothing_is_withheld_when_nothing_is_left_out(isolated_config, monkeypatch, tmp_path):

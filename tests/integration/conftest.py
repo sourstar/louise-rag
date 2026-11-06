@@ -1,7 +1,7 @@
 """Two-node fixtures for the Phase-1 integration suite (F1).
 
 A "node" here is a real collection with its own manifest/Lance/corpus, driven
-through the real code paths — export, coordinator upload, inbox drain, import,
+through the real code paths — export, inbox drain, import,
 verify-on-use. The only fake is the embed endpoint, replaced by a DETERMINISTIC
 text->vector function so producer and consumer genuinely agree the way two
 nodes running the same model would.

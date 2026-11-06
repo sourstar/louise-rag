@@ -217,3 +217,143 @@ the tables. The failures grew over the run (1, 2, 5, 5, 9, 14, 13, 18, 8 per
 (set to p2p in the Library then). This is a reranker budget under load, not
 a fault of any variant. Where the reranker gives no answer, the product
 shows the fused order, in which the catalogue is already one of the legs.
+
+## Run 5 — the reranker's question in each record's language (2026-10-22 to 2026-10-24, nights)
+
+834baf5 judges each candidate against the question in its own record's
+language (the language plan's translation) instead of the typed question for
+all of them; 8bee186 adds a second way to order the languages. On the SAME
+fused candidates, one live search per query on the Ask page's default path
+(`query_service.run_search(["gutenberg"], q, 10, "hybrid", True)`),
+`tools/measure/rerank_lang_variants.py` reranks three times:
+
+- **base**: the typed question for every candidate (`queries=None`);
+- **score**: each language's variant, all ordered by the reranker's score —
+  what the node runs since 834baf5 (`retrieval.py`: `_reranked(…, plan.translations)`);
+- **slots**: the same scores, each language keeping the positions the fused
+  order gave it (`RERANK_LANGUAGE_ORDER = "slots"`).
+
+All 496 labelled queries, bge-reranker-v2-m3, over three nights. The first
+night lost 54 queries to the chat and translation models loading beside the
+embedder, dar-legal and the reranker. Normattiva was paused and dar-legal
+unloaded, and the queries without three reranks were run again, resumably,
+until none was left.
+
+| kind (n) | variant | MRR | R@1 | R@10 | other-language records in the 10 |
+|---|---|---:|---:|---:|---:|
+| title (39) | base | 0.809 | 0.744 | **0.974** | 2.44 |
+| title | **score** (live) | **0.834** | **0.769** | 0.949 | 3.21 |
+| title | slots | 0.802 | 0.744 | 0.949 | 3.00 |
+| descriptive (451) | base | **0.422** | **0.310** | 0.687 | 4.43 |
+| descriptive | **score** (live) | 0.412 | 0.284 | **0.714** | 6.11 |
+| descriptive | slots | 0.419 | 0.293 | 0.701 | 5.65 |
+| pair (6) | base | 0.123 | 0.000 | 0.667 | 2.00 |
+| pair | score | 0.444 | 0.333 | 0.667 | 5.17 |
+| pair | slots | 0.264 | 0.000 | 0.667 | 5.33 |
+
+**Nothing is switched.** Under the deploy rule (no loss on titles or
+descriptive), no variant beats the live one on both:
+
+- base gains descriptive MRR (+0.010) and R@1 (+0.027) but loses descriptive
+  R@10 (−0.027, 12 queries) and titles MRR (−0.025).
+- slots loses titles MRR (−0.032) and descriptive R@10 (−0.013).
+
+score keeps the most answers in the top ten and shows the most other-language
+records; base puts the right book first slightly more often. The six it/en
+pairs, where 834baf5 began, favour score (0.444), but six is not a sample.
+THE STANDARD ALTERNATIVE (retrieval.py's comment on `RERANK_LANGUAGE_ORDER`):
+score calibration per language pair, which needs labelled queries per
+language; the set has 182 English and 78 French, and fewer than 50 in every
+other language.
+
+## The entity boost against 05 §5.2 — measured on TREC Precision Medicine (prepared 2026-10-25)
+
+`retrieval.ENTITY_BOOST` adds 1/60 (one virtual rank-1 vote) to the fused
+score of a candidate tagged with an entity the query names. 05 §5.2 says "a
+filter restricts; nothing boosts". The spec wins until it is changed, so
+this is a known defect (task #33, found by PR #4). Either the boost goes, or
+05 §5.2 is amended with its weight pinned. That choice waits on a number,
+because no labelled pubmed set existed (Run 2: "stays unmeasured until a
+labelled pubmed set exists").
+
+**The set is a standard one:** TREC Precision Medicine 2017 and 2018,
+scientific abstracts. Its topics name a disease and a gene or variant, and
+NIST assessors judged the PubMed abstracts 0/1/2, independently of
+Louise's tagging. The files are TREC's own, as ir_datasets catalogues
+them; the node fetches them, since this sandbox cannot reach
+trec.nist.gov. Judged documents that are not PubMed (AACR/ASCO) are left
+out. The query is the participants' common baseline: disease, then gene.
+
+**The harness:** `tools/measure/entity_boost_trecpm.py` (prepare anywhere;
+search on the node with `DATA` prepended, as the other harnesses do). It
+uses the deployed path with the reranker on, and runs each topic twice,
+with the boost as deployed and with 0, the order alternating.
+
+**Metrics, per topic, at 10:**
+- NDCG (trec_eval's, unjudged counted as 0) and the condensed NDCG (Sakai
+  2007: unjudged documents removed, because Louise contributed nothing to
+  the pool);
+- P, RR, the judged share, R@50.
+
+A topic counts only when both arms were reranked. Topics where the boost
+applied (a candidate tagged with a named entity) are reported apart: only
+there can the arms differ.
+
+**Reading it:**
+- no loss without the boost → drop it and test_entity_boost.py becomes its
+  negative;
+- a gain with it → amend 05 §5.2 with the weight pinned in the Codex.
+Either way it is a fusion change, so the numbers go in its commit.
+
+**Measured (München, 2026-10-25 10:00–10:15 CET, deployed 50030dc, reranker
+on, nothing else on the GPU).** 80 TREC PM topics (31 + 51 fetched, 80
+with a judged relevant PubMed abstract); all 80 counted (no rerank miss);
+the boost applied on 74. Results on file at origin/main af7986b,
+docs/notes/entity-boost-2026-10-25/.
+
+| metric | boost | none | boost won–lost–tied |
+|---|---|---|---|
+| NDCG@10 | 0.3073 | **0.3143** | 16–27–37 |
+| condensed NDCG@10 | 0.5617 | 0.5646 | 27–19–34 |
+| P@10 | 0.305 | 0.3112 | 11–15–54 |
+| RR@10 | 0.5448 | 0.5459 | 3–8–69 |
+| judged@10 | 0.455 | 0.4525 | 18–14–48 |
+| R@50 | **0.1414** | 0.137 | 25–15–40 |
+
+On the headline metric the boost loses (27 against 16), and P@10 and RR
+agree; R@50 gains 0.004. The differences are small, and the boost does not
+earn an exception to "nothing boosts". **It goes.**
+But 05 §5.2 asks for more than its absence: "a resolved identifier
+restricts every leg to the records whose `keys` contain it". The harness
+now has the restriction as two more arms:
+- `any`: tagged with any named identifier;
+- `all`: tagged with all of them.
+They run through the facet filters' own prefilter. The code then follows
+the spec's rule if restricting loses nothing against `none`. If it loses,
+the numbers go to the operator with 05 §5.2's restriction rule in
+question. The boost's removal waits for that run, so the code changes
+once, to what the spec and the numbers agree on.
+
+**Second run, four arms (München, 2026-10-25 ~10:30–10:57 CET, deployed
+50030dc, reranker on; on file at origin/main edde517).** All 80 counted,
+the identifiers applied on 74; `boost` and `none` reproduce the first run
+exactly.
+
+| arm | NDCG@10 | condensed | P@10 | RR@10 | R@50 | NDCG@10 vs none, won–lost–tied | sign test p | median ms |
+|---|---|---|---|---|---|---|---|---|
+| none | **0.3143** | **0.5646** | **0.3112** | **0.5459** | 0.137 | — | — | 3,302 |
+| boost | 0.3073 | 0.5617 | 0.305 | 0.5448 | **0.1414** | 16–27–37 | 0.13 | 3,053 |
+| any | 0.3002 | 0.5547 | 0.3025 | 0.5314 | 0.1372 | 16–20–44 | 0.62 | 5,206 |
+| all | 0.2983 | 0.5576 | 0.3013 | 0.5322 | 0.1369 | 18–22–40 | 0.64 | 5,412 |
+
+No arm beats `none` on any metric at 10, and no difference is significant
+(two-sided sign test). Both restrictions cost ~2 s a query.
+
+**Done:** the boost is removed (05 §5.2 forbids it and it earns no
+exception). `test_entity_boost.py` now checks that a tagged candidate keeps
+its fused score; the P0.3 test (`test_retrieval_entities.py`) checks that
+a tag moves nothing.
+
+**Decided (operator, 2026-10-25: A):** 05 §5.2 is amended. An identifier
+the query names pins its facts and restricts nothing; the restriction is
+the reader's to ask for, with the `keys` filter.

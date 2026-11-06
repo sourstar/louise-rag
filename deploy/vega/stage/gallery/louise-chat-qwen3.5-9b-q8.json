@@ -1,0 +1,53 @@
+{
+  "id": "localai@qwen3.5-9b",
+  "variant": "qwen3.5-9b-dflash",
+  "name": "louise-chat-qwen3.5-9b-q8",
+  "files": [
+    {
+      "filename": "llama-cpp/models/Qwen3.5-9B-Q8_0.gguf",
+      "uri": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf",
+      "sha256": "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4"
+    }
+  ],
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "draft_model": "",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "gpu_layers": 999,
+    "mmap": true,
+    "mmproj": "",
+    "known_usecases": [
+      "chat"
+    ],
+    "options": [
+      "use_jinja:true",
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512"
+    ],
+    "parameters": {
+      "model": "llama-cpp/models/Qwen3.5-9B-Q8_0.gguf",
+      "batch": 2048,
+      "seed": 0,
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "repeat_penalty": 1,
+      "repeat_last_n": 64
+    },
+    "reasoning_effort": "none",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "threads": 6
+  }
+}

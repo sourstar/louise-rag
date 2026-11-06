@@ -1,5 +1,8 @@
 # Discovering peers and collections — proposal
 
+> **Superseded** (2026-10-25, handover) by `docs/04-sharing.md` §4.2: digests, neighbours, the peer list and the offer are built (`app/share/gossip.py`, `peers.py`, `offer.py`), and the mainline DHT finds swarms by the swarm key.
+
+
 Companion to the torrent transport (`app/acquire/transport_torrent.py`,
 `app/acquire/torrent_publish.py`), which is implemented and tested. **Nothing
 in this document is implemented yet**; §5's Phase-2 plan stands until amended.
@@ -120,7 +123,7 @@ anything. An unpinned signature only proves *someone* signed it.
 
 ### Tier 2 — the coordinator as a rendezvous
 
-`app/coordinator/` already exists and nodes already talk to it for leases and
+`app/coordinator (removed 2026-11-01)/` already exists and nodes already talk to it for leases and
 demand-sets. Adding "return the catalogue URLs of nodes that reported recently"
 is a small endpoint on a service that is already deployed, already
 authenticated, and already knows who is participating. It removes the manual

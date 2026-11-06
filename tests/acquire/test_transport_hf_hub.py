@@ -64,8 +64,10 @@ def test_list_files_walks_the_tree_api_with_pagination(monkeypatch):
 
     class FakeResponse:
         def __init__(self, url):
+            import json
             self._rows, nxt = pages[url]
             self.links = {"next": {"url": nxt}} if nxt else {}
+            self.content = json.dumps(self._rows).encode()
 
         def raise_for_status(self):
             pass
@@ -89,9 +91,13 @@ def test_list_files_walks_the_tree_api_with_pagination(monkeypatch):
             return FakeResponse(url)
 
     monkeypatch.setattr(mod.httpx, "Client", FakeClient)
+    drawn = []
+    monkeypatch.setattr(mod.budget, "acquire_bytes", drawn.append)
     transport = HfHubTransport()
     endpoint = Endpoint(transport=Transport.HF_HUB, url="datasets/u/w")
     files = list(transport.list_files(endpoint, None))
     assert [f.rel_path for f in files] == [
         "data/tr/000.parquet", "README.md", "data/tr/001.parquet"]
     assert [f.size for f in files] == [10, 5, 20]
+    # invariant 5: each listing page's bytes are drawn from the budget
+    assert drawn == [len(FakeResponse(u).content) for u in pages]

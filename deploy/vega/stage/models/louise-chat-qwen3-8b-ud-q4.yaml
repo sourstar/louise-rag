@@ -1,0 +1,64 @@
+# Qwen3-8B at unsloth's Dynamic 4-bit, UD-Q4_K_XL (unsloth/Qwen3-8B-GGUF, 5.14 GB): THE 4-bit of
+# the winner's Q4 step (operator, 2026-11-06: "Use the unsloth recommend model for 4 bits"; its
+# Qwen3.5 guide: "All uploads use Unsloth Dynamic 2.0 ... 4-bit has important layers upcasted to 8
+# or 16-bit"). Qwen's own Q4_K_M, staged beside it the same day, was withdrawn by that choice.
+# The file pinned to the Hub's commit and its sha256 at the install. Sampling: the Q8 file's.
+# f16, function.grammar.disable and stopwords: written by the gallery's qwen3-8b base at install (2026-11-06);
+# kept here so this file equals the node's, key for key.
+{
+  "name": "louise-chat-qwen3-8b-ud-q4",
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "f16": true,
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "stopwords": [
+    "<|im_end|>",
+    "<dummy32000>",
+    "</s>",
+    "<|endoftext|>"
+  ],
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "draft_model": "",
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "mmproj": "",
+  "options": [
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512",
+    "use_jinja:true"
+  ],
+  "parameters": {
+    "model": "llama-cpp/models/Qwen3-8B-UD-Q4_K_XL.gguf",
+    "batch": 2048,
+    "seed": 0,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "repeat_penalty": 1,
+    "repeat_last_n": 64
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}

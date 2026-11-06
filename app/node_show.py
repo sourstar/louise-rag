@@ -52,7 +52,23 @@ def overrides() -> dict[str, Any]:
     return {"mode": mode, "paused_collections": node_state.peek(_paused, []),
             "bandwidth_bps": bw,
             # the last mode writes and who made them (node_state.set_worker_state)
-            "mode_writes": node_state.peek(_mode_writes, [])}
+            "mode_writes": node_state.peek(_mode_writes, []),
+            # who paused each collection paused now, and when (node_state.set_paused)
+            "paused_by": node_state.peek(_paused_by, {})}
+
+
+def _paused_by(con) -> dict[str, Any]:
+    from app import db, node_state
+    try:
+        hist = json.loads(db.get_control(con, node_state.PAUSED_HISTORY_KEY) or "[]")
+    except ValueError:
+        return {}
+    now = set(_paused(con))
+    out: dict[str, Any] = {}
+    for h in hist:
+        if isinstance(h, dict) and h.get("collection") in now and h.get("paused"):
+            out[h["collection"]] = {"at": h.get("at"), "by": h.get("by")}
+    return out
 
 
 def _mode_writes(con) -> list[dict[str, Any]]:
@@ -108,8 +124,10 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
         from pathlib import Path
         shard_tree = Path(collection.corpus_dir)
         violated = list(integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, codex))
-    stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason}
-              for s in (report.stages if report else []) if s.state != "idle" or s.waiting]
+    stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason,
+               **({"over": True} if s.over else {}),
+               **({"errored": s.errored} if s.errored else {})}
+              for s in (report.stages if report else []) if s.state != "idle" or s.waiting or s.errored]
     doing = next((s["stage"] for s in stages if s["state"] == "running"), None)
     return {"name": collection.name,
             "collection_id": codex.collection_id if codex is not None else None,
@@ -145,7 +163,22 @@ def show() -> dict[str, Any]:
         rows.append({"name": name, "collection_id": None, "state": "refused", "reasons": [str(why)],
                      "paused": False, "embed": None, "integrity_violated": [], "doing": None, "stages": []})
     from app import disk_guard
+    from app import node_profile
+    try:
+        prof = node_profile.active()
+        profile = prof.to_dict() if prof is not None else None
+    except node_profile.ProfileError as e:
+        profile = {"error": str(e)}
+    if profile is not None:
+        # what the GPU governor has APPLIED (app/gpu_level.py), beside what
+        # the profile asks: a power limit or a clock ceiling, the fan, or why
+        # not; None when the governor is not running
+        from app import gpu
+        profile["gpu_applied"] = gpu.governor().get("level")
     return {"mode": ov["mode"], "overrides": ov,
+            # the quiet / day / night profile in force (platform.toml [schedule]):
+            # what background CPU work and the card may use now, and until when
+            "profile": profile,
             # every filesystem under a collection's vectors: below its floor,
             # nothing writes vectors there (app/disk_guard.py)
             "disk": disk_guard.status(loaded),

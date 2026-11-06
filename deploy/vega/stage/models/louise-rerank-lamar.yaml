@@ -5,17 +5,15 @@
 # Weights converted here with llama.cpp's convert_hf_to_gguf.py (f16), never a
 # community GGUF unchecked (§13). Not in any collection file until campaign run 6.
 {
-  "backend": "vega-llama-cpp-gen",
+  "backend": "vega-louise-llama-cpp",
   "context_size": 2560,
   "embeddings": true,
   "env": {
-    "GGML_SYCL_ENABLE_FUSION": "0",
-    "GGML_SYCL_ENABLE_GRAPH": "0",
-    "GGML_SYCL_ENABLE_OPT": "0",
     "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
   },
-  "flash_attention": "off",
+  "flash_attention": "on",
   "gpu_layers": 999,
   "mmap": true,
   "name": "louise-rerank-lamar",

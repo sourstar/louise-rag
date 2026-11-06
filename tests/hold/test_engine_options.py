@@ -102,7 +102,7 @@ def test_options_are_refused_in_a_version_3_codex():
 
 @pytest.mark.parametrize("value", [
     "/models/bge-m3.gguf",                  # the weights, not as ${WEIGHTS}
-    "mmproj:/models/projector.gguf",        # a second file no digest covers
+    "mmproj:/models/projector.gguf",        # a second file written out, not ${WEIGHTS:MMProj}
     "--lora=/srv/adapter.safetensors",
     "https://api.example.invalid/v1",       # a service a stranger cannot run
 ])
@@ -164,12 +164,12 @@ def _localai_run(codex):
                          weights=run["weights"], driver=run["driver"])
 
 
-def test_a_run_with_options_is_signed_at_version_3_and_its_engine_id_counts_them():
+def test_a_run_with_options_is_signed_and_its_engine_id_counts_them():
     codex = codex_768()
     ref = reference()
     run = gate(codex, ref, ref=ref, stated=_localai_run(codex))
     body = emb.read_statement(emb.statement(run, codex, a_key(), now=NOW))
-    assert body["version"] == emb.STATEMENT_VERSION == 3
+    assert body["version"] == emb.NEAR_EXACT_VERSION == 5
     assert body["engine"]["options"] == OPTIONS
     assert emb.benchmarks_entry(body)["encoder_engine"] == LOCALAI.engine_id
 

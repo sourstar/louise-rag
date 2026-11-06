@@ -60,7 +60,7 @@ PINNED = {
            "sha256:03ae64488c899305491dcc1fe8c9aad369cc79d219829d5ff31a9d5fcc663e0c",
            "sha256:a5070b29cb79b78d7eedc183d5c3d184e5385e8c19cc5b14068ab7ae0fc50e96"),
 }
-#: The digest of the body of a statement of an argv (RAGE) run, as written
+#: The digest of the body of a statement of an argv (the model pool) run, as written
 #: before the amendment, `tokens_per_s` zeroed: it is a timing, measured anew
 #: by every pass, and the only field not a function of the inputs.
 PINNED_STATEMENT = "sha256:31824734ce189f20207adecb2811fb877325932aca72f6ab119e894d2b09352e"
@@ -76,12 +76,17 @@ def test_no_existing_codex_moves(name, codex):
     assert cx.dumps(again) == raw
 
 
-def test_an_argv_run_is_still_signed_at_3_byte_for_byte():
+def test_an_argv_runs_statement_is_version_3_byte_for_byte_and_how_exact_it_is():
+    """Version 5 (near-exact-runs.md §4) is version 3's body with four keys:
+    without them, and at version 3, the body is still the pinned bytes."""
     codex = codex_768(version=5)
     ref = reference()
     run = gate(codex, ref, ref=ref, stated=a_stated_run(codex))
-    body = emb.statement(run, codex, a_key(), now=NOW)["body"]
-    assert body["version"] == 3
+    body = dict(emb.statement(run, codex, a_key(), now=NOW)["body"])
+    assert body["version"] == 5
+    for k in emb.NEAR_EXACT_KEYS:
+        body.pop(k)
+    body["version"] = 3
     assert digest(canonical_json(dict(body, tokens_per_s=0))) == PINNED_STATEMENT
 
 
@@ -170,15 +175,18 @@ def test_an_unknown_codex_version_is_still_refused():
     # object relabelled 7 lacks `annotates` and is refused for that; 8 is the
     # token cut's since 2026-10-18 (tests/hold/test_cut.py); 9 the graph
     # amendment's since 2026-10-20: a version-6 object relabelled 9 declares no
-    # container and is refused for that (tests/hold/test_annotations.py); 10 is unknown
+    # container and is refused for that (tests/hold/test_annotations.py); 10 the
+    # exactness amendment's since 2026-11-01 (tests/hold/test_codex_exactness.py);
+    # 11 the document instruction's since 2026-11-02
+    # (tests/hold/test_codex_document_instruction.py); 12 is unknown
     d["version"] = 7
     with pytest.raises(CodexError, match="missing field.*annotates"):
         cx.loads(canonical_json(d))
     d["version"] = 9
     with pytest.raises(CodexError, match="declares its record parts' container"):
         cx.validate(cx.loads(canonical_json(d)))
-    d["version"] = 10
-    with pytest.raises(CodexError, match="unsupported Codex version 10"):
+    d["version"] = 12
+    with pytest.raises(CodexError, match="unsupported Codex version 12"):
         cx.loads(canonical_json(d))
 
 
@@ -342,23 +350,40 @@ def _body(stated) -> dict:
     return emb.read_statement(emb.statement(run, codex, a_key(), now=NOW))
 
 
-def test_a_backend_engines_run_is_stated_at_4():
+def test_a_backend_engines_run_is_stated_at_5():
+    """Version 5 (operator's choice C, 2026-10-31): version 4's body with how
+    exact the run is and how it stands against the stored CPU reference."""
     body = _body(_vega_run)
-    assert body["version"] == emb.BACKEND_STATEMENT_VERSION == 4
+    assert body["version"] == emb.NEAR_EXACT_VERSION == 5
     assert body["engine"] == BACKEND.to_dict()
     assert emb.benchmarks_entry(body)["encoder_engine"] == BACKEND.engine_id
+    assert (body["exactness"], body["loads"], body["load_variation"],
+            body["cpu_reference"]) == ("exact", 1, "1", None)
 
 
-def test_every_other_run_is_still_stated_at_3():
-    assert _body(a_stated_run)["version"] == emb.STATEMENT_VERSION == 3
+def test_a_version_4_statement_stays_read_and_a_version_5_one_must_say_how_exact():
+    body = _body(_vega_run)
+    v4 = {k: v for k, v in body.items() if k not in emb.NEAR_EXACT_KEYS}
+    assert emb.read_statement(_resigned(dict(v4, version=4)))["version"] == 4, \
+        "exact, one load, no CPU reference: what every statement before it meant"
+    with pytest.raises(emb.GateError, match="lacks exactness"):
+        emb.read_statement(_resigned(dict(v4, version=5)))
+    with pytest.raises(emb.GateError, match="exactness is"):
+        emb.read_statement(_resigned(dict(body, exactness="roughly")))
+
+
+def test_every_other_run_is_stated_at_5_too():
+    """Since 2026-10-31 every statement carries how exact its run is; a
+    backend engine is still told by `${BACKEND}/` in its program."""
+    assert _body(a_stated_run)["version"] == emb.NEAR_EXACT_VERSION == 5
 
 
 def test_a_backend_engine_in_a_version_3_statement_is_refused():
     body = _body(_vega_run)
-    with pytest.raises(emb.GateError, match="stated at version 4"):
+    with pytest.raises(emb.GateError, match="stated at version 4 or later"):
         emb.read_statement(_resigned(dict(body, version=3)))
     no_options = {k: v for k, v in body["engine"].items() if k != "options"}
-    with pytest.raises(emb.GateError, match="stated at version 4"):
+    with pytest.raises(emb.GateError, match="stated at version 4 or later"):
         emb.read_statement(_resigned(dict(body, version=2, engine=no_options)))
 
 
@@ -370,8 +395,8 @@ def test_a_version_4_statement_of_an_argv_run_is_refused():
 
 def test_an_unknown_statement_version_is_refused():
     body = _body(_vega_run)
-    with pytest.raises(emb.GateError, match="version 5"):
-        emb.read_statement(_resigned(dict(body, version=5)))
+    with pytest.raises(emb.GateError, match="version 6"):
+        emb.read_statement(_resigned(dict(body, version=6)))
 
 
 def test_a_run_whose_engine_misplaces_backend_is_not_signed():

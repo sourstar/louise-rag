@@ -1,0 +1,93 @@
+{
+ "topics": 80,
+ "counted": 80,
+ "boost_applied": 74,
+ "all": {
+  "ndcg": {
+   "boost": 0.3073,
+   "none": 0.3143,
+   "boost_won": 16,
+   "boost_lost": 27,
+   "tied": 37
+  },
+  "ndcg_condensed": {
+   "boost": 0.5617,
+   "none": 0.5646,
+   "boost_won": 27,
+   "boost_lost": 19,
+   "tied": 34
+  },
+  "p": {
+   "boost": 0.305,
+   "none": 0.3112,
+   "boost_won": 11,
+   "boost_lost": 15,
+   "tied": 54
+  },
+  "rr": {
+   "boost": 0.5448,
+   "none": 0.5459,
+   "boost_won": 3,
+   "boost_lost": 8,
+   "tied": 69
+  },
+  "judged": {
+   "boost": 0.455,
+   "none": 0.4525,
+   "boost_won": 18,
+   "boost_lost": 14,
+   "tied": 48
+  },
+  "r_depth": {
+   "boost": 0.1414,
+   "none": 0.137,
+   "boost_won": 25,
+   "boost_lost": 15,
+   "tied": 40
+  }
+ },
+ "applied": {
+  "ndcg": {
+   "boost": 0.3048,
+   "none": 0.3123,
+   "boost_won": 16,
+   "boost_lost": 27,
+   "tied": 31
+  },
+  "ndcg_condensed": {
+   "boost": 0.5611,
+   "none": 0.5643,
+   "boost_won": 27,
+   "boost_lost": 19,
+   "tied": 28
+  },
+  "p": {
+   "boost": 0.3068,
+   "none": 0.3135,
+   "boost_won": 11,
+   "boost_lost": 15,
+   "tied": 48
+  },
+  "rr": {
+   "boost": 0.5349,
+   "none": 0.5361,
+   "boost_won": 3,
+   "boost_lost": 8,
+   "tied": 63
+  },
+  "judged": {
+   "boost": 0.4608,
+   "none": 0.4581,
+   "boost_won": 18,
+   "boost_lost": 14,
+   "tied": 42
+  },
+  "r_depth": {
+   "boost": 0.1386,
+   "none": 0.1337,
+   "boost_won": 25,
+   "boost_lost": 15,
+   "tied": 34
+  }
+ }
+}

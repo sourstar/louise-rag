@@ -158,9 +158,51 @@ model not knowing it is acceptable — the translation model is the one
 trained for such terms). The two remedies considered, if it is reopened: a sharper answer
 instruction (translate every word taken from the sources, keeping only
 personal names, titles and quotations), at no extra cost; or the answer
-post-translated by the translation model, one call more per answer and the
-[n] citations at risk (the page already falls back to the original when
-they move).
+post-translated by the translation model, one call more per answer.
+
+### The [n] citations never reach MADLAD (2026-10-28)
+
+The answer IS post-translated when the reader switches the page's language
+after it was written, and the page refuses a translation whose `[n]` differ
+from the original's (the links would open the wrong entries). The operator
+saw every entry translate and the answer stay English after an
+all-languages search: MADLAD does not keep the markers. Measured on the
+node, a 3,300-character answer with 36 markers (München, the deployed
+llama.cpp engine): into Italian six markers dropped (a whole paragraph lost
+its `[8]`, `[8][9]`), into English all 36 back but `[8]` renumbered `[10]`
+and `[9]` `[11]`; the `- ` list lines collapsed into one sentence; a cited
+sentence glued to the next ("Heian[1].I primi"). The same model on the
+torch backend had the same exposure ("[n] citations at risk", above); the
+switch did not cause it, the all-languages answer (3,913 characters, many
+citations) exposed it.
+
+So app/translate.py's t5 path keeps them out of the model's sight — the
+standard handling of inline codes in machine translation (XLIFF/Okapi: the
+codes are removed before the engine and restored after): the cut closes a
+segment after a sentence that carries a citation, the segment's `[n]` are
+taken out before the request and put back inside the sentence's final stop
+after it ("castello [1]."); a run the chat model wrote after the stop
+("banned in 1876. [8]") stays with the sentence it follows; a list item's
+or heading's marker is kept out the same way and its line break kept; a
+missed answer is now SAID on the page (it was silent), and every stream
+request logs its outcome (`[… info:translate] stream into it: 13 items — 12
+translated (3 cached), 1 missed, 7.0 s`). Tests:
+tests/test_translate_t5.py ("the [n] citations and the list lines never
+reach the model"), tests/browser/ask_translation_order.js step 5. Not
+done: the torch backend (deploy/madlad-translate/server.py, the backout)
+cuts and reassembles on the server and keeps the old exposure; it is not
+serving.
+
+Verified on the node after the deploy (München, 14:42Z): the 3,300-character
+text 36/36 markers both ways, breaks and list lines kept, 7.7 s into
+Italian (7.0 s before the fix: the cited sentences now close their
+segments, so there are more, shorter requests). One more defect of the
+model's output seen there, not the citations': now and then two sentences
+of one segment come back as one word ("letterarie.Le prime"; en→fr once in
+three paragraphs, it and de clean) — the output drops a space the input
+had. `clean_up` puts it back (`_unglue`): a sentence stop between two
+lowercase letters and an uppercase letter is such a join, an abbreviation
+("Ph.D.", "U.S.A.", "e.g."), a number or a lowercase continuation is not.
 
 Within the translation model, one passage now gets one translation
 (52b1433): an entry's visible lines are translated first, then replaced by
@@ -248,6 +290,61 @@ with `cache_ram:0`. Neither the 7B (1.0 GB) nor EuroLLM (0.7 GB) showed it.
    - Every one needs the sanity check of item 1 above.
    - A new `[translate] model / shape` config key: ask first.
 
+## Why MADLAD runs on torch, not llama.cpp (2026-10-27)
+
+*Operator: "why we went for the python path instead of the obvious
+llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
+4–8 s for the llama.cpp models (model-profile.md).*
+
+- **The decision is on record, in the code**
+  (`deploy/madlad-translate/server.py`'s docstring, node, 2026-09-18). A
+  MADLAD GGUF loaded in llama-server, but its encoder never ran: the server
+  wrote `<2cs><2cs>…`, and Ollama hung. Only llama.cpp's completion tool
+  translated correctly, one text per process with 18 s of load. So MADLAD
+  went on PyTorch XPU. On 2026-10-03 that server's model code became a
+  LocalAI Python backend unchanged (model-pool-over-localai.md@c572c3b), and it now runs
+  on louise-python. Its generation settings are greedy (`BEAMS` 1),
+  96-token sentence segments, batches of 32, and
+  `max_new = min(512, 2 × longest + 16)`.
+- **llama.cpp's library runs T5**, MADLAD's architecture
+  (`llama_model_has_encoder`, `llama_encode` in `include/llama.h`), but
+  only its `tools/completion` CLI calls it.
+- **Its server does not.** At c0fd786 (the commit our backend builds),
+  `tools/server` never calls `llama_encode`, and neither does LocalAI's
+  `backend/cpp/llama-cpp/grpc-server.cpp` at v4.12.1, which is built from
+  that server. So no LocalAI llama.cpp backend can serve an encoder-decoder
+  model, and the "obvious" path does not exist through LocalAI.
+- **The alternatives, if the load time matters:**
+  - MADLAD on OpenVINO through optimum-intel's seq2seq export. It would run
+    in the same louise-python backend, where MedCPT already loads on
+    OpenVINO in 2.4–3.6 s.
+  - Encoder-decoder support patched into our llama.cpp backend (a P3).
+    That is a larger change to carry, and the place for it is upstream
+    llama.cpp's server.
+    - **Upstream status, checked 2026-10-27:**
+      - The T5 author's own server branch (fairydreaming `t5-server`,
+        Dec 2024) was never merged ("not very optimal").
+      - Issue #26565 (Aug 2026) was closed as stale with no maintainer
+        reply and no PR. It names the fix: `update_slots()` has no
+        `llama_model_has_encoder()` branch.
+      - Its prototype encodes the prompt, turns prompt caching off, and
+        decodes from the decoder-start token, one request at a time.
+      - `llama_context::cross` is one buffer per context, so it holds only
+        with a single slot. Our models already run `parallel: 1`.
+      - Only `/completions` with a raw prompt is right for T5. A chat
+        template corrupts its input.
+    - **As our P3:** a llama.cpp patch carried through LocalAI's
+      `backend/cpp/llama-cpp/patches/` (as upstream carries its own two).
+      - Cost: a rebase at every llama.cpp bump of its hottest function,
+        and the client sends one request per target language in place of
+        today's one batched call. Whether that is faster than torch's 3.2 s
+        per query is unmeasured.
+  - CTranslate2, the standard runtime for MADLAD/T5. It has no Intel GPU
+    path (CUDA and CPU only).
+  - Whichever runtime, its output is compared with today's on the 451 + 39
+    queries before it serves. Translation is never hashed into a space, so
+    the change needs no recalibration.
+
 ## Reproduce
 
 **On the node, in `/root/xlate-choice`:**
@@ -264,3 +361,142 @@ with `cache_ram:0`. Neither the 7B (1.0 GB) nor EuroLLM (0.7 GB) showed it.
 - `python tools/measure/translator_choice_score.py --old tools/measure/out/onelang --live tools/measure/out/onelang_live --results search.jsonl --times tools/measure/out/xlate_choice`
 - Reading: `python tools/measure/translator_choice_reading.py tools/measure/out/xlate_choice/reading/old tools/measure/out/xlate_choice/reading`
   (python:3.12-slim + sacrebleu 2.4.3).
+
+## Waves: the simpler MADLAD-only step (proposed 2026-10-27, deferred)
+
+*Operator, 2026-10-27: "No, keep things as they are, record the llama.cpp
+improvement, I will do it in a separated session." MADLAD stays on torch.
+Nothing below is built.*
+
+*That session: 2026-10-27 night (operator: "Review the proposed improvings of
+llama.cpp to use madlad model, without breaking the existing interfaces …
+implement and test the code, I give you the exclusive use of the CPU/GPU
+tonight"). BUILT as P4 (localai-bugs.md): the wave scheduler in the server,
+under P3's guard, plus Louise's client side — app/translate.py's t5 shape
+(one raw `<2xx> segment` prompt per segment, the torch backend's cut, a
+call's segments sent at once, the clean-up; the shape determined from the
+server, never configured). The model runs on its OWN backend
+(`vega-llama-cpp-t5`, deploy/vega/stage/models/louise-translate-madlad-gguf.yaml),
+so the shared embedder backend was not rebuilt and no embedder became a new
+engine. The gates below are run by tools/measure/t5waves.py; their results
+are recorded in STATUS.md as they land.*
+
+*The operator asked for a simpler patch than the per-sequence memory
+(llama-cpp-encoder-decoder.md §9), one that impacts no other model.
+Measured first (localai-bugs.md P3, "On the card"):*
+- *one slot: 3.03 s per translation, ~18 s per question;*
+- *time per output token is flat in the input length (×1.10 from 7 to 192
+  tokens). So decode steps carry a fixed cost, not the cross recompute,
+  and batching is the lever, not a cross K/V cache.*
+
+**What it is:** a server-only addition to P3 (a P3b), under the same guard
+(architecture `t5` with a decoder, generation tasks only). The library is
+not touched.
+- MADLAD's model file alone asks for several slots (`parallel:7`). LocalAI's
+  backend already turns the unified KV cache on by default
+  (`grpc-server.cpp:604`), which several T5 slots need.
+- The server never encodes while a slot of the model is generating.
+- When none is, every slot waiting to start is encoded in ONE encode call,
+  each on its own sequence id. The library already keeps the rows of one
+  call tagged per sequence, and the encoder masks sequences apart
+  (llama-graph.cpp:496-499).
+- Those slots then decode together, one batched step for all, as the
+  server does for any model.
+- Shared-prefix grouping stays off for these slots: a child would copy its
+  parent's decoder state and never encode.
+- A short gathering window (a few ms) keeps one question's languages, sent
+  at once by the client, in one wave.
+
+**Expected:** ~one translation's time per question (~3 s here), against
+~18 s; not measured.
+**Size:** ~60–100 lines on top of P3 (an estimate).
+**Other models:** no code of theirs changes. Rebuilding the shared backend
+still makes every SYCL embedder a new engine, measured and gated once
+(invariant 12).
+
+| Option | Pros | Cons |
+|---|---|---|
+| P3, one slot (status quo of the test) | Each translation alone, reproducible per translation | ~18 s per question: slower than torch |
+| **P3b, waves** | Server only, T5 only, small; per-question time like torch's; 9.5–11 s cold against 17–38 s | A translation's bytes depend on its wave's members; waves depend on arrival; the client sends one request per segment (architecture's change) |
+| Per-sequence memory (§9 stage 1) | Slots fully independent; upstream's shape | ~900 lines in the library's busiest files |
+| Keep torch | Measured, batched, serving | 17–38 s cold, a Python process, 7.2 GB |
+
+**Gates before MADLAD-on-llama.cpp replaces torch:**
+1. Retrieval on the 451 + 39 queries, as this note's measurement ran it.
+2. Waves' own byte test: the same question twice gives the same bytes
+   (llama-cpp-encoder-decoder.md T3).
+3. Invariant 12 on the rebuilt backend's embedders.
+4. Architecture's client change: one `/v1/completions` per segment, the
+   `<2xx>` prompt, and transformers' `clean_up_tokenization_spaces`
+   replacements applied to the output.
+
+**Where the work stands (2026-10-27), left in place for that session:**
+- The patch: `deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`.
+  It is a LocalAI commit adding
+  `backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch` on
+  llama.cpp c0fd786.
+- On the node (all created by this work; nothing loads them unless asked):
+
+  | What | Where | Size |
+  |---|---|---|
+  | Test backend | `/mnt/ssd5/apps/localai/backends/louise-sycl-f16-llama-cpp-p3test` | 438 MB |
+  | Test backend tar | `/mnt/ssd5/apps/localai/backends/.louise-llama-cpp-sycl_f16-p3test.tar` | 282 MB |
+  | Model files | `/mnt/ssd5/apps/localai/models/madlad-p3-test.yaml` (bf16), `madlad-p3-test-f16.yaml` (one slot, `parallel:1`, `cache_ram:0`, context 512) | — |
+  | GGUFs | `/mnt/ssd5/apps/models/madlad/madlad400-3b-mt-{bf16,f16}.gguf` | 5.5 GB each |
+  | Scripts and results | `/root/madlad-gguf`: `t5cmp.py` (compare against torch; `URL#MODEL` for LocalAI), `t10.py` (cost per output token), `cmp-card-f16.jsonl` | 1.6 MB |
+  | Pre-P2-rollout backends | `/mnt/ssd5/apps/localai/backends-bak-20261027` | 709 MB |
+
+- On the dev PC:
+  - `/tmp/lcpp`, the llama.cpp working tree with the patch (218 MB);
+  - `/tmp/t5f`, `/tmp/t5b`, `/tmp/tmp.9KixJbUrfa` (141 MB together);
+  - the Docker volume `lcpp-cpu-build`, used for the CPU check.
+
+## Result, 2026-10-28: MADLAD on llama.cpp replaces the torch translator
+
+The gates of tools/measure/t5waves.py on the shipped configuration (series
+f8b4acdcdcb8 = P1–P4, the f32 KV cache that sidesteps the SYCL fault,
+`parallel:7`), the card idle: retrieval paired-equal to torch MADLAD on the
+same index (descriptive n = 451: MRR 0.254 / R@10 0.446 / R@50 0.627 on both
+sides, +3/−1, p = 0.625; titles n = 39 identical); in-wave vs alone 614 of 626
+(bar 90 %); the same group twice 625 of 626 (the one row: a group split into
+different waves under load); **1.12 s per question (p90 1.56 s) against
+torch's 3.2 s** — 2.9× faster, at 29.2 ms per token (the f32 cache's +79 %
+over the F16 kernels the card cannot run right for several slots). Cold load
+~10 s against 17–38 s, 6.3 GB plus ~2 GB of cache against 7.2 GB. The torch
+model stays installed as `louise-translate-madlad-torch` for backout. Details:
+localai-bugs.md P4 "Measured on the card".
+
+**The first switch was backed out at 10:47 (torch live) on a client defect**
+— the shape probe read LocalAI's `/v1/tokenize` answer for `<2en>` as two
+tokens and took the server for the torch backend; the warm's unbounded JSON
+prompt then ran 92 s. The probe now reads the vocabulary, every batch
+request is bounded, and the paired test (A1: 60 questions through
+/api/search under sharing, torch against GGUF) is rerun on the fixed client
+before the second attempt. The numbers above stand: they were measured
+against the server, not through the client. localai-bugs.md P4 "Backed out".
+
+**Second attempt, 11:19–11:42: NOT switched.** Through Louise under gutenberg
+sharing the f32-cache GGUF answers with torch's quality (341/381 identical
+translations, 59/60 the same top hit) but no gain: translation median 1.95 s
+against 1.68 s (+16 %), p90 equal, search total equal. Torch stays live. The
+gain the idle measurement promised (2.9×) is eaten by the f32 cache's +79 %
+per token on a shared card. The F16 cache comes back with P5 (localai-bugs.md:
+the card fault was ggml-sycl's own src1 conversion on the oneMKL path, fixed
+by us); the third attempt is on the P5 tar, A1 again, and the switch only on
+a measured gain.
+
+**P5 on the card, 12:02–12:18: the F16 cache gated green** (engine
+c68167b65cb0): T4 379/379 = P3's bytes, T3 626/626 and 616/626, retrieval
+paired-equal to torch, 16.3 ms per token, **0.68 s per question in waves (p90
+0.96) against the f32 cache's 1.12 and torch's 3.2** — 4.7× torch on an idle
+card. The third A1 (through Louise, under sharing) decides.
+
+**SWITCHED 2026-10-28 12:43, and it stays.** The third A1, through Louise
+under gutenberg sharing (the GGUF pass under more load than torch's):
+translation median **1.44 s against 1.85 (−22 %)**, p90 **2.21 against 2.57
+(−14 %)**, search total 10.07 against 11.08 s, 60/60 answered, 342/381
+translations identical, 59/60 the same top hit. Engine c68167b65cb0 (P1–P5),
+the F16 cache, `parallel:7`. The gain through Louise is a fifth, not the
+4.7× of the idle card: a question's six languages cost torch one batched call
+of 1.85 s, and the wave 1.44 s beside the embedder. The idle 0.68 s says the
+rest is the card's sharing, scheduling.md's business, not the translator's.

@@ -76,6 +76,10 @@ from typing import Iterable, Iterator, Mapping
 import pyarrow as pa
 
 FIGURES_DIR = "figures"
+#: 08 §8.7: at most 4,096 figures per record — what a RECORD may name, so a
+#: hostile record cannot make itself a container; the largest real book
+#: names 3,503. Refused at build and failed by `hold check`'s `figures` row.
+MAX_PER_RECORD = 4096
 SUFFIX = ".fig.zst"
 TAG = b"LOUISE-FIGURES-1"          # 16 bytes, like LOUISE-PACK-IDX1
 FOOTER = b"LFG1"

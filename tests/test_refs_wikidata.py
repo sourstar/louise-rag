@@ -69,7 +69,7 @@ def test_sync_reads_the_packs_label_table_one_row_per_entity(tmp_path):
     assert (fact["entity_id"], fact["kind"], fact["source_id"], fact["label"]) == \
         ("wikidata:Q42", "wikidata_entity", "wikidata-refs", "Douglas Adams"), \
         "the source that REGISTERS the namespace owns the fact"
-    assert fact["ref_version"] == "2"
+    assert fact["ref_version"] == "3"
     assert fact["fields"]["lang"] == "fr"
     assert lookup.lookup("wikidata:Q1", store=store) == {"facts": [], "unresolved": ["wikidata:Q1"]}
     # synced once: the pack has not moved

@@ -270,6 +270,29 @@ def _check_slicing(block: dict[str, Any]) -> dict[str, Any]:
         check_slice(str(block["unknown"]))
     if "container" in block:
         codex_mod.refuse_unbuilt_container(str(block["container"]))
+    if "parts" in block:
+        # 02 §2.2, amended 2026-10-24: parts cut by content, between `min`
+        # and `max` records, `shard_records` expected
+        from app.pack import slicing as sl
+        try:
+            lo, hi, avg = sl.parts_rule_of(block) or (None, None, None)
+            ok = lo is not None and 1 <= lo < avg < hi
+        except (KeyError, TypeError, ValueError):
+            ok = False
+        if not ok:
+            raise TemplateError(f"slicing.parts is {{rule: {sl.PARTS_RULE!r}, min, max}} with "
+                                f"1 ≤ min < shard_records < max (02 §2.2): {block.get('parts')!r}")
+    if "family" in (block.get("keys") or ()):
+        # pack-format.md §2, amended 2026-10-24: a family key reads a map
+        # pinned at creation, named by its sha256 — without it the slices
+        # could be neither computed nor checked by anyone else
+        from app.pack import slicing as sl
+        named = sl.family_map_of(block)
+        try:
+            sl.map_member(named or "")
+        except ValueError:
+            raise TemplateError(f"slicing: a `family` key names its map — {{field, rule: "
+                                f"{sl.FAMILY_RULE!r}, map: \"sha256:…\"}} (09 §9.3)") from None
     return block
 
 
@@ -286,7 +309,8 @@ def _version_with_container(version: int, slicing: dict[str, Any]) -> int:
             f"slicing.container needs Codex version {codex_mod.GRAPH_VERSION}, and this space is copied "
             f"from a version {version} Codex whose layers carry no `input`: raising it would move the "
             f"space (02 §2.7). Drop the container or do not copy the space")
-    return codex_mod.GRAPH_VERSION
+    # at least version 9; a space that requires bit-exact runs is 10 (9 plus it)
+    return max(version, codex_mod.GRAPH_VERSION)
 
 
 # --------------------------------------------------------------------------
@@ -527,6 +551,13 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
     work.setdefault("per", default_per(update.cadence))
 
     space = _space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped)
+    slicing = (_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
+               else default_slicing(source))
+    if space.exactness is not None and "container" not in slicing:
+        # A SPACE THAT REQUIRES BIT-EXACT RUNS is written at EXACTNESS_VERSION,
+        # version 9 plus the field, where the container is required: the JSONL
+        # lines are what its absence meant below 9 (09 §9.3, §9.5)
+        slicing = dict(slicing, container=codex_mod.JSONL)
     codex = Codex(
         descriptive=Descriptive(**recipe["descriptive"]),
         plugin=plugin,
@@ -539,8 +570,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         protocol_version=recipe.get("protocol_version", source.protocol_version),
         layers=(tuple(_layer(d, i) for i, d in enumerate(recipe["layers"]))
                 if "layers" in recipe else default_layers(source)),
-        slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
-                 else default_slicing(source)),
+        slicing=slicing,
         space=space,
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
@@ -566,7 +596,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         profile=recipe.get("profile", default_profile(source)),
         version=_version_with_container(
             codex_mod.written_version(space, _version_for(space_version, image_shaped)),
-            recipe.get("slicing") or {}),
+            slicing),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)

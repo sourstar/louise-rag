@@ -22,14 +22,29 @@ import httpx
 import lancedb
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from . import collections as collections_mod
-from . import config, dispatch, httpc, model_load
+from . import config, httpc, model_load, vector_parts
+from .rage import dispatch
 from . import layers as layers_mod
 from .hold import runs as hold_runs
 from .vega import client as vclient
 
 TABLE = "chunks"
+#: How every vector table is CREATED (Lance's own feature, lancedb's storage
+#: option; "do not reinvent the wheel"): STABLE ROW IDS. Without them a
+#: compaction that moves indexed rows — after any delete, and every write is
+#: delete-then-insert (invariant 2) — re-maps the whole vector index and the
+#: book_id index into NEW files: wikipedia's twins repair (2026-10-30) left
+#: eight full IVF_PQ generations, 142 GiB, written in four hours (München,
+#: docs/notes/scheduling-log.md). With them the index stays where it is and a
+#: deleted row is masked (measured 2026-10-31, pylance 9.0.1: one index
+#: directory before and after a compaction of deleted rows, the search
+#: excluding them; tests/test_lance_stable_row_ids.py). A table created
+#: before keeps re-mapping until it is rewritten (the validity-columns
+#: rebuild below creates its new table with this option).
+NEW_TABLE_STORAGE = {"new_table_enable_stable_row_ids": "true"}
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
 _dbs: dict[str, "lancedb.DBConnection"] = {}
 
@@ -45,8 +60,55 @@ def _conn(collection=None):
 
 def forget(collection) -> None:
     """Drop the LanceDB connection on this collection's vector store — for a
-    collection that left the node (fts.forget, 2026-10-13)."""
-    _dbs.pop(str(collection.lance_dir), None)
+    collection that left the node (fts.forget, 2026-10-13) — and on each of
+    its parts when it is split (app/vector_parts.py)."""
+    root = str(collection.lance_dir)
+    _dbs.pop(root, None)
+    for key in [k for k in _dbs if k.startswith(root + os.sep)]:
+        _dbs.pop(key, None)
+    vector_parts.forget(collection)
+
+
+def _coll(collection):
+    return collections_mod.default_collection() if collection is None else collection
+
+
+def _holds(part, books) -> set[int]:
+    """`vector_parts.route`'s probe: the books of `books` this part holds."""
+    return books_with_vectors(books, part)
+
+
+def table_of_book(collection, book_id: int):
+    """The LanceDB table holding (or that would hold) one document's rows:
+    the single table, or its part's; None while that table does not exist.
+    For tools that read a document's rows by hand."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        routed = vector_parts.route(collection, [book_id], probe=_holds)
+        if not routed:
+            return None
+        collection = vector_parts.view(collection, next(iter(routed)))
+    return _committed_table(_conn(collection))
+
+
+def _check_part_rows(collection, value: str, rows) -> None:
+    """Under a `lang` table key, the part IS the language: a search narrowed
+    by it reads the part without a row filter, so a row whose `lang` says
+    otherwise would answer for the wrong language. Refused, never moved."""
+    if vector_parts.key_of(collection) != "lang":
+        return
+    bad = sorted({str(r.get("lang")) for r in rows if r.get("lang") and r.get("lang") != value})
+    if bad:
+        raise vector_parts.Unrouted(f"{collection.name}: rows of language {bad} routed to the part "
+                                    f"lang={value} — the document's slice and its language disagree")
+
+
+def _part_for_write(collection, book_id: int, lang: str | None = None):
+    """The part one document's vectors are written to (Unrouted when the
+    router cannot name it: a write is never guessed)."""
+    (value,) = vector_parts.route(collection, [book_id])
+    _check_part_rows(collection, value, [{"lang": lang}])
+    return vector_parts.view(collection, value)
 
 #: docs/09-formats.md §9.12: the run an endpoint states with every answer (an
 #: `api = "vega"` encoder's receipts name it instead, `_request_vouched`)
@@ -132,6 +194,24 @@ class EndpointBusy(EndpointDeferred):
     loading its weights, overloaded, a proxy that lost it."""
 
 
+#: What VeGa's wrapper answers a load it states no run for (vega_wrapper
+#: `_refuse_load`: "VeGa: no run can be stated: <why>"), carried to us in the
+#: runner's error. It does not heal by waiting: the run is refused until the
+#: model's tree or YAML changes (CLAUDE.md invariant 12).
+VEGA_NO_RUN = model_load.VEGA_NO_RUN
+
+
+class EndpointRunRefused(EndpointBusy):
+    """The model platform refused to state a run for this model (VeGa's
+    `VEGA_NO_RUN`). For the worker it stays a deferral like any busy answer —
+    no document is touched, and the stage asks again — but a command run by
+    hand or under `deploy/supervise-pass.sh` exits 2, refused: nothing it can
+    retry will change it (München, 2026-11-02: pubmed's CPU twin on an
+    unmeasured OpenVINO tree, retried every minute). Behind LocalAI's later
+    "load is in cooldown" 503 the reason is hidden; it shows again on the
+    next load the runner attempts, and is recognised then."""
+
+
 class EndpointTimedOut(EndpointBusy):
     """The encoder took the request and did not answer within its bound (a
     read or write timeout). The ENDPOINT's state by default — seen on the node
@@ -174,6 +254,20 @@ def _touch(recipe: "collections_mod.EmbedRecipe") -> None:
         pass
 
 
+def reload_model(recipe: "collections_mod.EmbedRecipe", *, query: bool = False,
+                 timeout: float = 120.0) -> None:
+    """Asks the model runner to stop the model, so its next request loads it
+    afresh: LocalAI's `POST /backend/shutdown` (the multi-load gate,
+    docs/notes/near-exact-runs.md §3). The caller waits for the load."""
+    base = (recipe.query_url or recipe.url) if query else recipe.url
+    model = (recipe.query_model or recipe.model) if query else recipe.model
+    r = httpc.post(f"{base.rstrip('/')}/backend/shutdown", json={"model": model},
+                   timeout=timeout)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{base}: the model runner refused to stop {model}: "
+                           f"HTTP {r.status_code}")
+
+
 def _post(recipe: "collections_mod.EmbedRecipe", url: str, *, timeout: float, **kw):
     """One request to the encoder; a timeout reading or sending it is
     `EndpointTimedOut`, never a bare httpx error a caller could put on a
@@ -214,7 +308,14 @@ BUSY_STATUS = frozenset({408, 429})
 
 def _endpoint_error(recipe: "collections_mod.EmbedRecipe", response) -> EndpointDeferred:
     status = response.status_code
-    detail = (getattr(response, "text", "") or "")[:200].replace("\n", " ")
+    body = getattr(response, "text", "") or ""
+    detail = body[:200].replace("\n", " ")
+    if status >= 500 and VEGA_NO_RUN in body:
+        at = body.index(VEGA_NO_RUN)
+        return EndpointRunRefused(
+            f"{body[at:at + 400].strip()} — the model platform behind {recipe.url} refuses "
+            f"to state a run for this model; nothing is written, and waiting does not change "
+            f"it: the model's tree or YAML must (CLAUDE.md invariant 12)", status)
     if status in BUSY_STATUS or status >= 500:
         return EndpointBusy(
             f"embed server HTTP {status}: {detail} — the endpoint {recipe.url} is "
@@ -243,13 +344,17 @@ def _parsed(response, recipe: "collections_mod.EmbedRecipe", read):
 def _request_vectors(batch: list[Item], timeout: float,
                      recipe: "collections_mod.EmbedRecipe",
                      runs: set | None = None) -> list[list[float]]:
-    # Every request passes its server's gate (app/dispatch.py): at most the
+    # Every request passes its server's gate (app/rage/dispatch.py): at most the
     # server's concurrency at a time, the highest level first. The wait is
     # bounded by this request's own timeout.
     g = dispatch.gate(recipe.url, recipe.concurrency)
     # the caller's level, for the model container's clock (09 §9.12): CORPUS
     # from the worker, QUERY from a search — whatever this thread works as
     level = dispatch.level_headers()
+    # corpus work stands aside on the whole card while a person's query runs
+    # (app/rage/dispatch.py, operator 2026-10-25) — its warm, which may LOAD a
+    # model beside the query's, included; the gate checks again at admission
+    dispatch.stand_aside(recipe.url, timeout)
     # the model's LOAD is not this request's: warmed first, under its own
     # bound, when the runner says it is not loaded (app/model_load.py)
     _warm_first(batch, recipe, level)
@@ -291,7 +396,8 @@ def _warm_first(batch: list[Item], recipe: "collections_mod.EmbedRecipe",
                           "encoding_format": "base64", "model": recipe.model}
         else:
             body = _body(recipe, probe)
-        httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s, headers=level)
+        return httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s,
+                          headers=level)
 
     lvl, plugin = dispatch.current()
     model_load.ensure_loaded(recipe.url, recipe.model, warm,
@@ -584,6 +690,12 @@ def _body(recipe: "collections_mod.EmbedRecipe", batch: list[Item]) -> dict:
     return {"input": batch, **model}
 
 
+def batch_size(recipe) -> int:
+    """Chunks a request carries: the collection's `[encoder] batch`, else the
+    node's EMBED_BATCH (2026-10-31)."""
+    return max(1, int(getattr(recipe, "batch", 0) or 0) or int(config.EMBED_BATCH))
+
+
 def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
     """The recipe of the side that is asked: the query encoder's when the
     collection declares one and a query is being embedded, else the recipe.
@@ -631,13 +743,50 @@ def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
     not another puts two kinds of query vector in one collection and nothing
     reports it: both are honest vectors of the right width.
 
-    Documents are never touched: "a document is embedded by space.encoder
-    and never prefixed". A prefix that leaked onto the document side would
-    move every vector in the collection together, so retrieval would still
-    look reasonable while no longer matching the space the Codex pins."""
+    Documents never get the QUERY instruction: a query prefix that leaked
+    onto the document side would move every vector in the collection
+    together, so retrieval would still look reasonable while no longer
+    matching the space the Codex pins. A document gets the space's own
+    DOCUMENT instruction where it declares one (`_documents`)."""
     if not (query and recipe.query_instruction):
         return texts
     return [f"{recipe.query_instruction}{t}" for t in texts]
+
+
+def _documents(texts: list[Item], recipe: "collections_mod.EmbedRecipe") -> list[Item]:
+    """The texts as the DOCUMENT side must receive them: the Codex's
+    `space.document.instruction` prepended (09 §9.3, Codex version 11) —
+    Nemotron's "passage: " — exactly as `_asked` prepends a query's, no
+    separator added or trimmed. Nothing where the space declares none, which
+    is every space before 2026-11-02.
+
+    Applied HERE ONLY, to every document input whatever path it came by —
+    a collection's chunks, the calibration set at `create`, the gate's and
+    the re-check's texts, a probe — so the reference, the gate and the
+    vectors written are one function. Nobody else prefixes a document, and
+    `asked` (the query side's "already prefixed") does not skip it: the
+    gate's document answers are asked with it set (run_check.answers).
+
+    A pair is refused: its documents are pairs (09 §9.3, input forms), and a
+    prefix on one half is a function no space names (`validate` refuses such
+    a Codex)."""
+    instruction = getattr(recipe, "document_instruction", None)
+    if not instruction:
+        return texts
+    if any(not isinstance(t, str) for t in texts):
+        raise InputFormError("a document instruction prefixes a text; a pair is a "
+                             "document of a pair layer (09 §9.3, input forms)")
+    return [f"{instruction}{t}" for t in texts]
+
+
+def _sent(texts: list[Item], recipe: "collections_mod.EmbedRecipe", query: bool,
+          asked: bool) -> list[Item]:
+    """What the encoder receives: a query with the space's query instruction
+    unless the caller `asked` it already, a document with the space's
+    document instruction always (`_asked`, `_documents`)."""
+    if query:
+        return texts if asked else _asked(texts, recipe, True)
+    return _documents(texts, recipe)
 
 
 def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRecipe",
@@ -648,14 +797,14 @@ def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRec
 
     This is how docs/09-formats.md §9.12 takes a run's fingerprint: "embedded
     one at a time … each as the endpoint returned it". It is also what
-    tools/endpoint_vectors.py records before a model changes hands, so that
+    tools/endpoint_vectors.py@c572c3b records before a model changes hands, so that
     what answers afterwards can be held to it bit for bit. No batching, no
     concurrency: neither EMBED_BATCH nor EMBED_CONCURRENCY applies here, on
     purpose — the gate sets this beside the way the peer really contributes
     to measure batch invariance (03 §3.3)."""
     side = _side(recipe, query)
     return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0]
-            for text in (texts if asked else _asked(texts, side, query))]
+            for text in _sent(texts, side, query, asked)]
 
 
 def _embed_texts(texts: list[Item], timeout: float = 300, *,
@@ -677,8 +826,19 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             "_embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
-    texts = texts if asked else _asked(texts, recipe, query)
+    texts = _sent(texts, recipe, query, asked)
+    co = _coalescing.get()
+    if co is not None and not query and co.serves(recipe):
+        # the texts join other documents' in requests of the gated batch
+        # (`Coalescer`): one stream's documents, one encoder
+        return co.embed(texts, raw=raw, runs=runs, timeout=timeout)
+    return _send_texts(texts, timeout, recipe, runs=runs, raw=raw)
 
+
+def _send_texts(texts: list[Item], timeout: float, recipe: "collections_mod.EmbedRecipe", *,
+                runs: set | None = None, raw: bool = False) -> list[list[float]]:
+    """`texts` (already as their side receives them) in requests of the
+    gated batch, EMBED_CONCURRENCY of them at once; vectors in order."""
     def one(b: list[Item]) -> list[list[float]]:
         # the two keywords only where asked for: a test's stand-in for
         # `_embed_batch` takes the three arguments it always took
@@ -686,8 +846,8 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             return _embed_batch(b, timeout, recipe, raw=raw, runs=runs)
         return _embed_batch(b, timeout, recipe)
 
-    batches = [texts[i:i + config.EMBED_BATCH]
-               for i in range(0, len(texts), config.EMBED_BATCH)]
+    size = batch_size(recipe)
+    batches = [texts[i:i + size] for i in range(0, len(texts), size)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
     if workers > 1:
         # a pool thread starts with an EMPTY context: without handing over
@@ -700,6 +860,230 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
     else:
         results = [one(b) for b in batches]
     return [v for part in results for v in part]
+
+
+# ---- requests filled across documents (dynamic batching) -----------------------
+#
+# gpu-saturation-plan.md, step 1 lever 2. A request carried ONE document's
+# chunks, so wikidata (1.04 chunks a document) sent ~76 requests a second of
+# ~1 text each and the card computed 82 % of the time, the rest lost to each
+# request's turnaround, with the gated batch of 16 never filled (München,
+# 2026-11-01). A `Coalescer` lets the texts of every document in flight join
+# requests of up to the gated batch, `lanes` requests at once — the dynamic
+# batching of inference servers (Triton's dynamic batcher, TEI's batching),
+# here on the client's side because the model server is a plain one (base
+# rule: the engine is Louise's). Without a linger: a lane sends what waits
+# the moment it is free, so under load the requests fill and an idle stream
+# adds no latency.
+#
+# It is what the gate validates already: its "contribute" pass sends batches
+# of `[encoder] batch` texts with the collection's concurrency of requests
+# (run_check.answers), whichever texts share a request. A document writes
+# only when all of its vectors are back (invariant 2: unchanged, upsert_book
+# waits). A request that fails for its INPUT is sent again per document, so
+# a refused text stays its own document's error; one that fails for the
+# ENDPOINT (busy, misconfigured, a receipt late) is every document's
+# deferral, never multiplied into one request per document. A TIMEOUT of a
+# shared request is the endpoint's until one document proves it its own
+# (app/encoder_timeouts.py's rule): a one-word probe asks whether the
+# endpoint answers; if it does, each document is asked again alone — the
+# slow text times out on its own and the others are answered — and if it
+# does not, the timeout is everyone's, as a hung endpoint's always was.
+# Without this, one pathological text would put a timeout on each of its
+# batch-mates, and after BLAME_AFTER of them an error on innocent documents.
+
+#: the probe's text and bound
+ALIVE_PROBE = "louise"
+ALIVE_TIMEOUT_S = 30.0
+
+#: the coalescer this thread's embeddings go through (`coalescing`)
+_coalescing: contextvars.ContextVar["Coalescer | None"] = contextvars.ContextVar(
+    "embeddings_coalescing", default=None)
+
+
+@contextmanager
+def coalescing(co: "Coalescer | None"):
+    token = _coalescing.set(co)
+    try:
+        yield
+    finally:
+        _coalescing.reset(token)
+
+
+@dataclass
+class _Ask:
+    items: list
+    raw: bool
+    runs: set | None
+    vectors: list
+    left: int
+    done: threading.Event
+    error: BaseException | None = None
+
+
+def _endpoint_fault(exc: BaseException) -> bool:
+    """The endpoint's state, the same for every input it was asked: never
+    sent again per document."""
+    return isinstance(exc, (EndpointDeferred, ConnectionError, vclient.Deferral,
+                            httpx.TransportError, hold_runs.RunUnvalidated,
+                            hold_runs.RunRefused))
+
+
+class Coalescer:
+    """One stream's requests to one encoder, filled across its documents:
+    up to `size` texts a request, `lanes` requests at once, first come first
+    served. `embed` blocks its caller (a document's thread) until its texts
+    are back, bounded; `close` ends it, what waits deferred."""
+
+    def __init__(self, recipe: "collections_mod.EmbedRecipe", *, size: int, lanes: int,
+                 name: str = "", timeout: float = 300) -> None:
+        self.recipe = recipe
+        self.size = max(1, int(size))
+        self.lanes = max(1, int(lanes))
+        self.timeout = timeout
+        self._waiting: list[tuple[_Ask, int]] = []      # (ask, index of one of its items)
+        self._cv = threading.Condition()
+        self._closed = False
+        self.requests = 0                                 # sent, for the tests and the log
+        self.texts = 0
+        # each lane works in the creator's context: its level and collection
+        # reach the gate as the documents' would (dispatch.working_as)
+        self._threads = [threading.Thread(
+            target=contextvars.copy_context().run, args=(self._lane,),
+            name=f"coalesce-{name}-{i}", daemon=True) for i in range(self.lanes)]
+        for t in self._threads:
+            t.start()
+
+    def serves(self, recipe) -> bool:
+        return recipe == self.recipe
+
+    def embed(self, items: list, *, raw: bool = False, runs: set | None = None,
+              timeout: float = 300) -> list[list[float]]:
+        if not items:
+            return []
+        ask = _Ask(items=list(items), raw=raw, runs=runs, vectors=[None] * len(items),
+                   left=len(items), done=threading.Event())
+        with self._cv:
+            if self._closed:
+                raise EndpointBusy("the stream's requests are closed: deferred")
+            self._waiting.extend((ask, i) for i in range(len(items)))
+            self._cv.notify_all()
+        # bounded: every request this ask needs, one after another at worst,
+        # behind a full queue of others'; past it, a deferral
+        bound = timeout * (2 + -(-len(items) // self.size))
+        if not ask.done.wait(bound):
+            late = EndpointTimedOut(f"{self.recipe.url}: the stream's requests did not "
+                                    f"answer within {bound:.0f} s; deferred")
+            self._fail([ask], late)           # what of it still waits is not sent
+            raise late
+        if ask.error is not None:
+            raise ask.error
+        return ask.vectors
+
+    def _take(self) -> list[tuple[_Ask, int]] | None:
+        with self._cv:
+            while not self._waiting and not self._closed:
+                self._cv.wait(1.0)
+            if not self._waiting:
+                return None
+            head = self._waiting[0][0]
+            kind = (head.raw, isinstance(head.items[self._waiting[0][1]], str))
+            took, rest = [], []
+            for entry in self._waiting:
+                ask, i = entry
+                if len(took) < self.size and (ask.raw, isinstance(ask.items[i], str)) == kind:
+                    took.append(entry)
+                else:
+                    rest.append(entry)
+            self._waiting = rest
+            return took
+
+    def _lane(self) -> None:
+        while True:
+            took = self._take()
+            if took is None:
+                return
+            self._send(took)
+
+    def _send(self, took: list[tuple[_Ask, int]]) -> None:
+        raw = took[0][0].raw
+        seen: set = set()
+        try:
+            vectors = _send_texts([a.items[i] for a, i in took], self.timeout, self.recipe,
+                                  runs=seen, raw=raw)
+        except BaseException as e:   # noqa: BLE001 — handed to the documents it concerns
+            shared = len({id(a) for a, _ in took}) > 1
+            if isinstance(e, EndpointTimedOut) and shared and self._answers():
+                self._alone(took, raw)       # alive: the slow text proves itself alone
+            elif _endpoint_fault(e):
+                self._fail({id(a): a for a, _ in took}.values(), e)
+            else:
+                self._alone(took, raw)
+            return
+        with self._cv:
+            self.requests += 1
+            self.texts += len(took)
+        for (ask, i), v in zip(took, vectors):
+            self._deliver(ask, i, v, seen)
+
+    def _answers(self) -> bool:
+        """Does the endpoint answer at all, now? One word, a short bound."""
+        try:
+            _send_texts([ALIVE_PROBE], ALIVE_TIMEOUT_S, self.recipe, runs=set(), raw=True)
+            return True
+        except BaseException:   # noqa: BLE001 — not answering, whatever the way
+            return False
+
+    def _alone(self, took: list[tuple[_Ask, int]], raw: bool) -> None:
+        """The request failed for an input: each document's part again on
+        its own, so the error lands on the document whose text it was."""
+        parts: dict[int, tuple[_Ask, list[int]]] = {}
+        for ask, i in took:
+            parts.setdefault(id(ask), (ask, []))[1].append(i)
+        for ask, idx in parts.values():
+            seen: set = set()
+            try:
+                vectors = _send_texts([ask.items[i] for i in idx], self.timeout, self.recipe,
+                                      runs=seen, raw=raw)
+            except BaseException as e:   # noqa: BLE001
+                self._fail([ask], e)
+                continue
+            for i, v in zip(idx, vectors):
+                self._deliver(ask, i, v, seen)
+
+    def _deliver(self, ask: _Ask, i: int, vector, seen: set) -> None:
+        with self._cv:
+            if ask.done.is_set():
+                return
+            ask.vectors[i] = vector
+            if ask.runs is not None:
+                ask.runs |= seen
+            ask.left -= 1
+            if ask.left == 0:
+                ask.done.set()
+
+    def _fail(self, asks, exc: BaseException) -> None:
+        with self._cv:
+            for ask in asks:
+                if not ask.done.is_set():
+                    ask.error = exc
+                    ask.done.set()
+            # what else of a failed ask still waits is not sent
+            failed = {id(a) for a in asks}
+            self._waiting = [(a, i) for a, i in self._waiting if id(a) not in failed]
+
+    def close(self, wait_s: float = 60.0) -> None:
+        """No new texts; what waits is deferred; the requests in flight
+        finish (bounded by `wait_s`)."""
+        with self._cv:
+            self._closed = True
+            waiting = {id(a): a for a, _ in self._waiting}.values()
+            self._waiting = []
+            self._cv.notify_all()
+        self._fail(list(waiting), EndpointBusy("the stream ended before these were sent: deferred"))
+        deadline = time.monotonic() + wait_s
+        for t in self._threads:
+            t.join(max(0.0, deadline - time.monotonic()))
 
 
 # ---- the public entry points ------------------------------------------------
@@ -963,7 +1347,8 @@ def _create_table(db, rows):
     ]
     if all(c in rows[0] for c in VALIDITY_COLUMNS):
         fields += [pa.field(c, pa.int64()) for c in VALIDITY_COLUMNS]
-    return db.create_table(TABLE, data=rows, schema=pa.schema(fields))
+    return db.create_table(TABLE, data=rows, schema=pa.schema(fields),
+                           storage_options=NEW_TABLE_STORAGE)
 
 
 def _conform(tbl, rows: list[dict]) -> list[dict]:
@@ -1007,6 +1392,12 @@ def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None, *,
     (the embed stage's way), ValidityColumnsMissing for the latter: a
     document whose rows cannot carry the columns is deferred, never marked
     done over a table no date can filter (2026-10-13)."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        for value in vector_parts.route(collection, [book_id], probe=_holds):
+            return sync_columns(book_id, columns, vector_parts.view(collection, value), lock_con,
+                                refuse=refuse)
+        return False
     db = _conn(collection)
     if TABLE not in db.table_names():
         return False
@@ -1034,6 +1425,15 @@ def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50
     columns is left alone (`{"rows": n, "unchanged": True}`)."""
     import pyarrow as pa
     from app import validity as validity_mod
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        # each part rebuilt on its own, as one table would be
+        outs = [add_validity_columns(v, con, lock_con=lock_con, batch_rows=batch_rows, log=log)
+                for v in vector_parts.views(collection)]
+        if all(o.get("unchanged") for o in outs):
+            return {"rows": sum(o["rows"] for o in outs), "unchanged": True}
+        return {"rows": sum(o["rows"] for o in outs), "documents": sum(o.get("documents", 0) for o in outs),
+                "versions": max((o.get("versions", 0) for o in outs), default=0), "parts": len(outs)}
     db = _conn(collection)
     if TABLE not in db.table_names():
         return {"rows": 0, "unchanged": True}
@@ -1057,14 +1457,15 @@ def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50
                 list(part.columns) + [arrays[c] for c in VALIDITY_COLUMNS],
                 schema=schema)
             if new is None:
-                new = db.create_table(tmp, data=pa.Table.from_batches([full]), schema=schema)
+                new = db.create_table(tmp, data=pa.Table.from_batches([full]), schema=schema,
+                                      storage_options=NEW_TABLE_STORAGE)
             else:
                 new.add(pa.Table.from_batches([full]))
             rows += part.num_rows
             seen.update(int(b) for b in books)
             say(f"validity columns: {rows} rows rewritten")
         if new is None:                              # an empty table: recreated with the columns
-            new = db.create_table(tmp, schema=schema)
+            new = db.create_table(tmp, schema=schema, storage_options=NEW_TABLE_STORAGE)
         versions = tbl.version
         db.drop_table(TABLE)
         src, dst = Path(collection.lance_dir) / f"{tmp}.lance", Path(collection.lance_dir) / f"{TABLE}.lance"
@@ -1238,6 +1639,18 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
     ids = list(chunk_ids)
     if not ids:
         return {}
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict[int, list[str]] = {}
+        for cid in ids:
+            b = vector_parts.book_of_chunk(cid)
+            if b is not None:
+                by_book.setdefault(b, []).append(cid)
+        out: dict = {}
+        for value, books_ in vector_parts.route(collection, by_book, probe=_holds).items():
+            out.update(_by_chunk_id([c for b in books_ for c in by_book.get(b, ())],
+                                    vector_parts.view(collection, value), with_text=with_text))
+        return out
     books: set[int] = set()
     for cid in ids:
         parts = cid.rsplit(":", 2)
@@ -1253,6 +1666,7 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
     if TABLE not in db.table_names():
         return {}
     want = set(ids)
+    wanted = pa.array(sorted(want), type=pa.string())
     out: dict = {}
     tbl = db.open_table(TABLE)
     columns = ["id", "text", "vector"] if with_text else ["id", "vector"]
@@ -1264,13 +1678,17 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
         try:
             rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({chunk})",
                                        prefilter=True)
-                    .select(columns).limit(_RESUME_SCAN_MAX).to_list())
+                    .select(columns).limit(_RESUME_SCAN_MAX).to_arrow())
         except Exception:                       # noqa: BLE001
             return out
-        for r in rows:
-            if r["id"] in want:
-                v = list(r["vector"])
-                out[r["id"]] = (r["text"], v) if with_text else v
+        # The ids are kept in Arrow before any row becomes Python: the
+        # filter returns every chunk of 500 books (gutenberg's: ~65,000
+        # rows of 2,560 floats), and turned into lists first they took
+        # 8 GB to give back a few (the bakeoff's pool, 2026-11-02, OOM).
+        rows = rows.filter(pc.is_in(rows.column("id"), value_set=wanted))
+        for r in rows.to_pylist():
+            v = list(r["vector"])
+            out[r["id"]] = (r["text"], v) if with_text else v
     return out
 
 
@@ -1288,6 +1706,21 @@ def books_with_vectors(native_ids, collection=None) -> set[int]:
     books = sorted({int(b) for b in native_ids})
     if not books:
         return set()
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        found: set[int] = set()
+        placed = vector_parts.values_of_books(collection, books)
+        lost = [b for b, v in placed.items() if v is None]
+        groups: dict[str, list[int]] = {}
+        for b, v in placed.items():
+            if v is not None:
+                groups.setdefault(v, []).append(b)
+        for value in vector_parts.values(collection):
+            part = vector_parts.view(collection, value)
+            ask = groups.get(value, []) + lost      # an unplaced book may be in any part
+            if ask:
+                found |= books_with_vectors(ask, part)
+        return found
     db = _conn(collection)
     if TABLE not in db.table_names():
         return set()
@@ -1451,6 +1884,11 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     """
     if not chunks:
         return 0
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        part = _part_for_write(collection, book_id, lang)
+        return upsert_book(book_id, lang, chunks, part, lock_con, stop, held=held, sink=sink,
+                           reuse=reuse, counts=counts, columns=columns, given=given)
     recipe = collections_mod.recipe_for(collection)
     db = _conn(collection)
     if held is None:
@@ -1463,7 +1901,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         have = _written_chunks(db, book_id)
     else:
         dtype = held.dtype if held.dtype is not None else _np_dtype_of_recipe(recipe)
-        seen = held.seen
+        seen = held.seen_of(book_id)
         have = held.of(book_id)
     wanted = ({c["id"]: c["text"] for c in chunks if _reusable(c)} if reuse else {})
     done = {i for i, r in have.items() if wanted.get(i) == r["text"]}
@@ -1659,9 +2097,17 @@ class HeldRead:
     by_book: dict
     seen: int
     dtype: object = None
+    #: a split collection's read: each document's PART version (its own
+    #: table's), which `seen` cannot be for documents in several parts
+    seen_by_book: dict | None = None
 
     def of(self, book_id) -> dict:
         return self.by_book.get(int(book_id), {})
+
+    def seen_of(self, book_id) -> int:
+        if self.seen_by_book is not None:
+            return self.seen_by_book.get(int(book_id), 0)
+        return self.seen
 
 
 def held_chunks(collection, book_ids) -> HeldRead:
@@ -1673,6 +2119,17 @@ def held_chunks(collection, book_ids) -> HeldRead:
     fragments, 918 ms at 3,972). Raises when the table cannot be read, or
     when the group holds more rows than one read returns: an incomplete
     answer would read as "not written yet" and store chunks twice."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict = {}
+        seen_by_book: dict[int, int] = {}
+        dtype = None
+        for value, books in vector_parts.route(collection, book_ids).items():
+            got = held_chunks(vector_parts.view(collection, value), books)
+            by_book.update(got.by_book)
+            seen_by_book.update({int(b): got.seen for b in books})
+            dtype = dtype if dtype is not None else got.dtype
+        return HeldRead(by_book, 0, dtype, seen_by_book)
     db = _conn(collection)
     tbl = _committed_table(db)
     if tbl is None:
@@ -1741,6 +2198,21 @@ def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
     next time, and marked without reaching the encoder again."""
     docs = [d for d in docs if d.rows]
     if not docs:
+        return
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        # one manifest lock over every part the batch touches, a commit set
+        # per part, and the documents marked after the last (invariant 2)
+        groups = vector_parts.route(collection, [d.book_id for d in docs])
+        by_book = {int(d.book_id): d for d in docs}
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        for v, books in groups.items():
+            _check_part_rows(collection, v, [r for b in books for r in by_book[int(b)].rows])
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                write_pending([by_book[int(b)] for b in books], parts[v])
+            if on_written is not None:
+                on_written()
         return
     db = _conn(collection)
     rows = [r for d in docs for r in d.rows]
@@ -1911,6 +2383,20 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
                 f"{r['id']!r} is not `<source>:<native_id>:<seq>:<version>` "
                 f"(09 §9.5); it is not written and no filter is built from it")
 
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        by_book: dict[int, list[dict]] = {}
+        for r in rows:
+            by_book.setdefault(int(r["book_id"]), []).append(r)
+        groups = vector_parts.route(collection, by_book)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        for v, books in groups.items():
+            _check_part_rows(collection, v, [r for b in books for r in by_book[b]])
+        n = 0
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                n += upsert_chunks([r for b in books for r in by_book[b]], parts[v], dtype=dtype)
+        return n
     db = _conn(collection)
     existing = _committed_table(db)
     if existing is not None:
@@ -1963,6 +2449,18 @@ def delete_chunks(chunk_ids, collection=None, lock_con=None) -> int:
             raise ValueError(
                 f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
                 f"(09 §9.5); nothing is deleted and no filter is built from it")
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict[int, list[str]] = {}
+        for cid in ids:
+            by_book.setdefault(int(cid.rsplit(":", 3)[1]), []).append(cid)
+        groups = vector_parts.route(collection, by_book, probe=_holds)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        gone = 0
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                gone += delete_chunks([c for b in books for c in by_book[b]], parts[v])
+        return gone
     db = _conn(collection)
     if TABLE not in db.table_names():
         return 0
@@ -1991,6 +2489,10 @@ def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
     column, as `delete_chunks` is; counted first, so a long document is never
     cut at a read limit. `hold.carry.keep_producer` walks a manifest with it."""
     books = sorted({int(b) for b in book_ids})
+    collection = _coll(collection)
+    if books and vector_parts.is_split(collection):
+        return [cid for v, part_books in vector_parts.route(collection, books, probe=_holds).items()
+                for cid in chunk_ids_of_books(part_books, vector_parts.view(collection, v))]
     db = _conn(collection)
     if not books or TABLE not in db.table_names():
         return []
@@ -2005,8 +2507,12 @@ def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
     return out
 
 
+#: the Lance directories whose `vector_index.writing` this thread holds
+_registered = threading.local()
+
+
 @contextmanager
-def _write_lock(lock_con, collection=None):
+def _write_lock(lock_con, collection=None, *, parts=()):
     """Every commit to a vector table goes through here.
 
     The manifest's vector write lock, when a connection is supplied (callers
@@ -2017,32 +2523,100 @@ def _write_lock(lock_con, collection=None):
     compaction lost all 13 of its commits from 10-21 to 10-23 to embed
     batches committing underneath it (München, 2026-10-23). Refused, a write
     raises a "retryable commit conflict", which the worker already takes for
-    a deferral (`worker.vector_store_contended`)."""
+    a deferral (`worker.vector_store_contended`).
+
+    `parts`: a split collection's write registers for every part it touches
+    BEFORE the manifest lock, as a single table's does — a wait for a
+    compaction never happens with the manifest lock held. A registration
+    this thread already holds is not taken twice (the per-part calls under
+    a split write): nested, it would wait on a compaction that waits on it."""
     from contextlib import ExitStack
     with ExitStack() as stack:
-        if collection is not None:
+        mine = getattr(_registered, "keys", None)
+        if mine is None:
+            mine = _registered.keys = set()
+        targets = list(parts) if parts else ([collection] if collection is not None else [])
+        if targets:
             from . import vector_index
-            stack.enter_context(vector_index.writing(collection))
+        for c in targets:
+            key = str(c.lance_dir)
+            if key in mine:
+                continue
+            stack.enter_context(vector_index.writing(c))
+            mine.add(key)
+            stack.callback(mine.discard, key)
         if lock_con is not None:
             from .bundles.writer_lock import vector_write_lock
             stack.enter_context(vector_write_lock(lock_con))
         yield
 
 def delete_book(book_id: int, collection=None, lock_con=None):
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        delete_books([book_id], collection, lock_con)
+        return
     db = _conn(collection)
     if TABLE in db.table_names():
         with _write_lock(lock_con, collection):
             db.open_table(TABLE).delete(_book_filter(book_id))
 
+
+def delete_books(book_ids, collection=None, lock_con=None) -> None:
+    """`delete_book` for many documents, under one hold of the write lock;
+    a Lance delete's filter costs memory per value per fragment, so they go
+    500 to a filter (`_purge_books`)."""
+    books = sorted({int(b) for b in book_ids})
+    collection = _coll(collection)
+    if books and vector_parts.is_split(collection):
+        groups = vector_parts.route(collection, books, probe=_holds)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, part_books in groups.items():
+                delete_books(part_books, parts[v])
+        return
+    db = _conn(collection)
+    if books and TABLE in db.table_names():
+        with _write_lock(lock_con, collection):
+            _purge_books(db.open_table(TABLE), books)
+
 def search(query: str, k: int = 20, langs: list[str] | None = None, collection=None,
-           book_ids: list[int] | None = None, validity: dict | None = None) -> list[dict]:
+           book_ids: list[int] | None = None, validity: dict | None = None,
+           parts: list[str] | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter — see fts.search()'s
     docstring for the same note on why retrieval.search() doesn't use it by
-    default."""
-    db = _conn(collection)
-    if TABLE not in db.table_names():
+    default.
+
+    A SPLIT collection (app/vector_parts.py): the query is embedded once and
+    asked of every part the filter selects, in threads; the answers merge
+    on distance, then chunk id. Under a `lang` table key `langs` selects the
+    parts and is no row filter inside them (a part IS its language); `parts`
+    names values of the table key directly (`family:` for wikidata). The
+    merge is exact: one space, one metric, and the index's refine pass
+    returns exact distances, so the union's top k is one exact search's.
+    `book_ids` narrows the parts to theirs."""
+    collection = _coll(collection)
+    split = vector_parts.is_split(collection)
+    if split:
+        key = vector_parts.key_of(collection)
+        only: set[str] | None = None
+        if parts:
+            only = {str(p) for p in parts}
+        if key == "lang" and langs:
+            safe = {l for l in langs if l and _SAFE_LANG.fullmatch(l)}
+            if safe:
+                only = safe if only is None else only & safe
+            langs = None              # the parts are the filter
+        if book_ids:
+            placed = vector_parts.values_of_books(collection, book_ids).values()
+            if None not in placed:         # an unplaced book may be in any part
+                held = set(placed)
+                only = held if only is None else only & held
+        targets = vector_parts.views(collection, only)
+    else:
+        db = _conn(collection)
+        targets = [collection] if TABLE in db.table_names() else []
+    if not targets:
         return []
-    tbl = db.open_table(TABLE)
     recipe = collections_mod.recipe_for(collection)
     if _by_run(collection):
         # 03 §3.3, searching: "the same runs, validated the same way". The
@@ -2055,6 +2629,43 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         run_check.check_query(collection, recipe, seen)
     else:
         vector = embed_query(collection, query, recipe=recipe)
+    ask = lambda part: _search_table(part, vector, k, langs, book_ids, validity)  # noqa: E731
+    if not split:
+        rows = ask(targets[0])
+    else:
+        if len(targets) == 1:
+            found = [ask(targets[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(targets), SEARCH_THREADS),
+                                    thread_name_prefix="vsearch") as pool:
+                found = list(pool.map(ask, targets))
+        rows = sorted((r for rs in found for r in rs),
+                      key=lambda r: (float(r.get("_distance", 0.0)), r["id"]))[:k]
+    out = []
+    for row in rows:
+        out.append({
+            "score": 1.0 - float(row.get("_distance", 0.0)) / 2.0,
+            "book_id": int(row["book_id"]),
+            "chunk_id": row["id"],
+            "chapter": row["chapter"],
+            "lang": row["lang"],
+            "text": row["text"],
+            "source": "dense",
+        })
+    return out
+
+
+#: the parts of a split collection one search asks at once
+SEARCH_THREADS = 16
+
+
+def _search_table(collection, vector, k: int, langs, book_ids, validity) -> list[dict]:
+    """One table's top k for an embedded query, its rows as Lance returns
+    them (`_distance` included): the single table, or one part."""
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return []
+    tbl = db.open_table(TABLE)
     qvec = np.asarray(vector, dtype=_np_dtype_of_table(tbl))
     from . import vector_index
     # probe the local IVF index when the collection has one (nprobes /
@@ -2083,18 +2694,7 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
                 "nothing re-embedded; until then no search as of a date")
         from app import validity as validity_mod
         q = q.where(validity_mod.lance_where(validity), prefilter=True)
-    out = []
-    for row in q.to_list():
-        out.append({
-            "score": 1.0 - float(row.get("_distance", 0.0)) / 2.0,
-            "book_id": int(row["book_id"]),
-            "chunk_id": row["id"],
-            "chapter": row["chapter"],
-            "lang": row["lang"],
-            "text": row["text"],
-            "source": "dense",
-        })
-    return out
+    return q.to_list()
 
 def search_records(query: str, depth: int, langs: list[str] | None = None, collection=None,
                    **restrict) -> list[dict]:
@@ -2113,6 +2713,11 @@ def scan_columns(collection, columns, batch_size: int = 65_536):
     """The vector table's `columns`, a record batch at a time: ONE read of
     the table, for a pass that must see every row (carry's recut, A1e) —
     where a lookup per window of documents cost pubmed ~16 h (carry.py)."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        for part in vector_parts.views(collection):
+            yield from scan_columns(part, columns, batch_size)
+        return
     db = _conn(collection)
     if TABLE not in db.table_names():
         return
@@ -2122,7 +2727,11 @@ def scan_columns(collection, columns, batch_size: int = 65_536):
 
 def fragment_count(collection) -> int:
     """The vector table's fragments (0 with no table): a Lance delete's filter
-    costs memory per value per fragment (carry._delete_batch)."""
+    costs memory per value per fragment (carry._delete_batch). A split
+    collection's: its largest part's, the most one routed delete meets."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        return max((fragment_count(p) for p in vector_parts.views(collection)), default=0)
     db = _conn(collection)
     if TABLE not in db.table_names():
         return 0
@@ -2130,6 +2739,9 @@ def fragment_count(collection) -> int:
 
 
 def stats(collection=None) -> dict:
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        return {"vectors": sum(stats(p)["vectors"] for p in vector_parts.views(collection))}
     db = _conn(collection)
     if TABLE not in db.table_names():
         return {"vectors": 0}

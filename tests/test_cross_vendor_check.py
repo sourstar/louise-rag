@@ -79,3 +79,16 @@ def test_a_twin_slower_than_its_limit_reports_what_it_has(tmp_path, monkeypatch)
                       say=said.append)
     assert out["roles"]["document"]["twin"]["n"] == 0
     assert any("stopped at its limit after 0 of 64" in line for line in said)
+
+
+
+def test_the_twin_is_asked_the_shortest_texts_too_and_the_rule_s_line_is_printed(tmp_path, monkeypatch):
+    """A quantised level's card stands furthest from its CPU on the SHORTEST
+    texts (36–39 tokens for gutenberg's Q4_K_M): a spread sample can miss
+    them, and the line is made from the worst."""
+    from tools import cross_vendor_check as cvc
+    texts = ["x" * n for n in (500, 30, 400, 10, 300, 20, 200, 100)]
+    assert cvc.twin_picks(texts, 2, 0) == [0, 4]
+    assert cvc.twin_picks(texts, 2, 3) == [0, 1, 3, 4, 5]
+    s = cvc.stats([1.0] * 99 + [0.98])
+    assert s["worst"] == 0.98 and s["p1"] == 0.98 and s["median"] == 1.0

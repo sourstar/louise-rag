@@ -180,7 +180,8 @@ class NormattivaRefSource:
             return
         acts: dict[str, dict] = {}
         versions: list[dict] = []
-        for zpath in sorted(root.rglob("*.zip")):
+        from app.plugins import walk
+        for zpath in walk.files(root, "*.zip"):        # through links (walk.py)
             try:
                 zf = zipfile.ZipFile(zpath)
             except (zipfile.BadZipFile, OSError):
@@ -244,21 +245,114 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
     ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto",
      "settembre", "ottobre", "novembre", "dicembre"))}
 _MONTH_RE = "|".join(_MONTHS)
-_NUM = r"(?P<num>\d+(?:[-\s]?(?:bis|ter|quater|quinquies))?)"
+_SUFFIX = r"(?:[-\s]?(?:bis|ter|quater|quinquies))?"
+_NUM = rf"(?P<num>\d+{_SUFFIX})"
 #: "art. 5, comma 3, della" before an act: the article and comma kept for
 #: the label, the preposition not
 _ART = r"(?:(?P<art>art(?:icolo|\.)?\s*\d+(?:-\w+)?(?:\s*,?\s*comma\s*\d+)?)\s*,?\s*(?:del(?:la)?\s+)?)?"
+#: what follows a dated citation's first digit, and a short one's number
+_DAY_REST = rf"[°]?\s+(?P<month>{_MONTH_RE})\s+(?P<year>\d{{4}})\s*,?\s*n\.?\s*{_NUM}"
+_YEAR_REST = rf"\s*(?:/|del\s+(?:\d{{1,2}}\s+(?:{_MONTH_RE})\s+)?|,\s*)(?P<year>\d{{4}})"
 #: "legge 31 ottobre 2003, n. 306" — the full form; a few words of title may
 #: stand between the form and the date ("legge sull'emigrazione testo unico
 #: 13 novembre 1919, n. 2205", operator 2026-10-13: the citation went
 #: unrecognised and the act was answered by ranking alone)
 _CITE_DATED = re.compile(
-    rf"{_ART}(?P<type>{_TYPE_RE})(?:\s+[^\s\d,;]+){{0,8}}?\s*,?\s+(?P<day>\d{{1,2}})[°]?\s+(?P<month>{_MONTH_RE})\s+(?P<year>\d{{4}})"
-    rf"\s*,?\s*n\.?\s*{_NUM}", re.I)
+    rf"{_ART}(?P<type>{_TYPE_RE})(?:\s+[^\s\d,;]+){{0,8}}?\s*,?\s+(?P<day>\d{{1,2}}){_DAY_REST}",
+    re.IGNORECASE)
 #: "l. 306/2003", "d.lgs. n. 82 del 2005", "d.lgs. 82 del 7 marzo 2005"
-_CITE_SHORT = re.compile(
-    rf"{_ART}(?P<type>{_TYPE_RE})\s*n?\.?\s*{_NUM}\s*(?:/|del\s+(?:\d{{1,2}}\s+(?:{_MONTH_RE})\s+)?|,\s*)"
-    rf"(?P<year>\d{{4}})", re.I)
+_CITE_SHORT = re.compile(rf"{_ART}(?P<type>{_TYPE_RE})\s*n?\.?\s*{_NUM}{_YEAR_REST}", re.IGNORECASE)
+
+# ---- the scan: the patterns tried only where a citation can start --------------------
+#
+# (docs/notes/python-hot-spots.md B.) Both patterns open with an optional
+# group and a case-insensitive alternation, so `re` has no first character
+# to skip to and `finditer` tried them at EVERY character, 0.4 µs each: a
+# 400 KB book cost ~140 ms, on every document of every collection, plus
+# ~45 ms for a month pre-check.
+#
+# Every match holds a DIGIT RUN with a fixed tail: a short citation's
+# number, then its year (`_YEAR_REST`); a dated one's day, then month, year
+# and number (`_DAY_REST`). `_AT` finds those runs: it begins with `\d`, a
+# class `re` skips to in C (2 ms a 400 KB book). What stands before the run
+# is the article (`_ART`), the type and, dated, up to eight title words:
+#  - no digit, so the run starts there (`(?<!\d\d)`);
+#  - no `;`, and in a short citation only `[\w.,-]` and white space;
+#  - at most 15 (short) or 23 (dated) runs of white space, one per `\s` on
+#    the longest path: `_ART` 7, `_TYPE_RE` 6, then `\s*n?\.?\s*` 2 (short)
+#    or eight title words and `\s*,?\s+` 10 (dated).
+# `_*_BACK`, run back from the digits, reaches every start that allows; and
+# every match begins "art" or with a type, so with one of the two-character
+# openings `_START` lists. `_matches` tries the pattern there only, in
+# order, resuming after each match: `finditer` minus positions where nothing
+# can match — identical by construction, and tested so against the verbatim
+# old scan (tests/test_citations_fast_path.py). Standard alternative:
+# Google RE2, a linear-time engine; a new dependency with its own semantic
+# differences, not needed: this is ~10x on a dense legal text, 45-75x on
+# prose.
+_DATED_AT = re.compile(rf"\d(?<!\d\d)(?=\d?{_DAY_REST})", re.IGNORECASE)
+_SHORT_AT = re.compile(rf"\d(?<!\d\d)(?=\d*{_SUFFIX}{_YEAR_REST})", re.IGNORECASE)
+#: a run either kind may hold, in one pass (the names dropped: a group
+#: captures, it does not change what matches)
+_AT = re.compile(
+    r"\d(?<!\d\d)(?=" + re.sub(r"\(\?P<\w+>", "(?:", rf"\d?{_DAY_REST}|\d*{_SUFFIX}{_YEAR_REST}") + ")",
+    re.IGNORECASE)
+#: on the text REVERSED, from the run: what may stand before it
+_DATED_BACK = re.compile(r"(?:[^\s;]*\s+){0,23}[^\s;]*")
+_SHORT_BACK = re.compile(r"(?:[\w.,-]*\s+){0,15}[\w.,-]*")
+#: ar, le, l., de, d., dl, dp, re, r., te, t. — the first letter a class `re`
+#: can skip to, case-sensitive: a, d, l, r, t fold to their two cases alone
+#: (every code point checked by the test)
+_START = re.compile(r"(?-i:[aAdDlLrRtT])(?:(?<=a)(?=r)|(?<=[lrt])(?=[e.])|(?<=d)(?=[e.lp]))",
+                    re.IGNORECASE)
+_SCANS = ((_CITE_DATED, _DATED_AT, _DATED_BACK), (_CITE_SHORT, _SHORT_AT, _SHORT_BACK))
+
+
+def _reach(back: re.Pattern, text: str, d: int) -> int:
+    """Where `back` reaches, going back from `d`: run forward on the text
+    before `d` reversed, a slice of it widened until the match stops inside
+    it (or the slice is the whole text) — so where it stops is where it
+    would stop on the whole text, without reversing all of it."""
+    span = 512
+    while True:
+        lo = max(0, d - span)
+        seg = text[lo:d][::-1]
+        end = back.match(seg).end()
+        if end < len(seg) or lo == 0:
+            return d - end
+        span *= 8
+
+
+def _matches(pattern: re.Pattern, runs: list[int], back: re.Pattern, text: str) -> Iterator[re.Match]:
+    """`pattern.finditer(text)`, exactly, given the digit runs every match of
+    it holds (`runs`, ascending): the pattern is tried at each possible
+    start before a run, never twice, never before the last match's end."""
+    pos = done = 0
+    for d in runs:
+        if d <= pos:                # inside the last match: nothing before it to try
+            done = d
+            continue
+        # `d + 1`: `_START` reads two characters; nothing starts at d itself
+        for s in _START.finditer(text, max(_reach(back, text, d), pos, done), d + 1):
+            q = s.start()
+            if q >= d:
+                break
+            if q >= pos and (m := pattern.match(text, q)) is not None:
+                yield m
+                pos = m.end()
+        done = d
+
+
+def _month(name: str) -> int:
+    """The month `_MONTH_RE` matched, by the pattern's own case rule. `re.I`
+    folds ſ to s and ı, İ to i; `str.lower` leaves ſ and ı, and makes İ two
+    characters, so "3 ſettembre 1765, n. 5" after an act's type was a
+    KeyError: the whole document an fts error, the question a failed search
+    (2026-11-02)."""
+    got = _MONTHS.get(name.lower())
+    if got is None:
+        got = next(i for m, i in _MONTHS.items() if re.fullmatch(m, name, re.IGNORECASE))
+    return got
 
 
 def _type_token(text: str) -> str | None:
@@ -274,14 +368,16 @@ def citations(query: str) -> list[dict]:
     same act, since it carries the date."""
     found: list[tuple[int, dict]] = []
     seen: set[tuple] = set()
-    for pattern in (_CITE_DATED, _CITE_SHORT):
-        for m in pattern.finditer(query):
+    anchors = [a.start() for a in _AT.finditer(query)]
+    for pattern, at, back in _SCANS if anchors else ():
+        runs = [d for d in anchors if at.match(query, d)]
+        for m in _matches(pattern, runs, back, query):
             tipo = _type_token(m.group("type"))
             if tipo is None:
                 continue
             data = None
             if pattern is _CITE_DATED:
-                month = _MONTHS[m.group("month").lower()]
+                month = _month(m.group("month"))
                 data = f"{int(m.group('year')):04d}-{month:02d}-{int(m.group('day')):02d}"
             num = _WS.sub("", m.group("num").replace(" ", "")).lower()
             key = (tipo, num, int(m.group("year")))

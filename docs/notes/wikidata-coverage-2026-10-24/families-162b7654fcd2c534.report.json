@@ -1,0 +1,1741 @@
+{
+ "map": "sha256:162b7654fcd2c5348e26fbe8530be0b889440159304b69b9ecf2fee297e6cf19",
+ "map_dump": "wikidata-20261012-all.json.bz2",
+ "dump": "wikidata-20261012-all.json.bz2",
+ "walked_entities": 0,
+ "families": [
+  {
+   "family": "scholarly",
+   "records": 114950,
+   "pruned": 46010584,
+   "roots": [
+    [
+     13442814,
+     "scholarly article"
+    ]
+   ],
+   "top_classes": [
+    [
+     13442814,
+     "scholarly article",
+     46010060
+    ],
+    [
+     18918145,
+     "academic journal article",
+     111511
+    ],
+    [
+     580922,
+     "preprint",
+     1403
+    ],
+    [
+     20136634,
+     "Wikipedia overview article",
+     841
+    ],
+    [
+     10885494,
+     "academic conference paper",
+     468
+    ],
+    [
+     1228945,
+     "working paper",
+     468
+    ],
+    [
+     15706459,
+     "research article",
+     127
+    ],
+    [
+     107244961,
+     "women in a geographic region",
+     97
+    ],
+    [
+     110716513,
+     "scholarly letter/reply",
+     74
+    ],
+    [
+     116740071,
+     "Reproducibility Report",
+     73
+    ],
+    [
+     116740091,
+     "CODECHECK",
+     63
+    ],
+    [
+     58901470,
+     "historical article",
+     58
+    ],
+    [
+     45182324,
+     "retracted paper",
+     55
+    ],
+    [
+     7316896,
+     "retraction notice",
+     53
+    ],
+    [
+     107243694,
+     "female topic",
+     46
+    ],
+    [
+     137771273,
+     "Discussion article",
+     23
+    ],
+    [
+     2412849,
+     "literature review",
+     22
+    ],
+    [
+     7318358,
+     "review article",
+     17
+    ],
+    [
+     77253277,
+     "retracted scholarly article",
+     15
+    ],
+    [
+     108196115,
+     "legal article",
+     9
+    ],
+    [
+     60535861,
+     "survey article",
+     8
+    ],
+    [
+     56478376,
+     "expression of concern",
+     5
+    ],
+    [
+     1436668,
+     "randomized controlled trial",
+     4
+    ],
+    [
+     2782326,
+     "case report",
+     4
+    ],
+    [
+     136996059,
+     "scholarly poster",
+     4
+    ]
+   ]
+  },
+  {
+   "family": "heritage",
+   "records": 2923476,
+   "pruned": 0,
+   "roots": [
+    [
+     358,
+     "heritage site"
+    ],
+    [
+     839954,
+     "archaeological site"
+    ],
+    [
+     4989906,
+     "monument"
+    ]
+   ],
+   "top_classes": [
+    [
+     839954,
+     "archaeological site",
+     67223
+    ],
+    [
+     575759,
+     "war memorial",
+     62998
+    ],
+    [
+     2341654,
+     "stone setting",
+     60684
+    ],
+    [
+     26703203,
+     "Stolperstein",
+     54703
+    ],
+    [
+     22969563,
+     "Bodendenkmal",
+     50265
+    ],
+    [
+     4989906,
+     "monument",
+     43632
+    ],
+    [
+     1516079,
+     "cultural heritage ensemble",
+     37254
+    ],
+    [
+     2309609,
+     "wayside cross",
+     34387
+    ],
+    [
+     852190,
+     "shipwreck",
+     30981
+    ],
+    [
+     173387,
+     "grave",
+     30039
+    ],
+    [
+     1081138,
+     "historic site",
+     23677
+    ],
+    [
+     721747,
+     "commemorative plaque",
+     23520
+    ],
+    [
+     2593777,
+     "grave field",
+     18767
+    ],
+    [
+     5737,
+     "burial mound",
+     15839
+    ],
+    [
+     5003624,
+     "memorial",
+     15372
+    ],
+    [
+     358,
+     "heritage site",
+     15324
+    ],
+    [
+     734271,
+     "mass grave",
+     12568
+    ],
+    [
+     10145,
+     "milestone",
+     10964
+    ],
+    [
+     3395121,
+     "wayside shrine",
+     9463
+    ],
+    [
+     654476,
+     "khachkar",
+     8772
+    ],
+    [
+     5958900,
+     "Iranian National Heritage",
+     7314
+    ],
+    [
+     10300916,
+     "cultural heritage of China",
+     6939
+    ],
+    [
+     3395377,
+     "ancient monument",
+     6540
+    ],
+    [
+     1399033,
+     "statio",
+     5819
+    ],
+    [
+     61058374,
+     "object as Historical Monument",
+     5070
+    ]
+   ]
+  },
+  {
+   "family": "built",
+   "records": 3174067,
+   "pruned": 0,
+   "roots": [
+    [
+     391414,
+     "architectural element"
+    ],
+    [
+     811979,
+     "built structure"
+    ]
+   ],
+   "top_classes": [
+    [
+     79007,
+     "street",
+     724760
+    ],
+    [
+     32815,
+     "mosque",
+     236482
+    ],
+    [
+     16970,
+     "church building",
+     145925
+    ],
+    [
+     1076486,
+     "sports venue",
+     143877
+    ],
+    [
+     61443690,
+     "branch post office",
+     129186
+    ],
+    [
+     34442,
+     "road",
+     83715
+    ],
+    [
+     12323,
+     "dam",
+     75883
+    ],
+    [
+     128302279,
+     "gas station",
+     63638
+    ],
+    [
+     41253,
+     "movie theater",
+     54421
+    ],
+    [
+     820477,
+     "mine",
+     49749
+    ],
+    [
+     41176,
+     "building",
+     49657
+    ],
+    [
+     12284,
+     "canal",
+     47906
+    ],
+    [
+     16917,
+     "hospital",
+     38028
+    ],
+    [
+     585956,
+     "masia",
+     37440
+    ],
+    [
+     108325,
+     "chapel",
+     35551
+    ],
+    [
+     190107,
+     "weather station",
+     31351
+    ],
+    [
+     131681,
+     "reservoir",
+     28061
+    ],
+    [
+     845945,
+     "Shinto shrine",
+     26739
+    ],
+    [
+     5393308,
+     "Buddhist temple",
+     26143
+    ],
+    [
+     61443650,
+     "sub post office",
+     24742
+    ],
+    [
+     1248784,
+     "airport",
+     23470
+    ],
+    [
+     483453,
+     "fountain",
+     21891
+    ],
+    [
+     12280,
+     "bridge",
+     21890
+    ],
+    [
+     174782,
+     "square",
+     21076
+    ],
+    [
+     2116450,
+     "manor estate",
+     18772
+    ]
+   ]
+  },
+  {
+   "family": "event",
+   "records": 1473671,
+   "pruned": 111,
+   "roots": [
+    [
+     198,
+     "war"
+    ],
+    [
+     179057,
+     "explosion"
+    ],
+    [
+     645883,
+     "military operation"
+    ],
+    [
+     741507,
+     "severe weather"
+    ],
+    [
+     1656682,
+     "planned event"
+    ],
+    [
+     1689296,
+     "calamity"
+    ],
+    [
+     3199915,
+     "massacre"
+    ],
+    [
+     123349687,
+     "geographically localized event"
+    ],
+    [
+     130260549,
+     "demonstration or protest"
+    ]
+   ],
+   "top_classes": [
+    [
+     27020041,
+     "sports season",
+     193399
+    ],
+    [
+     57733494,
+     "badminton event",
+     100651
+    ],
+    [
+     18431960,
+     "basketball game",
+     77296
+    ],
+    [
+     26887310,
+     "association football team season",
+     51781
+    ],
+    [
+     16510064,
+     "sporting event",
+     34323
+    ],
+    [
+     43099500,
+     "performing arts production",
+     33149
+    ],
+    [
+     40231,
+     "public election",
+     32340
+    ],
+    [
+     27927857,
+     "baseball game",
+     31868
+    ],
+    [
+     46190676,
+     "tennis event",
+     31855
+    ],
+    [
+     26895936,
+     "American football team season",
+     27423
+    ],
+    [
+     29023906,
+     "temporary exhibition",
+     24173
+    ],
+    [
+     1539532,
+     "sports season of a sports club",
+     23328
+    ],
+    [
+     2020153,
+     "academic conference",
+     21125
+    ],
+    [
+     109623729,
+     "association football club match",
+     20117
+    ],
+    [
+     178561,
+     "battle",
+     18311
+    ],
+    [
+     13406554,
+     "sports competition",
+     18121
+    ],
+    [
+     7777570,
+     "theatrical production",
+     17366
+    ],
+    [
+     114609228,
+     "recurring sporting event edition",
+     16706
+    ],
+    [
+     26894053,
+     "basketball team season",
+     16603
+    ],
+    [
+     220505,
+     "film festival",
+     15860
+    ],
+    [
+     3937,
+     "supernova",
+     14637
+    ],
+    [
+     4504495,
+     "award ceremony",
+     14486
+    ],
+    [
+     58483083,
+     "dramatico-musical work",
+     14316
+    ],
+    [
+     152450,
+     "municipal election",
+     13324
+    ],
+    [
+     667276,
+     "art exhibition",
+     12862
+    ]
+   ]
+  },
+  {
+   "family": "person",
+   "records": 13736789,
+   "pruned": 0,
+   "roots": [
+    [
+     5,
+     "human"
+    ]
+   ],
+   "top_classes": [
+    [
+     5,
+     "human",
+     13736659
+    ],
+    [
+     2345820,
+     "stillborn child",
+     88
+    ],
+    [
+     26513,
+     "human fetus",
+     7
+    ],
+    [
+     11598453,
+     "kumāra",
+     5
+    ],
+    [
+     4676846,
+     "acting",
+     5
+    ],
+    [
+     117463454,
+     "miscarried child",
+     4
+    ],
+    [
+     1309494,
+     "substitute",
+     3
+    ],
+    [
+     1020994,
+     "citizen",
+     2
+    ],
+    [
+     63177820,
+     "unborn child",
+     1
+    ],
+    [
+     258146,
+     "feral child",
+     1
+    ],
+    [
+     353673,
+     "bride",
+     1
+    ],
+    [
+     15320003,
+     "migrant worker",
+     1
+    ],
+    [
+     193279,
+     "orphan",
+     1
+    ],
+    [
+     17156455,
+     "young adult",
+     1
+    ],
+    [
+     5187700,
+     "crone",
+     1
+    ],
+    [
+     1364673,
+     "informant",
+     1
+    ],
+    [
+     7569,
+     "child",
+     1
+    ],
+    [
+     12097,
+     "king",
+     1
+    ],
+    [
+     1627228,
+     "notables",
+     1
+    ],
+    [
+     48942,
+     "schoolchild",
+     1
+    ],
+    [
+     4676862,
+     "acting prime minister",
+     1
+    ],
+    [
+     2773925,
+     "War-orphaned children in Japan",
+     1
+    ],
+    [
+     104736802,
+     "conscious collaborator of the State Security",
+     1
+    ],
+    [
+     137350,
+     "mole",
+     1
+    ]
+   ]
+  },
+  {
+   "family": "place",
+   "records": 6773551,
+   "pruned": 0,
+   "roots": [
+    [
+     15324,
+     "body of water"
+    ],
+    [
+     56061,
+     "administrative territorial entity"
+    ],
+    [
+     271669,
+     "landform"
+    ],
+    [
+     473972,
+     "protected area"
+    ],
+    [
+     486972,
+     "human settlement"
+    ]
+   ],
+   "top_classes": [
+    [
+     13100073,
+     "village of the People's Republic of China",
+     592555
+    ],
+    [
+     486972,
+     "human settlement",
+     566543
+    ],
+    [
+     8502,
+     "mountain",
+     504320
+    ],
+    [
+     4022,
+     "river",
+     423729
+    ],
+    [
+     54050,
+     "hill",
+     313782
+    ],
+    [
+     23397,
+     "lake",
+     294977
+    ],
+    [
+     532,
+     "village",
+     233334
+    ],
+    [
+     47521,
+     "stream",
+     196559
+    ],
+    [
+     355304,
+     "watercourse",
+     168237
+    ],
+    [
+     56436498,
+     "village in India",
+     153604
+    ],
+    [
+     23442,
+     "island",
+     151201
+    ],
+    [
+     39816,
+     "valley",
+     137445
+    ],
+    [
+     5084,
+     "hamlet",
+     121496
+    ],
+    [
+     985488,
+     "residential community",
+     96621
+    ],
+    [
+     124714,
+     "spring",
+     71795
+    ],
+    [
+     20202352,
+     "locality of Mexico",
+     67255
+    ],
+    [
+     2151232,
+     "townland",
+     60230
+    ],
+    [
+     26211545,
+     "desa",
+     58530
+    ],
+    [
+     23925393,
+     "douar in Morocco",
+     56087
+    ],
+    [
+     3558970,
+     "village of Poland",
+     55838
+    ],
+    [
+     39594,
+     "bay",
+     52945
+    ],
+    [
+     187971,
+     "wadi",
+     51941
+    ],
+    [
+     473972,
+     "protected area",
+     46547
+    ],
+    [
+     253019,
+     "Ortsteil",
+     46317
+    ],
+    [
+     484170,
+     "commune of France",
+     45531
+    ]
+   ]
+  },
+  {
+   "family": "organization",
+   "records": 3673933,
+   "pruned": 0,
+   "roots": [
+    [
+     43229,
+     "organization"
+    ]
+   ],
+   "top_classes": [
+    [
+     43229,
+     "organization",
+     519132
+    ],
+    [
+     4830453,
+     "business",
+     254878
+    ],
+    [
+     3914,
+     "school",
+     215142
+    ],
+    [
+     1080794,
+     "public school",
+     183677
+    ],
+    [
+     9842,
+     "primary school",
+     152133
+    ],
+    [
+     27686,
+     "hotel",
+     123316
+    ],
+    [
+     215380,
+     "musical group",
+     99804
+    ],
+    [
+     19855165,
+     "rural school",
+     89486
+    ],
+    [
+     163740,
+     "nonprofit organization",
+     66124
+    ],
+    [
+     423208,
+     "private school",
+     47104
+    ],
+    [
+     476028,
+     "association football club",
+     40765
+    ],
+    [
+     33506,
+     "museum",
+     37788
+    ],
+    [
+     126807,
+     "kindergarten",
+     36868
+    ],
+    [
+     86442081,
+     "administration municipale of France",
+     36622
+    ],
+    [
+     847017,
+     "sports club",
+     30416
+    ],
+    [
+     176799,
+     "military unit",
+     29585
+    ],
+    [
+     14350,
+     "radio station",
+     29227
+    ],
+    [
+     9826,
+     "high school",
+     28442
+    ],
+    [
+     28564,
+     "public library",
+     28129
+    ],
+    [
+     189004,
+     "college",
+     26444
+    ],
+    [
+     65954115,
+     "State Bank of India branch",
+     26366
+    ],
+    [
+     67015940,
+     "Government Boys' Primary School",
+     26160
+    ],
+    [
+     2085381,
+     "publishing house",
+     25705
+    ],
+    [
+     7075,
+     "library",
+     25446
+    ],
+    [
+     783794,
+     "company",
+     24093
+    ]
+   ]
+  },
+  {
+   "family": "work",
+   "records": 17380065,
+   "pruned": 76,
+   "roots": [
+    [
+     17537576,
+     "creative work"
+    ]
+   ],
+   "top_classes": [
+    [
+     4167836,
+     "Wikimedia category",
+     5838015
+    ],
+    [
+     4167410,
+     "Wikimedia disambiguation page",
+     1530753
+    ],
+    [
+     3305213,
+     "painting",
+     1061303
+    ],
+    [
+     11266439,
+     "Wikimedia template",
+     803906
+    ],
+    [
+     13433827,
+     "encyclopedia article",
+     688432
+    ],
+    [
+     7725634,
+     "literary work",
+     518864
+    ],
+    [
+     13406463,
+     "Wikimedia list article",
+     380942
+    ],
+    [
+     11424,
+     "film",
+     348035
+    ],
+    [
+     43305660,
+     "United States patent",
+     318130
+    ],
+    [
+     482994,
+     "album",
+     309369
+    ],
+    [
+     17633526,
+     "Wikinews article",
+     296987
+    ],
+    [
+     105543609,
+     "musical work/composition",
+     204002
+    ],
+    [
+     19389637,
+     "biographical article",
+     182564
+    ],
+    [
+     21191270,
+     "television series episode",
+     180303
+    ],
+    [
+     7889,
+     "video game",
+     177598
+    ],
+    [
+     115595777,
+     "taxonomy template",
+     172571
+    ],
+    [
+     191067,
+     "article",
+     167546
+    ],
+    [
+     98276829,
+     "porcelain ware",
+     163687
+    ],
+    [
+     11060274,
+     "print",
+     158100
+    ],
+    [
+     1580166,
+     "dictionary entry",
+     156725
+    ],
+    [
+     93184,
+     "drawing",
+     123432
+    ],
+    [
+     87167,
+     "manuscript",
+     115780
+    ],
+    [
+     134556,
+     "single",
+     114087
+    ],
+    [
+     860861,
+     "sculpture",
+     111077
+    ],
+    [
+     187685,
+     "doctoral thesis",
+     110140
+    ]
+   ]
+  },
+  {
+   "family": "taxon",
+   "records": 4168953,
+   "pruned": 0,
+   "roots": [
+    [
+     16521,
+     "taxon"
+    ]
+   ],
+   "top_classes": [
+    [
+     16521,
+     "taxon",
+     3851511
+    ],
+    [
+     21014462,
+     "cell line",
+     153635
+    ],
+    [
+     23038290,
+     "fossil taxon",
+     118924
+    ],
+    [
+     310890,
+     "monotypic taxon",
+     11077
+    ],
+    [
+     4886,
+     "cultivar",
+     9702
+    ],
+    [
+     26817508,
+     "rose cultivar",
+     5393
+    ],
+    [
+     98961713,
+     "extinct taxon",
+     4266
+    ],
+    [
+     15731356,
+     "apple cultivar",
+     2802
+    ],
+    [
+     958314,
+     "grape variety",
+     2459
+    ],
+    [
+     47487597,
+     "monotypic fossil taxon",
+     1550
+    ],
+    [
+     136343650,
+     "hybrid taxon",
+     934
+    ],
+    [
+     855769,
+     "strain",
+     769
+    ],
+    [
+     857968,
+     "Candidatus",
+     663
+    ],
+    [
+     21160573,
+     "Dahlia cultivar",
+     610
+    ],
+    [
+     2568288,
+     "ichnotaxon",
+     469
+    ],
+    [
+     713623,
+     "clade",
+     451
+    ],
+    [
+     115606891,
+     "plum cultivar",
+     388
+    ],
+    [
+     1639967,
+     "hybrid grape",
+     284
+    ],
+    [
+     20898395,
+     "pear cultivar",
+     259
+    ],
+    [
+     16682342,
+     "potato variety",
+     240
+    ],
+    [
+     235536,
+     "incertae sedis",
+     217
+    ],
+    [
+     12179886,
+     "olive cultivar",
+     184
+    ],
+    [
+     21157076,
+     "Clematis cultivar",
+     174
+    ],
+    [
+     17484780,
+     "hop variety",
+     164
+    ],
+    [
+     110533142,
+     "obsolete taxon",
+     103
+    ]
+   ]
+  },
+  {
+   "family": "internal",
+   "records": 0,
+   "pruned": 0,
+   "roots": [
+    [
+     17442446,
+     "Wikimedia internal item"
+    ]
+   ],
+   "top_classes": []
+  },
+  {
+   "family": "property",
+   "records": 13972,
+   "pruned": 0,
+   "roots": [],
+   "top_classes": []
+  },
+  {
+   "family": "lexeme",
+   "records": 0,
+   "pruned": 0,
+   "roots": [],
+   "top_classes": []
+  },
+  {
+   "family": "other",
+   "records": 22462756,
+   "pruned": 38,
+   "roots": [],
+   "top_classes": [
+    [
+     523,
+     "star",
+     3274091
+    ],
+    [
+     318,
+     "galaxy",
+     2096067
+    ],
+    [
+     113145171,
+     "type of chemical entity",
+     1280089
+    ],
+    [
+     7187,
+     "gene",
+     1073920
+    ],
+    [
+     8054,
+     "protein",
+     990305
+    ],
+    [
+     3331189,
+     "version, edition or translation",
+     829831
+    ],
+    [
+     101352,
+     "family name",
+     690412
+    ],
+    [
+     2668072,
+     "collection",
+     502904
+    ],
+    [
+     30612,
+     "clinical trial",
+     391575
+    ],
+    [
+     2342494,
+     "collectable",
+     371334
+    ],
+    [
+     1931185,
+     "astronomical radio source",
+     352457
+    ],
+    [
+     1457376,
+     "eclipsing binary",
+     292797
+    ],
+    [
+     2247863,
+     "high proper-motion star",
+     281138
+    ],
+    [
+     39614,
+     "cemetery",
+     277388
+    ],
+    [
+     3863,
+     "asteroid",
+     248524
+    ],
+    [
+     83373,
+     "quasar",
+     167663
+    ],
+    [
+     113813711,
+     "coin type",
+     163449
+    ],
+    [
+     47461344,
+     "written work",
+     156374
+    ],
+    [
+     59199015,
+     "group of stereoisomers",
+     148291
+    ],
+    [
+     29654788,
+     "Unicode character",
+     145387
+    ],
+    [
+     4164871,
+     "position",
+     143806
+    ],
+    [
+     2154519,
+     "astrophysical X-ray source",
+     142758
+    ],
+    [
+     49848,
+     "document",
+     139149
+    ],
+    [
+     49008,
+     "prime number",
+     125386
+    ],
+    [
+     18593264,
+     "item of collection or exhibition",
+     124135
+    ],
+    [
+     16317911,
+     "positive integer",
+     120958
+    ],
+    [
+     726242,
+     "RR Lyrae variable",
+     96186
+    ],
+    [
+     55488,
+     "railway station",
+     94064
+    ],
+    [
+     427087,
+     "non-coding RNA",
+     93560
+    ],
+    [
+     1153690,
+     "long-period variable star",
+     88900
+    ],
+    [
+     1260524,
+     "time of day",
+     87843
+    ],
+    [
+     22698,
+     "park",
+     86448
+    ],
+    [
+     204107,
+     "galaxy cluster",
+     84293
+    ],
+    [
+     452237,
+     "motion",
+     84198
+    ],
+    [
+     28869365,
+     "issue",
+     83338
+    ],
+    [
+     65259218,
+     "compact group of galaxies",
+     78846
+    ],
+    [
+     11446,
+     "ship",
+     76221
+    ],
+    [
+     96739634,
+     "individual motion",
+     75408
+    ],
+    [
+     1151284,
+     "brightest cluster galaxy",
+     74516
+    ],
+    [
+     67206701,
+     "far-infrared source",
+     72174
+    ],
+    [
+     11646939,
+     "metal object",
+     71758
+    ],
+    [
+     66619666,
+     "red giant branch star",
+     68802
+    ],
+    [
+     20860083,
+     "educational facility",
+     65567
+    ],
+    [
+     67206691,
+     "infrared source",
+     63887
+    ],
+    [
+     72802727,
+     "possible red giant branch star",
+     61726
+    ],
+    [
+     277338,
+     "pseudogene",
+     60417
+    ],
+    [
+     12308941,
+     "male given name",
+     59302
+    ],
+    [
+     1238720,
+     "volume",
+     58063
+    ],
+    [
+     3052382,
+     "fonds",
+     52429
+    ],
+    [
+     13226383,
+     "facility",
+     51928
+    ]
+   ]
+  }
+ ],
+ "probes": [
+  [
+   515,
+   "city",
+   "place"
+  ],
+  [
+   15284,
+   "municipality",
+   "place"
+  ],
+  [
+   747074,
+   "comune of Italy",
+   "place"
+  ],
+  [
+   484170,
+   "commune of France",
+   "place"
+  ],
+  [
+   262166,
+   "municipality in Germany",
+   "place"
+  ],
+  [
+   16970,
+   "church building",
+   "built"
+  ],
+  [
+   2977,
+   "cathedral",
+   "built"
+  ],
+  [
+   23413,
+   "castle",
+   "built"
+  ],
+  [
+   33506,
+   "museum",
+   "organization"
+  ],
+  [
+   79007,
+   "street",
+   "built"
+  ],
+  [
+   39614,
+   "cemetery",
+   "other"
+  ],
+  [
+   8502,
+   "mountain",
+   "place"
+  ],
+  [
+   4022,
+   "river",
+   "place"
+  ],
+  [
+   23397,
+   "lake",
+   "place"
+  ],
+  [
+   23442,
+   "island",
+   "place"
+  ],
+  [
+   46169,
+   "national park",
+   "place"
+  ],
+  [
+   7604686,
+   "UK Statutory Instrument",
+   "work"
+  ],
+  [
+   1520223,
+   "constitutional republic",
+   "other"
+  ],
+  [
+   3305213,
+   "painting",
+   "work"
+  ],
+  [
+   11424,
+   "film",
+   "work"
+  ],
+  [
+   3914,
+   "school",
+   "organization"
+  ],
+  [
+   27686,
+   "hotel",
+   "organization"
+  ],
+  [
+   3918,
+   "university",
+   "organization"
+  ],
+  [
+   4830453,
+   "business",
+   "organization"
+  ],
+  [
+   178561,
+   "battle",
+   "event"
+  ],
+  [
+   198,
+   "war",
+   "event"
+  ],
+  [
+   40231,
+   "public election",
+   "event"
+  ],
+  [
+   3937,
+   "supernova",
+   "event"
+  ],
+  [
+   21014462,
+   "cell line",
+   "taxon"
+  ],
+  [
+   4167836,
+   "Wikimedia category",
+   "work"
+  ]
+ ]
+}

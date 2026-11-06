@@ -216,3 +216,41 @@ def test_a_withdrawn_book_comes_back_by_itself_when_its_origin_drops_the_note(
     stages()
     error, chunks, listed = state()
     assert error is None and chunks > 0 and listed, "and the ordinary stages index it again"
+
+
+def test_reindex_queues_the_listed_documents_for_the_text_stage_and_leaves_embedding(
+        tmp_path, isolated_config, monkeypatch, capsys):
+    """2026-10-25: gutenberg rows indexed under an earlier parse kept stale
+    chunk counts and text (`tools/measure/chunks_drift.py`); `dev reindex`
+    queues exactly the listed ones for the text-index stage, fts_done = 0,
+    and touches nothing else — their vectors are the records'."""
+    import json as _json
+    from app import louise
+    from app.hold import collection as col, records as rec
+    c, con = _collection(tmp_path)
+    _indexed_as_if_earlier(con, c)
+    con.execute("UPDATE documents SET in_scope=1, rdf_done=1, fts_done=1, embed_done=1")
+    con.commit()
+    uids = [r[0] for r in con.execute("SELECT uid FROM documents ORDER BY uid")]
+    listed = tmp_path / "ids.txt"
+    listed.write_text(f"{uids[0]}\ngutenberg:424242\n", encoding="utf-8")
+    monkeypatch.setattr(col, "resolve", lambda root, ref: ("g", None))
+    monkeypatch.setattr(rec, "local_collection", lambda root, name, codex: c)
+    monkeypatch.setattr(louise, "_take_write_lock", lambda *a, **k: None)
+    assert louise.main(["dev", "reindex", "g", "--ids", str(listed)]) == 0
+    assert "would queue 1 of 2" in capsys.readouterr().err
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE fts_done=0").fetchone()[0] == 0, "a dry run writes nothing"
+    assert louise.main(["dev", "reindex", "g", "--ids", str(listed), "--yes"]) == 0
+    printed = capsys.readouterr().out
+    out = _json.loads(printed[printed.rindex("{"):])
+    assert (out["listed"], out["queued"], out["left_alone"]) == (2, 1, 1)
+    con2 = sqlite3_connect(c)
+    rows = dict(con2.execute("SELECT uid, fts_done FROM documents").fetchall())
+    assert rows[uids[0]] == 0 and all(v == 1 for u, v in rows.items() if u != uids[0])
+    assert con2.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == len(uids), \
+        "embedding untouched"
+
+
+def sqlite3_connect(c):
+    from app import db
+    return db.connect(c)

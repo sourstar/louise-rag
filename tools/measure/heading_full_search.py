@@ -55,12 +55,38 @@ def _search(group, query, limit=20, collection=None, **kw):
 def _reranked(*a, **kw):
     t = time.monotonic()
     out = _orig_reranked(*a, **kw)
-    stash["reranked"], stash["ms"] = out[1], round((time.monotonic() - t) * 1000)
+    stash["reranked"], stash["why"], stash["ms"] = out[1], out[2], round((time.monotonic() - t) * 1000)
     return out
+
+
+from app import httpc  # noqa: E402
+_orig_post = httpc.post
+
+
+def _post(url, *a, **kw):
+    """A rerank call that is refused leaves its status, LocalAI's body, the
+    batch's shape and the loaded models (with pids) on stderr (2026-10-25: 130
+    overnight 500s with no reason in LocalAI's log)."""
+    t = time.monotonic()
+    r = _orig_post(url, *a, **kw)
+    if "/rerank" in str(url) and r.status_code != 200:
+        body = kw.get("json") or {}
+        docs = body.get("documents") or body.get("texts") or []
+        try:
+            loaded = [(m.get("id"), (m.get("process") or {}).get("pid"))
+                      for m in httpc.get(str(url).split("/v1/")[0] + "/system", timeout=5).json().get("loaded_models", [])]
+        except Exception as e:  # noqa: BLE001
+            loaded = type(e).__name__
+        print(json.dumps({"rerank_refused": r.status_code, "at": time.strftime("%H:%M:%S"),
+                          "ms": round((time.monotonic() - t) * 1000), "docs": len(docs),
+                          "chars": sum(len(d) for d in docs), "longest": max((len(d) for d in docs), default=0),
+                          "body": r.text[:500], "loaded": loaded}, ensure_ascii=False), file=sys.stderr, flush=True)
+    return r
 
 
 fts.search = _search
 retrieval._reranked = _reranked
+httpc.post = _post
 if not RERANK:
     from app import collections as _collections
     _collections.reranker_for = lambda collection: None
@@ -85,7 +111,7 @@ for q in DATA:  # noqa: F821 — prepended by the caller
         try:
             hits = query_service.run_search(["gutenberg"], q["query"], 10, MODE, TRANSLATE)["hits"]
             if RERANK and not stash.get("reranked"):
-                row["error"] = f"no rerank (arm {a})"
+                row["error"] = f"no rerank (arm {a}): {stash.get('why')} after {stash.get('ms')} ms"
             row["ranks"][str(a)] = _rank(hits[:10], books)
             row["ms"][str(a)] = stash.get("ms")
         except Exception as e:   # noqa: BLE001

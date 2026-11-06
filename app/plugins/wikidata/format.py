@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Callable
+from typing import Any, Callable
 
 GREGORIAN = "Q1985727"
 JULIAN = "Q1985786"
@@ -156,7 +156,11 @@ def time_text(value: dict, lang: str = "en") -> str:
     return text + era
 
 
-def _dms(deg: float, decimals: int) -> tuple[int, int, str]:
+def _dms(deg: Any, decimals: int) -> tuple[int, int, str]:
+    # `deg: Any` — an int or a float as the dump gives it — never `float`:
+    # compiled by mypyc, a `float` (or `int | float`, which mypy reads as
+    # `float`) is a C double, and an integer past 2**53 would lose its last
+    # digits (docs/notes/python-hot-spots.md, E)
     d = abs(deg)
     whole = int(d)
     minutes_f = (d - whole) * 60
@@ -201,12 +205,24 @@ def coordinate_text(value: dict, lang: str = "en", globe_label: Callable[[str], 
 
 def quantity_text(value: dict, unit_label: Callable[[str], str | None] | None = None) -> str:
     """A quantity datavalue: the amount as written, without its leading `+`
-    (Wikibase's own display drops it), and the unit's label or id where the
-    unit is not `1`."""
+    (Wikibase's own display drops it), its uncertainty as Wikibase shows it
+    — `±` the larger distance to a bound, in exact decimals (parser 2: the
+    first formatter dropped the bounds) — and the unit's label or id where
+    the unit is not `1`."""
+    from decimal import Decimal, InvalidOperation
     amount = value.get("amount")
     if not isinstance(amount, str):
         raise FormatError(f"quantity without an amount string: {value!r}")
     text = amount[1:] if amount.startswith("+") else amount
+    upper, lower = value.get("upperBound"), value.get("lowerBound")
+    if isinstance(upper, str) and isinstance(lower, str):
+        try:
+            a = Decimal(amount)
+            margin = max(Decimal(upper) - a, a - Decimal(lower))
+        except InvalidOperation:
+            margin = Decimal(0)
+        if margin > 0:
+            text += "±" + format(margin, "f")
     unit = value.get("unit")
     if isinstance(unit, str) and unit not in ("", "1"):
         uid = unit.rsplit("/", 1)[-1]

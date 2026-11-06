@@ -61,6 +61,7 @@ class ChatBody(BaseModel):
     question: str
     collections: list[str] | None = None
     history: list[dict[str, Any]] | None = None
+    answer_lang: str | None = None   # ISO code: answer in it; else the question's language
 
 
 @router.post("/chat")
@@ -73,7 +74,7 @@ async def chat(body: ChatBody) -> JSONResponse:
     from app.ask import chat as chat_mod
     try:
         out = await run_in_threadpool(chat_mod.ask, body.question, collections=body.collections,
-                                      history=body.history)
+                                      history=body.history, answer_lang=body.answer_lang)
     except CodexError as e:
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
@@ -124,10 +125,19 @@ async def facets(collection: str, field: str | None = None, under: str | None = 
 
 
 @router.get("/figure")
-async def figure(collection: str, uid: str, hash: str):
+async def figure(collection: str, uid: str, hash: str, download: bool = False):
     """07 §7.4's one route that is not JSON: a plate's bytes and its
     `Content-Type`, never base64 — a search result carries the hash, and a
-    client fetches the picture beside the chunk that cited it."""
+    client fetches the picture beside the chunk that cited it.
+
+    08 §8.7 (amended 2026-10-25, "Every plate"): every plate is carried and
+    served, and only a DISPLAYABLE one — jpeg or png, which the bytes really
+    are, within the byte and declared-megapixel caps — is answered inline
+    under its type. Any other answers 415 with the reason and no bytes,
+    unless `download=1` asks for the file: then, and for any plate asked
+    that way, `application/octet-stream` with `Content-Disposition:
+    attachment` — never inline, never `image/svg+xml` — so a browser saves
+    it and never renders it. `nosniff` on both, so neither is re-typed."""
     from fastapi.responses import Response
     from starlette.concurrency import run_in_threadpool
     from app.ask import figures as figures_mod
@@ -138,7 +148,17 @@ async def figure(collection: str, uid: str, hash: str):
     except CodexError as e:
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
-    return Response(content=data, media_type=media)
+    nosniff = {"X-Content-Type-Options": "nosniff"}
+    if download:
+        name = figures_mod.download_name(hash, media)
+        return Response(content=data, media_type="application/octet-stream",
+                        headers={**nosniff, "Content-Disposition": f'attachment; filename="{name}"',
+                                 "Content-Security-Policy": "sandbox"})
+    why = figures_mod.not_displayable(data, media)
+    if why is not None:
+        return JSONResponse({"exit": 2, "error": f"not displayable: {why}; ask with download=1 for the file"},
+                            status_code=415, headers=nosniff)
+    return Response(content=data, media_type=media, headers=nosniff)
 
 
 @router.post("/mcp")

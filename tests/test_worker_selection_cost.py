@@ -19,6 +19,7 @@ The plan assertions below are the regression guard for 2 and 3 — behaviour
 alone cannot catch a query that is merely slow.
 """
 import shutil
+import time
 from pathlib import Path
 
 from app import collections as collections_mod, config, db, discovery, worker
@@ -277,34 +278,47 @@ def test_backfill_under_all_skips_what_the_archive_can_still_cover(tmp_path, mon
 
 def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch):
     """pubmed: 8M covered documents sit BEFORE the first uncovered one in
-    rowid order. The cursor resumes from the first row returned, so the
-    next round starts past the covered prefix; a shard going final (epoch)
-    or the TTL resets it; a deferred (still pending) row is re-selected."""
+    rowid order. The cursor resumes AFTER the last row returned, so the next
+    round starts past the covered prefix and past what it was just given; a
+    shard going final (epoch) or the TTL resets it. A deferred (still
+    pending) row comes back with the next sweep. (It resumed FROM the first
+    row returned, which re-selected a deferred row at once — and, with a
+    call that fills its limit across windows, re-walked a whole budget of
+    sparse windows to reach the same rows every call: wikipedia's archive
+    layer, one document per round, 2026-10-30.)"""
     c, con, archive = _archive_collection(tmp_path, monkeypatch)
     key = (str(c.manifest_path), "new")
     rows = worker._backfill_rows(con, c, 1)
     assert rows, "an uncovered candidate exists"
     first = rows[0]
     epoch, rid, top, found, idle_since = worker._backfill_cursor[key]
-    assert rid == int(first["rid"]) - 1, "resume FROM the first returned row"
+    assert rid == int(first["rid"]), "resume AFTER the last returned row"
     assert found and idle_since is None
     # the covered prefix lies below the cursor
     below = con.execute("SELECT COUNT(*) FROM documents WHERE rowid<=? AND CAST(native_id AS INTEGER)<=10001",
                         (rid,)).fetchone()[0]
     assert below == con.execute("SELECT COUNT(*) FROM documents WHERE rowid<? AND CAST(native_id AS INTEGER)<=10001",
                                 (int(first["rid"]),)).fetchone()[0]
-    # deferred (not embedded): selected again
-    assert worker._backfill_rows(con, c, 1)[0]["uid"] == first["uid"]
-    # embedded: the cursor moves on without revisiting anything before it
-    con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (first["uid"],))
-    con.commit()
+    # the next call moves on; a deferred row comes back with the next sweep
     nxt = worker._backfill_rows(con, c, 1)
     assert not nxt or nxt[0]["uid"] != first["uid"]
-    # a shard going final resets the cursor (its released documents sit below)
+    again = [r["uid"] for _ in range(50) for r in worker._backfill_rows(con, c, 1)]
+    assert first["uid"] in again, "a deferred row is selected again by the next sweep"
+    # the epoch alone moving (another shard, another archive, applied) keeps
+    # the cursor: the coverage it walks against has not changed
     from app.bundles import genesis
+    worker._backfill_rows(con, c, 1)
+    pos = worker._backfill_cursor[key][1]
     genesis._bump_coverage_epoch()
     worker._backfill_rows(con, c, 1)
-    assert worker._backfill_cursor[key][0] == genesis.coverage_epoch()
+    assert worker._backfill_cursor[key][1] >= pos, "not restarted at rowid 0"
+    assert worker._backfill_cursor[key][0] == tuple(tuple(r) for r in worker._covered_ranges(con, c))
+    # a shard going final changes the coverage: its released documents,
+    # below the cursor, are the encoder's at once
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) VALUES('test-arc','0','final',0)")
+    con.commit()
+    released = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert any(i <= 10001 for i in released)
 
 
 def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkeypatch):
@@ -321,16 +335,18 @@ def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkey
         assert "TEMP B-TREE" not in plan.upper(), f"backfill sorts the candidate set: {plan}"
         assert "idx_documents_scope" in plan, plan
     # the cursor walk's windows: bounded by the rowid RANGE, never by an
-    # index walk that only the table's end can stop
-    for sql, params in (
-            (worker._BACKFILL_WINDOWED.format(covered=covered),
-             (-1, 1000, config.MAX_RETRIES, 0, 19, 1)),
-            (worker._REEMBED_WINDOWED,
-             (-1, 1000, config.EMBED_VERSION, config.MAX_RETRIES, 1))):
-        plan = _plan(con, sql, params)
-        assert "TEMP B-TREE" not in plan.upper(), f"window sorts: {plan}"
-        assert "INTEGER PRIMARY KEY" in plan.upper(), f"window is not a rowid range: {plan}"
-        assert "idx_documents_scope" not in plan, plan
+    # index walk that only the table's end can stop. The version walk on the
+    # primary key (its prefix is every embedded document); the new walk on
+    # the scope index's full prefix AND the rowid range, its implicit tail —
+    # a window reads its candidates, not its rows (2026-10-30)
+    plan = _plan(con, worker._REEMBED_WINDOWED, (-1, 1000, config.EMBED_VERSION, config.MAX_RETRIES, 1))
+    assert "TEMP B-TREE" not in plan.upper() and "INTEGER PRIMARY KEY" in plan.upper(), plan
+    assert "idx_documents_scope" not in plan, plan
+    plan = _plan(con, worker._BACKFILL_WINDOWED.format(covered=covered),
+                 (-1, 1000, config.MAX_RETRIES, 0, 19, 1))
+    assert "TEMP B-TREE" not in plan.upper(), f"window sorts: {plan}"
+    assert "idx_documents_scope" in plan and "rowid>?" in plan and "rowid<?" in plan, \
+        f"the new walk's window is not the index prefix bounded by the rowid range: {plan}"
 
 
 # --- the cursor walk is bounded per call (measured live, 2026-09-19) --------
@@ -837,3 +853,91 @@ def test_no_peer_leading_elsewhere_leaves_the_backfill_as_it_was(tmp_path, monke
     rows = worker._backfill_rows(con, c, 100)
     assert rows and not [s for s in seen if "embed_done=0" in s], \
         "no filter: the plain scope-index walk, no cursor windows for the new walk"
+
+
+def test_one_call_fills_its_limit_across_sparse_windows(monkeypatch):
+    """wikipedia, 2026-10-30: the walk stopped at the first window holding a
+    candidate, so where candidates are sparse a call brought ONE document —
+    one embed batch of one every few minutes while 18.8 M waited behind.
+    A call now fills its limit across windows within its budget, and the
+    next resumes after the last row it returned."""
+    import sqlite3
+    from types import SimpleNamespace
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE documents (x)")
+    con.executemany("INSERT INTO documents VALUES (?)", [(i,) for i in range(1000)])
+    stub = SimpleNamespace(window=lambda *a, **k: 100, note_window=lambda *a, **k: None)
+    monkeypatch.setattr(worker.sizing, "sizer", lambda: stub)
+    monkeypatch.setattr(worker, "_backfill_cursor", {})
+    asked = []
+
+    def one_per_window(start, end, n):
+        asked.append((start, end))
+        return [{"rid": start + 50, "uid": f"u{start + 50}"}][:n]
+    got = worker._cursor_page(con, "k", "new", one_per_window, 5, time.monotonic() + 30)
+    assert [r["rid"] for r in got] == [49, 149, 249, 349, 449] and len(asked) == 5
+    assert worker._backfill_cursor[("k", "new")][1] == 449, "resumes after the last row returned"
+    nxt = worker._cursor_page(con, "k", "new", one_per_window, 2, time.monotonic() + 30)
+    assert [r["rid"] for r in nxt] == [499, 599]
+
+
+def test_a_residual_no_longer_eligible_is_asked_for_no_more(tmp_path, monkeypatch):
+    """The embed stage re-queried every residual on every call that found
+    fewer candidates than it wanted — the producer's time on wikipedia
+    (München's py-spy, 2026-10-30). An ineligible one leaves the set."""
+    from app.bundles import genesis
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents ORDER BY rowid LIMIT 4")]
+    assert len(uids) >= 2, "the fixture holds at least two documents"
+    half = len(uids) // 2
+    for u in uids[:half]:
+        con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (u,))
+    for u in uids[half:]:
+        con.execute("UPDATE documents SET in_scope=1, rdf_done=1, fts_done=1, embed_done=0, "
+                    "error=NULL, retries=0 WHERE uid=?", (u,))
+    con.commit()
+    genesis.reset_revisit_state()
+    genesis._add_residual(c, genesis._RELEASED, uids)
+    got = worker._residual_rows(con, c, 10, set())
+    assert sorted(r["uid"] for r in got) == sorted(uids[half:])
+    assert sorted(genesis.residual_uids(c)) == sorted(uids[half:]), "the embedded ones are forgotten"
+
+
+def test_a_local_archive_s_epoch_never_restarts_the_sweep(tmp_path, monkeypatch):
+    """München, 2026-10-30: wikipedia's local archive (layer 1, 22 M rows)
+    never changes its declared spans, but every shard it imported moved the
+    process-wide coverage epoch, about once a minute — and the sweep began
+    again at rowid 0, among the covered rows, never reaching the 18.8 M
+    dump-layer documents behind them. With the coverage unchanged, any
+    number of epochs leave the cursor moving forward."""
+    from dataclasses import replace
+    from app.bundles import genesis
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", replace(archive, local=True))
+    key = (str(c.manifest_path), "new")
+    first = worker._backfill_rows(con, c, 1)[0]
+    genesis._bump_coverage_epoch()
+    nxt = worker._backfill_rows(con, c, 1)
+    assert nxt and int(nxt[0]["rid"]) > int(first["rid"]), "the sweep goes on; it did not start over at rowid 0"
+    assert worker._backfill_cursor[key][1] == int(nxt[0]["rid"])
+
+
+def test_a_window_over_an_embedded_layer_reads_its_candidates_not_its_rows(tmp_path, monkeypatch):
+    """A COST test (München, 2026-10-30): after a restart, wikipedia's first
+    sweep crossed 34 M rowids of its embedded layer 1 at ~33 k rowids/s —
+    ~17 minutes before the encoder saw the dump layer. The new walk's window
+    seeks the scope index on (1,1,1,0) and the rowid range: over 20,000
+    embedded rows holding no candidate, it does a few hundred SQLite steps,
+    not tens of thousands."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    _embedded_bulk(con, 20_000)
+    con.commit()
+    covered = "AND NOT (CAST(native_id AS INTEGER) BETWEEN ? AND ?)"
+    lo = con.execute("SELECT MIN(rowid) FROM documents WHERE native_id='20000'").fetchone()[0] - 1
+    steps = []
+    con.set_progress_handler(lambda: steps.append(1) and 0, 100)
+    got = con.execute(worker._BACKFILL_WINDOWED.format(covered=covered),
+                      (lo, lo + 20_000, config.MAX_RETRIES, 0, 19, 128)).fetchall()
+    con.set_progress_handler(None, 0)
+    assert got == []
+    assert len(steps) * 100 < 2_000, f"{len(steps) * 100} steps for a window of 20,000 embedded rows"

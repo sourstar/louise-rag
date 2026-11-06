@@ -1,0 +1,74 @@
+# The chat model candidate Qwen3.5-9B (operator, 2026-11-03: "Evaluate also
+# Qwen3.5-9B"). Its card: 9.65 B parameters, Apache-2.0, 201 languages, a hybrid
+# of Gated DeltaNet and gated attention (8 x (3 DeltaNet + 1 attention) layers),
+# thinking BY DEFAULT and no /no_think switch (Qwen3's soft switch is gone).
+# INSTALLED FROM LOCALAI'S MODEL GALLERY, entry `qwen3.5-9b` (unsloth's GGUF,
+#   sha256-pinned): POST /models/apply with ../gallery/louise-chat-qwen3.5-9b-q8.json, the entry
+#   named as `variant` so its own build is taken, never a guess.
+# THE 8-BIT BUILD is not in the gallery: the same entry, with Q8_0 as an
+#   added file (the apply request's `files`), its uri pinned to the Hub's
+#   commit and its sha256 written in at the install (the node reads both
+#   from the Hub API; this container's proxy refuses it).
+# Ours on top: our llama.cpp package and the SYCL exact mode (the measured
+# set, tests/vega/test_engine_settings.py), parallel 1, a 16k context, seed 0;
+# THINKING OFF by `reasoning_effort: none` (LocalAI maps it to the template's
+# enable_thinking) and `chat_template_kwargs.enable_thinking: false` stated
+# too; the card's sampling for instruct mode, general tasks (temperature 0.7,
+# top_p 0.8, top_k 20, min_p 0; its presence_penalty 1.5 is the benchmark arm
+# `card`, sent per request, see below). NO VISION PROJECTOR
+# (`mmproj` empty): Ask sends text, and the entry's projector is F32, 1.8 GB
+# on a card that is already full.
+# SAMPLING, EVERY VALUE STATED (2026-11-06, docs/notes/nemotron-embed.md "Sampling, Q8
+# first"): an unset value gets LocalAI's generic default (temperature 0.9, top_p 0.95,
+# top_k 40), not the card's; the penalties are NEUTRAL here because a request cannot set
+# one back to 0 (LocalAI reads 0 as unset): the chat benchmark's arms send the penalty
+# they test; `repeat_last_n` 64 (llama.cpp's default) because LocalAI sends 0 when the
+# file names none, and 0 DISABLES every penalty in llama.cpp.
+{
+  "backend": "vega-louise-llama-cpp",
+  "context_size": 16384,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "GGML_SYCL_FA_ONEDNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "on",
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "gpu_layers": 999,
+  "known_usecases": [
+    "chat"
+  ],
+  "mmap": true,
+  "name": "louise-chat-qwen3.5-9b-q8",
+  "options": [
+    "use_jinja:true",
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:512"
+  ],
+  "parameters": {
+    "model": "llama-cpp/models/Qwen3.5-9B-Q8_0.gguf",
+    "batch": 2048,
+    "seed": 0,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "repeat_penalty": 1,
+    "repeat_last_n": 64
+  },
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "threads": 6
+}

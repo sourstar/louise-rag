@@ -14,6 +14,7 @@ const DIR = process.argv[2];
 const file = f => fs.readFileSync(DIR + '/' + f, 'utf8');
 const N = +file('n.txt');
 let DELAY = 250;
+let ANSWER_MISS = false;      // the fake marks the answer missed
 const reqs = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failures = 0;
@@ -42,6 +43,16 @@ const hitOf = t => { const m = t.trim().match(/^(?:<|R|Title |Chapter |Book |Par
     const u = new URL(req.url);
     if (u.pathname === '/ask') return req.respond({ status: 200, contentType: 'text/html', body: file('ask.html') });
     if (u.pathname === '/ask/query') return req.respond({ status: 200, contentType: 'text/html', body: file('results.html') });
+    // the page's search goes through the relay (app/relay.py): one job, its result, its end
+    if (u.pathname === '/ask/relay' && req.method === 'POST')
+      return req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 's1' }) });
+    if (u.pathname === '/ask/relay/s1/events')
+      return req.respond({ status: 200, contentType: 'text/event-stream', body:
+        'retry: 50\n\nevent: status\ndata: {"state":"running"}\n\n'
+        + 'id: 1\nevent: result\ndata: ' + JSON.stringify({ html: file('results.html'), search_id: 'x' }) + '\n\n'
+        + 'id: 2\nevent: end\ndata: {"state":"done","reason":""}\n\n' });
+    if (u.pathname === '/ask/relay/s1')
+      return req.respond({ status: 200, contentType: 'application/json', body: '{"state":"done"}' });
     let m = u.pathname.match(/^\/read\/c\/(\d+)\/screen$/);
     if (m) return req.respond({ status: 200, contentType: 'application/json', body: file(`screen_${m[1]}.json`) });
     m = u.pathname.match(/^\/read\/c\/(\d+)$/);
@@ -50,8 +61,10 @@ const hitOf = t => { const m = t.trim().match(/^(?:<|R|Title |Chapter |Book |Par
       const body = JSON.parse(req.postData);
       const rec = { i: reqs.length, t: Date.now(), lang: body.lang, texts: body.items.map(i => i.text), state: 'open' };
       reqs.push(rec); byReq.set(req.raw, rec);
-      const out = body.items.map(i => JSON.stringify({ id: i.id, text: body.lang.toUpperCase() + ': ' + i.text })).join('\n')
-        + '\n' + JSON.stringify({ done: true, failed: false, missed: [] }) + '\n';
+      const miss = i => ANSWER_MISS && kind(i.text) === 'answer';
+      const out = body.items.map(i => JSON.stringify(miss(i) ? { id: i.id, missed: true }
+                                                             : { id: i.id, text: body.lang.toUpperCase() + ': ' + i.text })).join('\n')
+        + '\n' + JSON.stringify({ done: true, failed: false, missed: body.items.filter(miss).map(i => i.id) }) + '\n';
       setTimeout(() => {
         if (rec.state !== 'open') return;
         Promise.resolve(req.respond({ status: 200, contentType: 'application/x-ndjson', body: out }))
@@ -163,6 +176,19 @@ const hitOf = t => { const m = t.trim().match(/^(?:<|R|Title |Chapter |Book |Par
     u.textContent === u.dataset.orig && !u.dataset.parted && !u.querySelector('.tr-part'))
     && document.getElementById('answer').textContent === answerRaw);
   check(back0, '"original" restores every unit and the answer byte for byte');
+
+  // 5. an answer the model misses keeps its original AND the page says so
+  // (operator, 2026-10-28: every entry translated, the answer not, no word)
+  ANSWER_MISS = true;
+  await h.select('#lang', 'fr');
+  await settle();
+  const missed = await page.evaluate(() => ({
+    answer: document.getElementById('answer').textContent === answerRaw,
+    entries: pageUnits().every(u => u.dataset.tl === 'fr'),
+    note: (document.getElementById('lang-note') || { textContent: '' }).textContent }));
+  check(missed.answer && missed.entries && /the answer could not be translated/.test(missed.note),
+        '5. a missed answer stays in its language, the entries translate, and the note names the answer', missed);
+  ANSWER_MISS = false;
 
   check(errors.length === 0, 'no page errors', errors);
   console.log(`requests: ${reqs.length}`);

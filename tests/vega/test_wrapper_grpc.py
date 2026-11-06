@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.vega import runs as runs_mod  # noqa: E402
 from app.vega import client, service  # noqa: E402
 from app.vega import tag as vtag  # noqa: E402
+from app.hold.codex import canonical_json, digest  # noqa: E402
 
 from . import localai_fake  # noqa: E402
 from .conftest import load_wrapper  # noqa: E402
@@ -87,7 +88,7 @@ def make_node(tmp_path, stubs, vega):
     made = []
 
     def make(*, pairs=False, receipt_timeout_s=2.0, socket=None, tokenizer=False,
-             cuts=None, token_ids=False) -> Node:
+             cuts=None, token_ids=False, extra: dict[str, Any] | None = None) -> Node:
         backends = tmp_path / "backends"
         real = backends / "fake-llama-cpp"
         real.mkdir(parents=True)
@@ -117,7 +118,7 @@ def make_node(tmp_path, stubs, vega):
                    "ModelPath": str(weights.parent), "ContextSize": 512, "Embeddings": True,
                    "RopeFreqBase": 10000.5,
                    "Options": ["device:cpu", "pairs:true", "parallel:1"] if pairs else ["device:cpu", "parallel:1"],
-                   "EnvVars": {"VEGA_TEST_ENV": "on"}}
+                   "EnvVars": {"VEGA_TEST_ENV": "on"}, **(extra or {})}
         models = {"vega-fake": localai_fake.Model(f"127.0.0.1:{running.port}", options)}
         api = FastAPI()
         api.include_router(service.router(vega.receipts, vega.runs))
@@ -143,8 +144,10 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     assert run["weights"] == "sha256:" + hashlib.sha256(node.weights.read_bytes()).hexdigest()
     assert run["driver"] == "cpu"
     engine = run["engine"]
-    assert engine["image"] == vw.tree_digest(node.real_run_sh.parent) != DIGEST, \
+    assert engine["image"] == _image(node) != DIGEST, \
         "the files installed, never the registry's digest"
+    assert engine["image"] != vw.tree_digest(node.real_run_sh.parent), \
+        "the wrapper's code is part of the engine (operator, 2026-10-31)"
     assert engine["name"] == "localai/fake-llama-cpp" and engine["build"] == "v4.11.0"
     assert engine["args"] == ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"], \
         "relative to the backend, whose bytes image names (09 §9.3)"
@@ -156,6 +159,33 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     v = vectors[0]
     assert v[5] == 0.0 and math.copysign(1.0, v[5]) == -1.0, "negative zero kept"
     assert struct.pack("<f", v[6]) == bytes.fromhex("fd43ae15"), "the halfway float kept"
+
+
+def test_a_lora_load_is_stated_with_every_file_in_its_weights(make_node, tmp_path):
+    """09 §9.3, amended 2026-10-31 (operator: a LoRA "decouples the embedder
+    from a tuning"): a load naming an adapter is stated, the adapter's path a
+    placeholder in the options, its bytes and its scale in the weights."""
+    adapter = tmp_path / "adapters" / "retrieval.gguf"
+    adapter.parent.mkdir()
+    adapter.write_bytes(b"lora " * 100)
+    node = make_node(extra={"LoraAdapters": [str(adapter)], "LoraScales": [0.5]})
+    batch, r = node.embed(["hello"])
+    assert r.status_code == 200, r.text
+    _vectors, (run_id,) = node.verify(batch, r)
+    run = node.vega_http.get(f"/vega/runs/{run_id}").json()
+    assert run["engine"]["options"]["LoraAdapters"] == ["${WEIGHTS:LoraAdapters[0]}"]
+    assert run["engine"]["options"]["LoraScales"] == ["0.5"]
+    sha = lambda b: "sha256:" + hashlib.sha256(b).hexdigest()
+    assert run["weights"] == digest(canonical_json({
+        "${WEIGHTS}": sha(node.weights.read_bytes()),
+        "${WEIGHTS:LoraAdapters[0]}": sha(adapter.read_bytes()),
+        "LoraScales": ["0.5"]}))
+
+
+def test_a_lora_named_by_a_relative_name_states_no_run(make_node):
+    node = make_node(extra={"LoraAdapter": "adapters/retrieval.gguf"})
+    _batch, r = node.embed(["hello"])
+    assert r.status_code != 200 and "absolute path" in r.text
 
 
 def test_base64_vectors_verify_as_the_bytes_they_are(make_node):
@@ -245,6 +275,27 @@ def test_an_unrelated_method_is_forwarded_as_bytes(make_node):
     assert e.value.code() == grpc.StatusCode.UNIMPLEMENTED, "the backend's own answer"
 
 
+@pytest.mark.parametrize("extra, embedder", [
+    ({}, True),
+    ({"Embeddings": False}, False),
+    ({"Embeddings": True, "Reranking": True}, False),
+], ids=["embedder", "generation", "reranker"])
+def test_one_package_serves_embedders_generation_models_and_rerankers(make_node, extra, embedder):
+    """One vega-louise-llama-cpp for every llama.cpp model (operator, 2026-11-02):
+    on the `tokenizer` package only an embedder's load is probed (an
+    Embedding and a TokenizeString call); a generation model's or a
+    reranker's gets no call at all — the probe killed a chat model's child,
+    the one reason a `-gen` package existed — and its calls pass through."""
+    node = make_node(tokenizer=True, token_ids=True, extra=extra)
+    node.healthy()
+    pb, rpc = node.stubs.pb, node.stubs.rpc
+    stub = rpc.BackendStub(node.channel())
+    assert stub.LoadModel(pb.ModelOptions(**node.options), timeout=60).success
+    probed = bool(node.calls("Embedding")) or bool(node.calls("TokenizeString"))
+    assert probed is embedder
+    assert stub.Predict(pb.PredictOptions(Prompt="hi"), timeout=10).message == b"echo:hi"
+
+
 def test_calls_without_a_deadline_are_served(make_node):
     """LocalAI v4.11.0 sets no deadline on LoadModel, Embedding or Predict.
     grpcio reports that as 9.2e18 s remaining, which passed on as a timeout
@@ -321,7 +372,7 @@ def test_an_upgraded_backend_is_a_new_run_from_its_next_load(make_node):
     _vectors, (second,) = node.verify(batch, r)
     assert second != first
     assert node.vega_http.get(f"/vega/runs/{second}").json()["engine"]["image"] == \
-        vw.tree_digest(node.real_run_sh.parent)
+        _image(node)
     assert files.reads == [os.path.realpath(node.real_run_sh.parent / "lib" / "libnew.so.1")]
     # the per-file lists behind both runs are kept by VeGa, and their diff names the byte
     from app.vega import trees
@@ -420,6 +471,12 @@ def test_a_directory_that_is_no_backend_refuses_to_start(tmp_path, stubs):
     assert "no run.sh" in proc.stderr.read()
 
 
+def _image(node) -> str:
+    """The engine's `image`: the backend's tree and the wrapper's package."""
+    cfg = node.running.gate.cfg
+    return vw.manifest_digest(vw.engine_manifest(node.real_run_sh.parent, cfg.package, cfg.cuts))
+
+
 # ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ----------------
 
 WORDS = " ".join(f"w{i}" for i in range(20))
@@ -447,6 +504,58 @@ def test_a_text_within_its_window_goes_whole(make_node):
     node.verify(batch, r)
     assert node.calls("Embedding")[-1]["text"] == "w1 w2 w3"
     assert len(node.calls("TokenizeString")) == 2, "the probe at load, then the input once"
+
+
+def test_a_text_its_bytes_keep_under_the_window_is_sent_whole_uncounted(make_node):
+    """München, 2026-10-30 (py-spy on bge-m3's wrapper, wikipedia's chunks):
+    TokenizeString was 10.7 % of embedding(), ~4.5 ms of ~42, for texts that
+    could never reach the window. A text whose UTF-8 bytes bound its tokens
+    under the window goes whole without being counted, the same text and so
+    the same vector as the counted path."""
+    node = make_node(tokenizer=True)
+    counted, r1 = node.embed(["w1 w2 w3"], window=10)    # 9 + 2 specials > 10: counted
+    assert r1.status_code == 200, r1.text
+    probes = len(node.calls("TokenizeString")) - 1       # the probe at load, then this one
+    whole, r2 = node.embed(["w1 w2 w3"], window=500)     # bound 9 + 2 <= 500: not asked
+    assert r2.status_code == 200, r2.text
+    node.verify(whole, r2)
+    assert len(node.calls("TokenizeString")) == probes + 1, "no count asked"
+    sent = node.calls("Embedding")
+    assert sent[-1]["text"] == sent[-2]["text"] == "w1 w2 w3"
+    assert r2.json()["data"][0]["embedding"] == r1.json()["data"][0]["embedding"]
+    assert whole.input_digests[0] == vtag.input_digest("text", "w1 w2 w3", 500)
+
+
+def test_a_beaten_bound_costs_a_request_never_a_vector(make_node, monkeypatch):
+    """If a tokenizer ever made more tokens of a text than `token_bound`
+    allows, the answer says so (its tokens over the window): the input is cut
+    by its tokens and asked again, as the counted path would have sent it."""
+    node = make_node(tokenizer=True)
+    monkeypatch.setattr(vw, "token_bound", lambda text: 0)
+    batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    sent = [c["text"] for c in node.calls("Embedding")]
+    assert sent[-2] == WORDS, "sent whole first, on the beaten bound"
+    assert sent[-1].split() == [f"w{i}" for i in range(8)], "then cut by the book"
+    monkeypatch.undo()                               # the real bound: WORDS is counted
+    _b, by_the_book = node.embed([WORDS], window=10)
+    assert node.calls("Embedding")[-1]["text"] == sent[-1]
+    assert by_the_book.json()["data"][0]["embedding"] == r.json()["data"][0]["embedding"]
+
+
+@pytest.mark.parametrize("text", ["plain ascii, 1 2 3", "ﬁne", "ﷺ", "㍿", "naïve café",
+                                  "日本語のテキスト", "😀 emoji", "क़", "Å"])
+def test_the_token_bound_covers_every_normalised_form(text):
+    """Each token covers at least one byte of the text as its tokenizer
+    normalises it, so the bound is the longest normalised form's bytes,
+    plus SentencePiece's dummy prefix: NFKC expands ﷺ to 18 characters
+    (33 bytes from 3)."""
+    import unicodedata
+    b = vw.token_bound(text)
+    for f in ("NFC", "NFD", "NFKC", "NFKD"):
+        assert b >= len(unicodedata.normalize(f, text).encode()) + 1, f
+    assert b >= len(text.encode()) + 1
 
 
 def test_a_backend_whose_tokens_cannot_be_counted_cuts_nothing(make_node):

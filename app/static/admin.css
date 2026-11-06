@@ -7,9 +7,32 @@
    only their values changed: --brass is now the teal accent, --lapis the
    violet secondary, --ivory the cool porcelain text. */
 :root{
-  --ink:#0e141b; --panel:#151d26; --panel2:#1a2530; --line:#2a3947;
-  --ivory:#dbe4ea; --muted:#7f909d; --brass:#43bfb4; --lapis:#9d8cff;
+  --ink:#0e141b; --panel:#151d26; --panel2:#1a2530; --line:#2a3947; --rule:#233240;
+  --ivory:#dbe4ea; --soft:#b9c8d2; --muted:#7f909d; --brass:#43bfb4; --lapis:#9d8cff;
   --ok:#6fbf73; --err:#e06c5a; --amber:#d9973b; --mono:'IBM Plex Mono',monospace,monospace;
+  color-scheme:dark;
+}
+/* THE THEMES (operator, 2026-10-30: "make them selectable by the user, I
+   like them all"), each reader's own choice, kept in their browser
+   (base.html): Slate is the default above; three from Alsace —
+   Kelsch, the checked linen (woad, madder, unbleached linen);
+   Grès des Vosges, Strasbourg's pink sandstone under slate roofs;
+   Colmar, lime-washed half-timbering with blue shutters, the one light one.
+   Every colour a page uses is one of these tokens. */
+:root[data-theme="kelsch"]{
+  --ink:#111833; --panel:#18213f; --panel2:#212c52; --line:#34416f; --rule:#283460;
+  --ivory:#f0e8d6; --soft:#d6cfbf; --muted:#9aa0bd; --brass:#e0694e; --lapis:#9cb8f0;
+  --ok:#86bf7a; --err:#ff6f91; --amber:#e6ac3e; color-scheme:dark;
+}
+:root[data-theme="gres"]{
+  --ink:#17181c; --panel:#1f2026; --panel2:#282a31; --line:#3c3e48; --rule:#2f3139;
+  --ivory:#efe6de; --soft:#d4cbc4; --muted:#9c959a; --brass:#e3907c; --lapis:#a3b8d8;
+  --ok:#8fc27e; --err:#ff5f5f; --amber:#e2b54a; color-scheme:dark;
+}
+:root[data-theme="colmar"]{
+  --ink:#f5efe3; --panel:#fffcf6; --panel2:#efe5d3; --line:#d6c6aa; --rule:#e4d8c4;
+  --ivory:#2e241d; --soft:#4a3d33; --muted:#7b6a5b; --brass:#1e5b8c; --lapis:#7b3f6e;
+  --ok:#3b7a35; --err:#b42318; --amber:#a86b0f; color-scheme:light;
 }
 *{box-sizing:border-box;margin:0}
 html{background:var(--ink)}
@@ -18,8 +41,12 @@ body{font-family:var(--mono);font-size:13px;color:var(--ivory);background:var(--
 a{color:var(--lapis)}
 h1{font-size:20px;letter-spacing:.4px}
 h2{font-size:14px;color:var(--brass);margin-bottom:10px;letter-spacing:.4px}
-nav{display:flex;gap:2px;border-bottom:2px solid var(--line);padding:14px 22px;align-items:baseline;flex-wrap:wrap}
-nav .brand{font-size:18px;font-weight:600;margin-right:18px}
+/* The name centred, the menu below it, centred too (operator, 2026-10-30) */
+nav{display:flex;flex-direction:column;align-items:center;gap:8px;border-bottom:2px solid var(--line);padding:14px 22px}
+nav .brand{font-size:18px;font-weight:600;text-align:center}
+nav .menu{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;align-items:baseline}
+nav .theme{width:auto;flex:none;font-family:var(--mono);font-size:12px;background:var(--panel2);
+  color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:3px 6px;margin-left:6px}
 nav a{color:var(--muted);text-decoration:none;padding:6px 12px;border-radius:3px}
 nav a.active{color:var(--brass);background:var(--panel2)}
 nav a:hover{color:var(--ivory)}
@@ -30,6 +57,7 @@ button,.btn{font-family:var(--mono);font-size:12px;background:var(--panel2);colo
   border:1px solid var(--line);padding:6px 14px;cursor:pointer;border-radius:3px;text-decoration:none;display:inline-block}
 button:hover,.btn:hover{border-color:var(--brass)}
 button.primary{border-color:var(--brass);color:var(--brass)}
+button.danger{border-color:var(--err);color:var(--err)}
 /* Non-clickable = grey and inert, never a dimmed copy of an active control:
    opacity:.4 kept the accent colours and merely faded them, so a disabled
    button still read as "primary, somehow". */
@@ -53,10 +81,13 @@ button.mode.selected:hover{border-color:var(--brass);box-shadow:none}
 input,select,textarea{font-family:var(--mono);font-size:13px;width:100%;background:var(--ink);
   border:1px solid var(--line);color:var(--ivory);padding:7px 9px;border-radius:3px}
 label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px;margin:10px 0 3px}
+/* a checkbox and its label on one line, centred (the SHARE box, 2026-11-01) */
+label.check{display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer}
+label.check input[type=checkbox]{width:auto;margin:0}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;
   letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line)}
-td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
+td{padding:6px 8px;border-bottom:1px solid var(--rule);vertical-align:top}
 /* A badge wraps inside the panel rather than running off it. An id has no
    spaces and no hyphens, so there is nothing for the normal line-breaking
    rules to break on — `overflow-wrap:anywhere` is what lets a 71-character
@@ -88,14 +119,14 @@ td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
 .chip.on{color:var(--brass);border-color:var(--brass)}
 .chip.ann{border-style:dashed}
 .chip.ann.on{color:var(--lapis);border-color:var(--lapis)}
-.spine{height:14px;background:#233240;border-radius:2px;position:relative;overflow:hidden;display:flex}
+.spine{height:14px;background:var(--rule);border-radius:2px;position:relative;overflow:hidden;display:flex}
 .spine span{height:100%}
 .stage{margin:6px 0}
 .stage .lbl{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:3px}
 .fact-card{border:1px solid var(--brass);border-radius:3px;padding:10px;margin:8px 0;background:#14262a}
 .hit{border:1px solid var(--line);border-radius:3px;padding:10px;margin:8px 0;background:var(--panel2)}
 .hit .head{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:5px}
-.hit .snip{color:#b9c8d2;font-size:12px;line-height:1.5}
+.hit .snip{color:var(--soft);font-size:12px;line-height:1.5}
 details.drawer{margin-top:6px;font-size:11px;color:var(--muted)}
 details.drawer summary{cursor:pointer;color:var(--lapis)}
 .note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.5}
@@ -151,7 +182,6 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
 @media (max-width:760px){
   body{overflow-wrap:anywhere}
   nav{padding:10px 12px}
-  nav .brand{margin-right:8px}
   nav a{padding:6px 8px}
   main{padding:14px 12px}
   .panel{padding:12px}
@@ -169,3 +199,34 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
     font-size:10px;text-transform:uppercase;letter-spacing:.8px}
   table.stack.pairs td+td{padding-left:12px}
 }
+
+/* The Ask row (operator, 2026-10-30): the switch, the results' language and
+   one button; the settings behind a closed line */
+.ask-row{align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg label{display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;color:var(--muted);
+  text-transform:none;letter-spacing:0;font-size:12px;margin:0}
+.seg label+label{border-left:1px solid var(--line)}
+.seg input{width:auto;margin:0}
+.seg label:has(input:checked){color:var(--brass);background:var(--panel2)}
+/* On a phone the switch takes the row and both choices share it, at the
+   same font size; a screen too narrow for both on one line wraps the words
+   inside each choice, never mid-word (operator, 2026-11-01) */
+@media (max-width:760px){
+  .ask-row .seg{display:flex;flex:1 1 100%;min-width:0}
+  .ask-row .seg label{flex:1 1 auto;min-width:0;justify-content:center;text-align:center;
+    padding:6px 8px;overflow-wrap:normal;word-break:normal}
+}
+button.ask{padding:6px 22px}
+details.settings{margin-top:10px}
+details.settings>summary{cursor:pointer;color:var(--muted);font-size:12px}
+details.settings[open]>summary{margin-bottom:8px}
+/* THE VERBOSE TEXT BEHIND ONE CLOSED LINE, on every page (operator,
+   2026-11-02: "Compact all the verbose text information as 'details' …, as
+   it is done for 'Settings' at the bottom of the Ask tab. A crowded
+   interface is a bad interface"): the same look as the Settings line, from
+   the theme's tokens only, so it reads the same in Slate and in Colmar */
+details.more{margin:8px 0}
+details.more>summary{cursor:pointer;color:var(--muted);font-size:12px}
+details.more[open]>summary{margin-bottom:4px}
+details.more>.note:first-of-type,details.more>p:first-of-type{margin-top:0}

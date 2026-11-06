@@ -53,16 +53,20 @@ def test_chat_prints_the_answer_and_its_tool_calls(node, monkeypatch, capsys):  
 
     def fake(question, **kw):
         seen.update(question=question, **kw)
-        return {"answer": "Ahab [gutenberg:2701].", "rounds": 2, "exhausted": False,
-                "turns": [{"tool": "louise_search", "arguments": {"query": "whale"}, "result": {"lists": []},
-                           "error": None},
-                          {"tool": "louise_lookup", "arguments": {"id": "x:1"}, "result": None, "error": "malformed"}]}
+        return {"answer": "Ahab [1].", "rounds": 2, "exhausted": False,
+                "cited": [{"n": 1, "uid": "gutenberg:2701", "title": "Moby Dick"}, {"id": "hgnc:1101"}],
+                "turns": [{"tool": "louise_search", "by": "louise", "arguments": {"query": "whale"},
+                           "result": {"lists": []}, "error": None},
+                          {"tool": "louise_lookup", "by": "model", "arguments": {"id": "x:1"}, "result": None,
+                           "error": "malformed"}]}
     monkeypatch.setattr(chat, "ask", fake)
     assert louise.main(["ask", "chat", "who", "hunts", "the", "whale", "--collections", "gutenberg"]) == 0
     out, err = capsys.readouterr()
-    assert out.strip() == "Ahab [gutenberg:2701]." and seen == {"question": "who hunts the whale",
-                                                                 "collections": ["gutenberg"]}
-    assert '[louise_search {"query": "whale"}]' in err and "refused: malformed" in err
+    assert out.splitlines() == ["Ahab [1].", "[1] gutenberg:2701 — Moby Dick", "[hgnc:1101]"], \
+        "what each [n] of the answer is, under it"
+    assert seen == {"question": "who hunts the whale", "collections": ["gutenberg"]}
+    assert '[louise louise_search {"query": "whale"}]' in err and "[model louise_lookup" in err
+    assert "refused: malformed" in err
     assert louise.main(["ask", "chat", "q", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["turns"][0]["tool"] == "louise_search"
 

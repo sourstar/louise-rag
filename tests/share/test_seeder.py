@@ -81,6 +81,31 @@ def test_publish_serves_one_torrent_per_member_file_with_the_snapshots_infohash(
     assert len(seeding.read_published(con)) == 2
 
 
+def test_a_republish_keeps_the_parts_record_lists_of_this_snapshot(node, monkeypatch):  # noqa: F811
+    """possession.part_records reads a part's records once per part ROOT into
+    state/share/part-uids. The republish swept that directory with the old
+    snapshots', so every Library view decoded the whole SHARD again on the
+    request path: 170 s every few minutes while gutenberg contributed
+    (München, 2026-10-27). Kept now; a root no longer in the snapshot goes."""
+    from app.share import possession
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    con = db.connect(c)
+    state = node / c.name / "state"
+    parts = state / "share" / possession.PARTS
+    parts.mkdir(parents=True)
+    held = [parts / f"{str(s.root).split(':')[-1]}.json" for s in snap.shards]
+    for p in held:
+        p.write_text('[["a:1", "sha256:00"]]', encoding="utf-8")
+    gone = parts / ("ab" * 32 + ".json")
+    gone.write_text("[]", encoding="utf-8")
+    (state / "share" / "2026-07").mkdir()
+    seeder.publish(c, snap, d, state, con)
+    seeder.publish(c, snap, d, state, con)
+    assert all(p.read_text(encoding="utf-8") == '[["a:1", "sha256:00"]]' for p in held)
+    assert not gone.exists(), "a part root the snapshot no longer has is pruned"
+    assert not (state / "share" / "2026-07").exists(), "an old snapshot's files still go"
+
+
 def test_a_file_that_is_not_what_the_snapshot_says_is_refused_not_served(node, monkeypatch):  # noqa: F811
     c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
     with open(d / f"records/{SLICE}/00002.jsonl.zst", "ab") as f:
@@ -141,8 +166,20 @@ def test_a_peer_fetches_a_member_by_the_infohash_it_computed_itself(node, monkey
     assert c2.share is False
     got = seeder.sync([c2], {c.name: con}, con, "running")
     assert got["unpublished"] == [c.name] and seeding.read_published(con) == []
-    assert seeding.get_seeder().table() == []
+    # GRACEFUL (operator, 2026-11-01): the leech is still connected, so the
+    # torrents finish what it asked and accept nobody new; the tree stays
+    rows = seeding.get_seeder().table()
+    assert rows and all(r["stopping"] for r in rows)
+    assert (node / c.name / "state" / "share").is_dir(), "the files stay while a transfer may run"
     leech.remove_torrent(h)
+    deadline = time.time() + 30
+    while seeding.get_seeder().table() and time.time() < deadline:
+        seeding.tick([c2], {c.name: con}, con, "running")
+        time.sleep(0.2)
+    assert seeding.get_seeder().table() == [], "every peer gone: the torrents removed"
+    seeder.sync([c2], {c.name: con}, con, "running")
+    assert not (node / c.name / "state" / "share").exists(), "and then the files"
+    assert not seeder.served(con)["stopping"]
 
 
 # ---- announcing ----------------------------------------------------------------------
@@ -392,3 +429,56 @@ def test_a_held_bundle_is_hashed_once_not_at_every_digest_and_publish(node, monk
     # a cache that is not one is recomputed, not trusted
     (state / "share" / mem.ROOTS_CACHE).write_bytes(b"{not json")
     assert len(mem.bundle_members(state, space)) == 2 and len(hashed) == 16 + 8
+
+
+
+# ---- a graceful stop ------------------------------------------------------------------
+
+class _Handle:
+    def __init__(self, peers=1):
+        self.peers, self.calls = peers, []
+
+    def pause(self, *flag):
+        self.calls.append(("pause", flag))
+
+    def resume(self):
+        self.calls.append(("resume", ()))
+
+    def status(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(num_peers=self.peers, total_upload=0, is_seeding=True, state=5)
+
+
+def test_a_graceful_stop_waits_for_its_peers_and_is_bounded(monkeypatch):
+    """Operator, 2026-11-01: unchecked, "complete the transfers ongoing, do
+    not cut the data transfer abruptly" — libtorrent's graceful pause, the
+    torrent removed once no peer is left, and never later than DRAIN_MAX_S."""
+    import libtorrent
+    removed = []
+    monkeypatch.setattr(tt, "get_session", lambda: type("S", (), {"remove_torrent": lambda self, h: removed.append(h)})())
+    s = seeding.Seeder()
+    busy, idle = _Handle(peers=2), _Handle(peers=0)
+    s._handles = {"a": busy, "b": idle}
+    s._meta = {"a": {"collection": "g"}, "b": {"collection": "g"}}
+    assert s.drain(["a", "b"], now=0.0) == 2
+    assert busy.calls == [("pause", (libtorrent.torrent_handle.graceful_pause,))]
+    s.set_paused(False)
+    assert ("resume", ()) not in busy.calls, "a node-wide resume never restarts a stop"
+    assert s.finish_draining(now=1.0) == ["b"] and removed == [idle]
+    assert s.draining("g") == 1 and s.table()[0]["stopping"]
+    assert s.finish_draining(now=seeding.DRAIN_MAX_S - 1) == []
+    assert s.finish_draining(now=seeding.DRAIN_MAX_S) == ["a"], "a peer that never lets go does not hold it"
+    assert s.draining() == 0
+
+
+def test_shared_again_while_stopping_resumes_the_same_handle(monkeypatch, tmp_path):
+    s = seeding.Seeder()
+    h = _Handle(peers=1)
+    s._handles, s._meta = {"a": h}, {"a": {"collection": "g"}}
+    s.drain(["a"], now=0.0)
+    torrent = tmp_path / "a.torrent"
+    torrent.write_bytes(b"d")
+    from types import SimpleNamespace
+    assert s.ensure(SimpleNamespace(name="g", corpus_dir=tmp_path),
+                    {"torrent_path": str(torrent), "info_hash": "a"})
+    assert s._handles["a"] is h and h.calls[-1] == ("resume", ()) and s.draining() == 0

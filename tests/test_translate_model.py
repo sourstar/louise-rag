@@ -161,12 +161,21 @@ def test_the_page_is_translated_in_rounds_it_can_watch(client, monkeypatch):
     long = lambda n: f"entry {n} " + "word " * 100  # noqa: E731
     items = [{"id": "__answer__", "text": long(0)}, {"id": "t", "text": "Moby Dick"}] + \
             [{"id": f"e{n}", "text": long(n)} for n in range(1, 6)]
+    logged = []
+    monkeypatch.setattr(web.db, "log_event", lambda con, level, stage, msg, **k: logged.append((level, stage, msg)))
     lines = _stream(client, {"lang": "it", "items": items})
     assert [len(c) for c in calls] == [1, 1, 3, 2]
     assert calls[1][0][0].startswith("entry 0"), "the answer first among the long ones"
     assert [m["id"] for m in lines if "text" in m] == \
         ["t", "__answer__", "e1", "e2", "e3", "e4", "e5"]
     assert lines[-1] == {"done": True, "failed": False, "missed": []}
+    # the outcome is in the web log (2026-10-28: the answer stayed untranslated and nothing said what the page did)
+    assert len(logged) == 1 and logged[0][:2] == ("info", "translate")
+    assert logged[0][2].startswith("stream into it: 7 items — 7 translated (0 cached), 0 missed, ")
+    # the second request finds the items in the cache, and says so
+    logged.clear()
+    _stream(client, {"lang": "it", "items": items})
+    assert logged[0][2].startswith("stream into it: 7 items — 7 translated (7 cached), 0 missed, ")
 
 
 def test_a_name_that_stays_a_name_is_the_models_answer(client, monkeypatch):

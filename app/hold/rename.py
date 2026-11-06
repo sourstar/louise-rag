@@ -19,7 +19,13 @@ holds it, so a rename recomputes nothing. What carries it, and moves:
 5. the held file `collections/<old>.toml` → `<new>.toml`, LAST: until then
    the node holds the collection under its old name;
 6. a per-collection pause (`node pause <old>`) moves with it, so a paused
-   collection stays paused under its new name.
+   collection stays paused under its new name;
+7. the fast drive's derived caches (app/derived.py) keyed on a folder under
+   anything that moved — wikidata's pack under its dump, pubmed's under its
+   containers, a part cache under the SHARD tree — renamed to the new
+   path's key. A cache is keyed on its origin's resolved path, so a moved
+   origin would otherwise orphan it: wikidata's ~60 GB pack, hours from the
+   bz2 (found 2026-10-27, before the re-creation's rename ran).
 
 The caller holds the collection's write lock: a running node holds it, and
 `node pause <old>` releases it (07 §7.7). Every step is idempotent and the
@@ -103,21 +109,30 @@ def plan(root: Path, old: str, new: str) -> dict[str, Any]:
 def _rewrite_paths(manifest: Path, old_prefix: str, new_prefix: str) -> dict[str, int]:
     """Every stored absolute path under `old_prefix` re-rooted under
     `new_prefix`, one transaction, BEGIN IMMEDIATE (the reader-then-writer
-    rule). No rowid moves (invariant 6: an UPDATE renumbers nothing)."""
+    rule). No rowid moves (invariant 6: an UPDATE renumbers nothing).
+
+    EVERY occurrence, not only the leading one: a locator may name several
+    files — wikipedia's `<dump>::s::e|<page_props>::s::e` (parser 5) — and
+    re-rooting the first alone left the page_props path under the old name:
+    4,989 wikipedia documents errored in an hour after wikipedia-v8 became
+    wikipedia (2026-10-30). `old_prefix` ends in "/", so a sibling whose
+    name merely starts with the old one is never touched."""
     counts: dict[str, int] = {}
     if not manifest.is_file():
         return counts
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         con.execute("BEGIN IMMEDIATE")
         for table, column in PATH_COLUMNS:
             if table not in tables:
                 continue
             cur = con.execute(
-                f"UPDATE {table} SET {column} = ? || substr({column}, ?) "
-                f"WHERE substr({column}, 1, ?) = ?",
-                (new_prefix, len(old_prefix) + 1, len(old_prefix), old_prefix))
+                f"UPDATE {table} SET {column} = replace({column}, ?, ?) "
+                f"WHERE instr({column}, ?) > 0",
+                (old_prefix, new_prefix, old_prefix))
             counts[f"{table}.{column}"] = cur.rowcount
         con.execute("COMMIT")
     except BaseException:
@@ -150,13 +165,46 @@ def _relink(link: Path, target: Path) -> None:
     os.replace(tmp, link)                    # the link swapped whole, never absent
 
 
+def _cache_moves(moves: dict[str, Any]) -> list[tuple[Path, Path]]:
+    """[(cache dir, its new place)] for every derived cache keyed on a folder
+    or FILE under what the rename moves: wikidata's pack is keyed on the dump
+    file (app/plugins/wikidata/pack.py `_target`), the others on a folder.
+    The walk is of whichever side exists (before or after the move: a rerun
+    finds the same pairs), never into a link, and a key is computed only
+    against the caches the fast drive holds: one resolve per moved root, a
+    hash per entry (an origin of a million files, gutenberg's, is a walk,
+    not a million resolves)."""
+    from app import derived
+    held = derived.held()
+    if not held:
+        return []
+    tags = {c.name for c in held}
+    pairs: dict[str, str] = {}
+    for kind in ("directory", "shard", "origin", "bundles"):
+        if kind not in moves:
+            continue
+        a, b = Path(moves[kind][0]), Path(moves[kind][1])
+        walked = b if b.is_dir() else a
+        ra, rb = derived.resolved(a), derived.resolved(b)
+        for here, dirs, files in os.walk(walked):
+            dirs[:] = [d for d in dirs if not (Path(here) / d).is_symlink()]
+            rel = Path(here).relative_to(walked)
+            for name in [None, *(f for f in files if not (Path(here) / f).is_symlink())]:
+                r = rel if name is None else rel / name
+                old_tag = derived.key(ra / r)
+                if old_tag in tags:
+                    pairs[old_tag] = derived.key(rb / r)
+    return [(c, c.with_name(pairs[c.name])) for c in held
+            if c.name in pairs and pairs[c.name] != c.name]
+
+
 def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str, Any]:
     from . import collection as col
     from app import node_state
     root = Path(root)
     moves = plan(root, old, new)
     if dry_run:
-        return {**moves, "dry_run": True}
+        return {**moves, "caches": [[str(a), str(b)] for a, b in _cache_moves(moves)], "dry_run": True}
     base, dest = Path(moves["directory"][0]), Path(moves["directory"][1])
     # 0. the plan, where it survives the directory's own rename
     state = (dest if dest.exists() else base) / "state"
@@ -178,9 +226,14 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
     # 4. the pause, if any
     paused = old in node_state.paused_collections()
     if paused:
-        node_state.set_paused(new, True)
-        node_state.set_paused(old, False)
+        node_state.set_paused(new, True, by=f"rename {old} -> {new}")
+        node_state.set_paused(old, False, by=f"rename {old} -> {new}")
     done["paused"] = paused
+    # 4b. the derived caches keyed on what moved
+    # (a cache already at both keys is left: nothing moved over another, and
+    # a cache is re-creatable, so it never stops the rename half-way)
+    done["caches"] = {str(b): "both kept" if a.exists() and b.exists() else _move(a, b)
+                      for a, b in _cache_moves(moves)}
     # 5. the held file, last: until here the node held it under its old name
     held_old, held_new = Path(moves["held_file"][0]), Path(moves["held_file"][1])
     done["held_file"] = _move(held_old, held_new) if (held_old.exists() or held_new.exists()) else "none"

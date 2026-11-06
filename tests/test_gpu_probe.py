@@ -403,8 +403,8 @@ def test_the_region_struct_matches_the_uapi_layout():
 
 
 def test_a_python_server_that_names_its_weights_is_labelled_by_them(tmp_path):
-    """After RAGE took the models over, the panel showed two rows called
-    "servers.launch" — 6.2 GB and 432 MB of the card — because RAGE starts its
+    """After the model pool took the models over, the panel showed two rows called
+    "servers.launch" — 6.2 GB and 432 MB of the card — because the model pool starts its
     torch and OpenVINO servers through one launcher and a python process was
     labelled by its module (operator, 2026-09-19: "check what models are
     servers.launch")."""

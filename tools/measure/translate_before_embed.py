@@ -31,7 +31,8 @@ from pathlib import Path
 import numpy as np
 
 from app import collections as collections_mod
-from app import dispatch, embeddings, translate
+from app import embeddings, translate
+from app.rage import dispatch
 from app.pack import records as pack_records
 from app.plugins import shard as shard_plugin
 

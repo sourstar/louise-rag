@@ -131,20 +131,42 @@ def union_counts(root: Path, name: str, codex, rows: Sequence[Mapping[str, Any]]
     return out
 
 
+class CoverageUnknown(RuntimeError):
+    """A re-minted collection's parts could not be counted by possession.
+    Its rows alone would count only its own bundles, and miss every chunk
+    its predecessor's bundles cover. So the caller gets no count rather than
+    that wrong one (2026-10-25: one `hold vectors show` read 114,154 covered
+    of 10,471,327 for 10,164,506, because a cache-file race raised and this
+    function quietly fell back to the rows). The publish pass treats it as
+    "not this beat" and logs why; `leading` keeps its rule that every doubt
+    embeds; a reader shows no figure."""
+
+
 def view_kwargs(root: Path, name: str, codex, con, rows: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """What `coverage.shards_view` needs beyond the rows to count a part
     once: `redundant` (a producer's deprecated copies held beside their
-    current one) and `union` (every part with several accepted bundles)."""
+    current one) and `union` (every part with several accepted bundles).
+    Raises `CoverageUnknown` when a re-minted collection's possession count
+    fails for any reason but "no snapshot yet"."""
     from app.share import contribute, coverage as cov, deprecate
     rows = cov.rows(con) if rows is None else rows
     union = None
     if contribute.predecessors(root, name):
         # re-minted in the same space: every part counted BY POSSESSION, the
         # predecessor's bundles included (app/share/possession.py, 2026-10-22)
+        from app.hold import seed
+        from app.hold.codex import CodexError
         from app.share import possession
         try:
-            union = possession.covered(root, name, codex, con)
-        except Exception:   # noqa: BLE001 — no snapshot yet: the rows' count
-            union = None
+            snapshot = seed.latest_snapshot(Path(root), name)
+        except CodexError:
+            snapshot = None             # no snapshot yet: no parts, and the rows are all there is
+        if snapshot is not None:
+            try:
+                union = possession.covered(root, name, codex, con, snapshot)
+            except Exception as e:      # noqa: BLE001 — named, never swallowed
+                raise CoverageUnknown(
+                    f"{name}: the parts' coverage could not be counted by possession "
+                    f"({type(e).__name__}: {e}); no figure rather than the rows' undercount") from e
     return {"redundant": deprecate.redundant_here(root, name, codex, con),
             "union": union if union is not None else union_counts(root, name, codex, rows)}

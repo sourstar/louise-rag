@@ -7,7 +7,13 @@ deployment.
 import shutil
 from pathlib import Path
 
+import os
+
 import pytest
+
+# the web's background warm of the question path's models (app/warmup.py)
+# is off in tests: a test that starts the app talks to no model server
+os.environ["LOUISE_WARMUP"] = "0"
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
 
@@ -17,8 +23,9 @@ def fresh_worker_state():
     """Module-level cursors and memos are per PROCESS, so one test's
     completed walk must not decide the next test's selection (that leak
     is exactly the bug the re-index cursor's key had in production)."""
-    from app import (dispatch, encoder_timeouts, language_plan, parallel, sched, sizing,
+    from app import (cpu_limit, encoder_timeouts, language_plan, parallel, sched, sizing,
                      translate, worker)
+    from app.rage import dispatch
     from app.bundles import genesis
     dispatch.reset()
     encoder_timeouts.reset()
@@ -31,10 +38,14 @@ def fresh_worker_state():
     worker.reset_phase_memo()
     worker._prefetch_last.clear()
     worker._vindex_last.clear()
+    worker._vlight_last.clear()
     genesis.reset_revisit_state()
     parallel.forget_prefetched()
     parallel.forget_users()
     parallel.reset_failures()
+    # the node profile's cached limit and each collection's watch of it
+    cpu_limit.reset()
+    worker._cpu_watches.clear()
     # the beat reaches `_log_shares` now; its 600 s throttle must not carry
     # one test's log into the next
     worker._last_shares_log = 0.0
@@ -57,6 +68,16 @@ def no_runner_says_what_it_holds(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_served_weights_are_remembered():
+    """app/encoder_resolve.py caches, per process, the weights each model on
+    a server states. A test's fake server must not answer for the next."""
+    from app import encoder_resolve
+    encoder_resolve.reset_cache()
+    yield
+    encoder_resolve.reset_cache()
+
+
+@pytest.fixture(autouse=True)
 def no_model_is_pinned(monkeypatch):
     """app/model_pins.py pins a LocalAI model while it processes. No test's
     runner has LocalAI's pin API and its hosts do not exist, so nothing is
@@ -65,6 +86,18 @@ def no_model_is_pinned(monkeypatch):
     monkeypatch.setattr(model_pins, "_applies", lambda server, model: False)
     model_pins._retry_after.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def no_disk_floor(monkeypatch):
+    """The vector store's free-space floor (app/disk_guard.py, 32 GiB) is the
+    HOST's business: a runner with less free disk deferred every vector
+    import in three unrelated tests (test_accept's survivor 2026-10-19,
+    test_deprecate and test_bundle_worker 2026-10-23, at 19.5 GiB free). The
+    tests of the floor set their own values (tests/test_disk_guard.py)."""
+    from app import config
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +123,12 @@ def no_checkout_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("no-config")))
 
 
+#: The real data directory and node root, read ONCE at import, before any
+#: fixture repoints the environment — what the guard below must watch.
+_REAL_DATA = Path(os.getenv("DATA_DIR", "/data"))
+_REAL_ROOT = Path(os.getenv("LOUISE_ROOT") or _REAL_DATA)
+
+
 @pytest.fixture(autouse=True)
 def no_real_data_dir(tmp_path_factory, monkeypatch):
     """No test resolves the real data directory: `config.DATA_DIR` is an
@@ -98,7 +137,15 @@ def no_real_data_dir(tmp_path_factory, monkeypatch):
     whose reference store sits beside DATA_DIR, and created the real
     /data/refs.db (2026-10-08)."""
     from app import config
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path_factory.mktemp("no-data"))
+    empty = tmp_path_factory.mktemp("no-data")
+    monkeypatch.setattr(config, "DATA_DIR", empty)
+    # AND the environment, which `config.louise_root()` reads at call time: a
+    # node's container sets LOUISE_ROOT to the real /data, so every test
+    # without `isolated_config` resolved the node's own state — the suite
+    # run on the node wrote /data/state/.model-pins.lock (2026-10-27), and
+    # with LOUISE_ROOT pointed at a stand-in, node.sqlite and trust.json too
+    monkeypatch.setenv("LOUISE_ROOT", str(empty))
+    monkeypatch.setenv("DATA_DIR", str(empty))
 
 
 @pytest.fixture(autouse=True)
@@ -114,14 +161,14 @@ def the_real_node_store_is_never_touched():
     before, it must be absent after; present (a node's volume mounted), its
     top level and the entries in it must be unchanged — one listing and a
     stat per entry, never a walk of a node's tree."""
-    import os
-    data = Path(os.getenv("DATA_DIR", "/data"))
-    real = Path(os.getenv("LOUISE_ROOT") or data) / "state" / "node.sqlite"
+    data = _REAL_DATA
+    real = _REAL_ROOT / "state" / "node.sqlite"
 
     def _stamp():
         out = []
         for p in (real, real.with_name(real.name + "-wal"),
-                  real.with_name("rechecked.json"), real.with_name("trust.json")):
+                  real.with_name("rechecked.json"), real.with_name("trust.json"),
+                  real.with_name("model-pins.json"), real.with_name(".model-pins.lock")):
             try:
                 st = p.stat()
                 out.append((st.st_size, st.st_mtime_ns))
@@ -160,12 +207,68 @@ def serial_parse_pool(monkeypatch):
     back in explicitly (PARSE_PROCESSES=2)."""
     from app import config
     monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", False)
+
+
+@pytest.fixture(autouse=True)
+def compiled_textify_answers_as_its_source(monkeypatch):
+    """Where the wikidata textifier is COMPILED (mypyc; docs/notes/
+    python-hot-spots.md "E"), every text a test asks of it is asked of its
+    source too, and a test whose two answers differ fails: the plugin's
+    tests, the pack's records builds — every entity of the suite — become
+    an identity check of the compiled module, at no extra test. Where it
+    is not compiled (a tree without the build), nothing is wrapped."""
+    import sys
+    live = sys.modules.get("app.plugins.wikidata.textify")
+    if live is None:
+        return
+    from app.plugins.wikidata import pure
+    if not pure.is_compiled(live):
+        return
+    source = pure.textify()
+
+    def checked(name):
+        compiled_fn, source_fn = getattr(live, name), getattr(source, name)
+
+        def call(*args, **kw):
+            try:
+                got = ("text", compiled_fn(*args, **kw))
+            except Exception as e:  # noqa: BLE001 — the same failure is the same answer
+                got = ("raised", type(e).__name__, str(e), e)
+            try:
+                want = ("text", source_fn(*args, **kw))
+            except Exception as e:  # noqa: BLE001
+                want = ("raised", type(e).__name__, str(e), e)
+            assert got[:3] == want[:3], f"compiled textify.{name} differs from its source: {got[:3]!r} != {want[:3]!r}"
+            if got[0] == "raised":
+                raise got[3]
+            return got[1]
+        call.__wrapped__ = compiled_fn          # the compiled function itself, unchecked
+        return call
+
+    for name in ("entity_text", "history_text"):
+        monkeypatch.setattr(live, name, checked(name))
 
 
 @pytest.fixture
 def corpus_dir(tmp_path) -> Path:
     dest = tmp_path / "corpus"
     shutil.copytree(FIXTURE_CORPUS, dest)
+    return dest
+
+
+def gutenberg_books(dest: Path, n: int, first: int = 20000) -> Path:
+    """A gutenberg corpus of `n` books at `dest`, cycled from the mini
+    fixture's three under new ids (~2.5 KB each): enough rows for a build of
+    several pages (a page is at least 50 records, app/pack/build.py)."""
+    templates = sorted(p for p in FIXTURE_CORPUS.iterdir() if p.is_dir())
+    for k in range(n):
+        src = templates[k % len(templates)]
+        old, new = src.name, str(first + k)
+        (dest / new).mkdir(parents=True)
+        for f in src.iterdir():
+            (dest / new / f.name.replace(old, new)).write_bytes(
+                f.read_bytes().replace(old.encode(), new.encode()))
     return dest
 
 

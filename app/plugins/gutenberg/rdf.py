@@ -3,6 +3,17 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from ..base import Issue
+
+#: the codes `parse` reports — what the worker's rdf stage, which reads the
+#: catalogue entry alone, checks (source.py `METADATA_ISSUES`)
+ISSUES = {
+    "rdf-missing": "the book has no catalogue entry (pg<N>.rdf): no title, authors, subjects "
+                   "or release date",
+    "rdf-unreadable": "the book's catalogue entry (pg<N>.rdf) is empty or not well-formed XML",
+    "rdf-no-ebook": "the book's catalogue entry (pg<N>.rdf) holds no pgterms:ebook element",
+}
+
 # MARC SUBFIELD DELIMITERS LEAK INTO PG TITLES. 4,648 of 79,286 titles on
 # this node (5.86%, measured 2026-09-12) carry one, almost all of them the
 # `… : $b subtitle` form that 245$b marks — and 09 §9.5 says `title` is
@@ -142,16 +153,24 @@ def parse(book_dir: Path, book_id: int) -> dict:
            "issued": None, "creators_detail": [], "author_names": [], "languages": [],
            "subjects_by_scheme": {}, "alt_titles": [], "description": "",
            "toc": "", "dcmi_type": "", "rights": "", "reading_ease": "", "marc": {},
-           "title_raw": "", "other_titles": []}
+           "title_raw": "", "other_titles": [],
+           # THE ORIGIN'S INCONSISTENCIES this read met (06 §6.1, amended
+           # 2026-10-25): the three early returns below used to be silent —
+           # a book with no catalogue entry became a record with no title,
+           # no authors and no release date, and nothing said why
+           "issues": []}
     if not path.is_file():
+        out["issues"].append(Issue("rdf-missing", f"no {path.name} in the book's directory"))
         return out
     try:
         root = ET.parse(path).getroot()
-    except ET.ParseError:
+    except ET.ParseError as e:
+        out["issues"].append(Issue("rdf-unreadable", f"{path.name} is not well-formed XML ({e})"))
         return out
 
     ebook = root.find("pgterms:ebook", NS)
     if ebook is None:
+        out["issues"].append(Issue("rdf-no-ebook", f"{path.name} holds no pgterms:ebook entry"))
         return out
 
     # EVERY TITLE (parser 7). `find` took the first and the rest went

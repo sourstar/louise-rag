@@ -16,8 +16,10 @@ pure function of the cleaned text and the layer's chunker. Hashes are
 hashes. A check on any of these either passes or is a proof of failure
 that names the part. There is no "close".
 
-**Vectors are within tolerance.** The same weights on different GPUs,
-drivers or batch sizes produce different floats. So a vector is correct
+**Vectors are within tolerance.** The same weights on different GPUs or
+drivers produce different floats; the same run on the same card gives the
+same bytes (CLAUDE.md invariant 12), so tolerance covers only agreement
+across hardware. So a vector is correct
 when its cosine against a compliant encoder's output for the same chunk
 is at least the Codex's `tolerance` — a statistical statement, sampled,
 never exhaustive in practice. The encoder on the other side of that
@@ -69,21 +71,21 @@ create` and at `hold check` alike.
 | check | proves | needs | kind |
 |---|---|---|---|
 | `roots` | every part's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
-| `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled part's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
+| `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled part's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5); where the slicing names a family map (*amended 2026-10-24*), the map member hashes to it and every sampled record whose classes the map knows sits in the slice the map gives it | the copy | exact |
 | `records-vs-origin` | a seeded sample of parts and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root`. A line identical but for `origin_hash` is MOVED, not failed: its origin unit was rewritten since the build and parses to the same record; it is named in the detail (amended 2026-10-07: the mirror rewrote half of a sample of gutenberg's book folders without changing one parsed record, and a new image could not be proven equivalent). A line that differs elsewhere too, from an origin unit whose `origin_hash` is no longer the record's, is CHANGED AT THE ORIGIN, not failed: the origin revised it since the build, so it can be neither reproduced nor held against the record; it is named in the detail. Only a line whose origin unit is still the bytes it was parsed from can fail. When more than a tenth of the records re-parsed changed at the origin, or none reproduced, the check is inconclusive: a revised origin and a hash that never matched look the same (amended 2026-10-11, operator's yes: 17 of 4,055 sampled gutenberg records were revised upstream, and the check failed under every image, the Codex's own included) | the origin, the platform image | exact |
 | `image-equivalence` | the same seeded sample re-parsed from the same origin bytes by this image and by the Codex's reference image (`--against`, written under that image by tools/reparse_lines.py) gives the same record lines, every one — a proof about the image, never planned, for §3.4 when the origin has moved since the build | the origin, the reference image's lines | exact |
 | `chunks` | recomputing chunks from the records reproduces each sampled part's `chunks_root` and its `chunks` count (09 §9.4) — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3), so a wrong layer is caught rather than reproduced | the copy | exact; can be exhaustive |
 | `vectors-sample` | in a seeded sample of parts, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
 | `calibration` | the calibration set's reference vectors reproduce on this peer's encoder — the gate of §3.3, run for this collection's space | an encoder | statistical |
-| `centres` | re-training from the declaration in `vectors/<space>/index.json` (02 §2.4) yields centres each within cosine ≥ `tolerance` of the published centre at that index version | the copy | statistical |
-| `labels` | every vector's stored label is its nearest published centre at the label's index version, ties to the lower centre index | the copy | exact given the published centres |
+| `centres` *(not built: INCONCLUSIVE with its reason, 2026-10-25)* | re-training from the declaration in `vectors/<space>/index.json` (02 §2.4) yields centres each within cosine ≥ `tolerance` of the published centre at that index version | the copy | statistical |
+| `labels` *(not built: INCONCLUSIVE with its reason, 2026-10-25)* | every vector's stored label is its nearest published centre at the label's index version, ties to the lower centre index | the copy | exact given the published centres |
 | `figures` | every plate the sampled parts' records name is in the part's figures container and hashes to what the record line says (09 §9.5); a plate the peer does not hold is not a failure — a figures member is fetchable or not — and is reported as not held | the copy | sampled |
-| `model-agreement` | *amended 2026-10-20* (02 §2.10, a `model` method): a seeded sample of an annotations collection's claims made by a `model` method, re-run with that method — its weights and prompt by the hashes the method names, temperature 0 — agrees with the held claims at or above the floor the collection's plan records for the method. The floor is MEASURED before the method's first collection (the first 1,000 claims re-run twice; operator, 2026-10-20) and never written before that measurement; planned exactly where a `model` method is present | the method's model and prompt | statistical |
+| `model-agreement` *(not built: INCONCLUSIVE with its reason, 2026-10-25)* | *amended 2026-10-20* (02 §2.10, a `model` method): a seeded sample of an annotations collection's claims made by a `model` method, re-run with that method — its weights and prompt by the hashes the method names, temperature 0 — agrees with the held claims at or above the floor the collection's plan records for the method. The floor is MEASURED before the method's first collection (the first 1,000 claims re-run twice; operator, 2026-10-20) and never written before that measurement; planned exactly where a `model` method is present | the method's model and prompt | statistical |
 | `license` | the terms member `LICENSE-TERMS` hashes to the Codex's `license.terms_sha256` (09 §9.13); absent for a green collection | the copy | exact |
 | `signature` | the snapshot's sidecar carries a valid signature by the key that claims it (09 §9.4) | the copy | exact |
 | `anchor` | a certifier's key is listed, valid and unrevoked at its external anchor (§3.7) | the network | exact |
 | `origin-seal` | the origin's own seal on the source file validates, and the record was parsed from that file (§3.7) | the copy, or the origin | exact |
-| `evaluation` | the score in `space.evaluation` (02 §2.4) reproduces on this copy's chunks when its suite is public, and every target the suite names resolves to a chunk in the copy | the copy, the suite | statistical |
+| `evaluation` *(not built: INCONCLUSIVE with its reason, 2026-10-25)* | the score in `space.evaluation` (02 §2.4) reproduces on this copy's chunks when its suite is public, and every target the suite names resolves to a chunk in the copy | the copy, the suite | statistical |
 
 **A never-share collection** proves nothing to anyone, because nobody
 else holds it, and needs only the checks that keep its own vectors
@@ -121,8 +123,22 @@ record's locator points into (09 §9.5) — the units are ranked by
 locator without its member, and they are read in that order up to the
 last one that keeps the sum of their sizes within **256 MiB**; the
 first is always read, whatever it weighs. Every sampled record of a
-unit that is read is compared byte for byte; the others are not
-compared in this run and the report says so. The seed still decides
+unit that is read is compared byte for byte, but for a unit heavier
+than the bound; the others are not compared in this run and the report
+says so. **A unit heavier than the bound is compared in part**
+(amended 2026-11-01, operator, RULE 1: a rule that forces a
+recomputation is changed): of its `n` sampled records, the
+⌈n × bound / weight⌉ — at least one — that `sample(seed, …)` ranks
+first over their uids, and the report names, for each such unit, its
+weight, `n` and the share compared. Only the first unit taken can be
+one. Wikidata's every record points into its one dump file, so a check
+re-parsed all 3.7 M of its sampled records (~27 h at 38 per second);
+the share is about 6,800. Nothing is lost: on the builder, under the
+build's own image, the check re-runs the same code on the same bytes
+and can catch only a parser that is not deterministic or a locator
+that is wrong (§3.4: it passes a wrong parser), which a seeded share
+finds as well; elsewhere the seed still decides which records, and the
+union over peers grows with every check. The seed still decides
 everything, so the union of what peers have compared grows with every
 check, and anyone can recompute from an attestation which units it
 read. The bound is the platform's and not the plan's, for the reason
@@ -233,12 +249,9 @@ changed an input or a vector, or sent a request to a backend without
 the wrapper, is caught by the writer and never trusted. Together they
 are a trusted processing platform: a model reloaded with another flag,
 a backend upgraded, a driver updated underneath it is each a different
-run, and says so on its next receipt. The second part was RAGE, the RAG
-Engine, until 2026-10-08: a front that computed the run from the
-process the kernel showed and stated it in a header of each answer
-(09 §9.12, `Louise-Run`; operator, 2026-10-03). It serves until VeGa
-replaces it, and an endpoint behind it is held to the rules below with
-its header in place of a receipt.
+run, and says so on its next receipt. An endpoint not behind VeGa that
+states its run in the `Louise-Run` header of each answer (09 §9.12) is
+held to the rules below with the header in place of a receipt.
 
 - **Embedding** (`vectors build`, `share contribute`): a vector is
   written only if the answer that carried it names a run validated for
@@ -286,22 +299,39 @@ nor searched with.
 
 **The gate also measures what the answers depend on besides the run.**
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
-again the way the peer contributes: its batching and its concurrency.
-Equal bytes pass at once. Otherwise the batched answers are judged
-against the run's own run-to-run variation: the sixteen are embedded one
-at a time a second time, and every batched vector must be as close to its
-single-text answer as the two single-text passes are to each other at
-their furthest apart, less f32 rounding (10⁻⁶ of cosine). A run whose
-batched answers fall outside that band is validated only for
-single-text, one-at-a-time work (*amended 2026-10-12*, operator: equal
-bytes failed engines whose batching adds no more than last-bit noise). The batching fault that silently
+one at a time again in reverse order, then the way the peer contributes:
+its batching and its concurrency — those sixteen and, besides them, the
+set's sixteen longest texts, cut where the space cuts them, which are also
+embedded one at a time to compare against (*amended 2026-11-02*: a batch
+of 16 answered window-long texts wrong while each alone was right, and
+the short fingerprint texts could not show it) (*amended 2026-10-25*, operator's
+choice A; *amended again 2026-11-01*, operator's choice B; CLAUDE.md
+invariant 12). A run whose every answer to one text — in either order,
+across three fresh loads, batched or alone — is the same byte string is
+**exact**. One whose answers to a text differ is **near-exact** when
+they all stay within cosine 0.99999 of each other and the run reaches
+the stored CPU reference at 0.999 (docs/notes/near-exact-runs.md);
+further apart, the run FAILS whatever its cosines. Both are admitted,
+and the statement says which. Peers accept each other at the space's
+tolerance in any case, and no two kinds of hardware give the same
+bytes, so local byte equality is evidence, not the condition of
+admission. A collection may still ask `exactness = "exact"`: then its
+runs are held to bytes, and batched answers that differ from the
+single-text ones validate a run for single-text work only. (From 2026-10-12 to 2026-10-25
+a band was allowed: batched answers as close to the single-text ones as
+two single-text passes were to each other. Under invariant 12 those
+passes are equal, so the band was only f32 rounding, and a batched vector
+a checker cannot reproduce is not admitted.) The fresh-load half of
+invariant 12's measurement stays the measurement harness's
+(docs/notes/approved-encoders.md). The batching fault that silently
 corrupted 714 books (2026-07) is a property of a run's settings, and it
 is measured, never assumed. The sixteen vectors' hash, the run's
 **fingerprint**, goes into the statement as evidence, not as a check
 the worker repeats. A peer that runs the same run on the same kind of
 device reproduces it bit for bit, which is stronger evidence than any
 tolerance and is the reproduction the Codex's engine is frozen for
-(02 §2.4).
+(02 §2.4) — for an exact run; a near-exact run's fingerprint is evidence
+of the answers it gave, and a peer reproduces them within its bound.
 
 The result is a signed **calibration statement** — "this run, on this
 peer, is compliant with this space" — whose bytes are 09 §9.12's
@@ -342,10 +372,13 @@ them: a peer is eligible for a part when three times the part's
 collection's work period, `work.per` (02 §2.4).
 
 **Before spending GPU.** A peer contributes vectors to a collection
-only after its own `roots` and `chunks` pass on the parts it holds and
-at least one `records-vs-origin` attestation — its own or another
-key's — exists for the snapshot (04 §4.5). Records are checked before
-GPU is spent; there is no vector precondition, which would be circular.
+only after its own `roots` and `chunks` pass on the parts it holds (04
+§4.5). Records are checked before GPU is spent; there is no vector
+precondition, which would be circular. A `records-vs-origin`
+attestation is not one (*amended 2026-11-01*, operator: "The check
+against the source is optional, the gating of the vectore is not"):
+the corpus must be verifiable — every record carries its `origin_hash`,
+refused at build without it (06 §6.4) — and the vectors must be gated.
 
 ## 3.4 Equivalence: another toolchain, the same collection
 
@@ -675,9 +708,9 @@ passes, and it passes at p98 = 1.930 against a ceiling of 2.0.
 classes, dimensions from 768 to 4096, four corpora and three chunkers —
 covering EVERY text space the reference deployment runs. What is left is
 another MODALITY
-— a genome collection, where the alphabet and the encoder family change
-at once — and that one cannot be measured at all until a DNA calibration
-set exists, since 09 §9.12 ships one set per modality and the platform
+— a collection whose alphabet and encoder family both change; none is
+held — and such a one cannot be measured at all until a calibration set
+for it exists, since 09 §9.12 ships one set per modality and the platform
 ships only `text`. Given that the
 cosine has already ranged 0.658 to 0.933 and the deviation percentiles
 0.557 to 1.666 over what has been tried, an untested shape can land
@@ -920,7 +953,7 @@ and written nowhere:
 | state | meaning | cleared by |
 |---|---|---|
 | **refused** | the copy cannot be right: the Codex's inner hash is not the id its file names, the vector table is not the Codex's space or width, the state database is another platform's (07 §7.8) | a person, and nothing else |
-| **quarantine** | the copy is not yet tested on this peer | the five tests below, by themselves; or the two acknowledgements; or, for a copy in use before the peer enforced, its operator's listing (below) |
+| **quarantine** | the copy is not yet tested on this peer | the four tests below, by themselves; or the licence acknowledgement; or, for a copy in use before the peer enforced, its operator's listing (below) |
 | **in use** | searched, extended and shared as its file says | — |
 
 A copy leaves quarantine when, on this peer:
@@ -933,9 +966,19 @@ A copy leaves quarantine when, on this peer:
    use (§3.3). What keeps a copy in quarantine is a run not yet tested;
 4. the licence acknowledgement exists where the class requires one
    (04 §4.4);
-5. this peer's own `records-vs-origin` passes over the plan's sample
-   (§3.2) — the size the creator fixed, fetched within the peer's
-   budget (04 §4.3).
+5. this peer's own `records-vs-origin` over the plan's sample (§3.2) —
+   SHOWN, NEVER WAITED FOR (*amended 2026-11-01*, operator: "The check
+   against the source is optional, the gating of the vectore is not.
+   You can verify the compliancy of the corpus but you must verify that
+   vectors are somehow reliable"). Whether it passed, is open, cannot
+   run or failed, its result is in `origin_check` (09 §9.3) and in `hold
+   collection show`, and its attestation is published as any other; it
+   keeps no copy in quarantine and returns none to it. The corpus is
+   VERIFIABLE by construction (CLAUDE.md invariant 11: `origin_hash` on
+   every record, refused at build without it); what must be GATED is
+   the vectors (tests 2 and 3). Until this amendment quarantine also
+   held back embedding, so the origin check gated vectors it says
+   nothing about.
 
 All five are the peer's own work, against the Codex and the origin,
 needing nobody's word. **The first runs by itself** (*amended
@@ -952,29 +995,25 @@ run on for a never-share collection (02 §2.9): a deposit collection
 holds no part, and its origin is the client that wrote it, so it waits
 for the gate and the licence alone and its `origin_check` reads
 `not-planned` (09 §9.3; operator, 2026-10-06). Every other collection
-is judged by all five, whatever samples its plan sets.
+is judged by the first four, whatever samples its plan sets, and shows
+the fifth.
 
 When the fifth CANNOT RUN — the origin is unreachable or past its
 bounded wait, or this peer's platform image is neither the Codex's nor
-equivalent (§3.4), so that its failure would say nothing about the
-collection — and the other four hold, the check is deferred and
-retried, and the peer asks its operator, showing what passed, what
-could not run and when it was last tried. `hold collection ack
-<collection> --origin-unchecked` records an informed decision, with its
-time and the peer's key, beside the licence acknowledgement, and the
-copy is then in use like any other, with no mark and no warning; `hold
-collection forget` rejects it. There is no timeout and no default, as
-there is none for a licence. The check still runs when it can, as it
-does on every copy in use, and the attestation the peer could not
-publish before is published then.
+equivalent (§3.4) — it is retried when it can, and `hold collection
+show` says what could not run and when it was last tried. Nothing
+waits for it. `hold collection ack <collection> --origin-unchecked`,
+which until 2026-11-01 let such a copy out of quarantine, is no longer
+needed; an acknowledgement already recorded is still read and shown.
 
 **Copies in use before a peer enforced quarantine** (operator,
 2026-09-20). A peer that already used copies the day it began to enforce
 cannot test them all at once: they were made before the tests existed.
 Its operator lists them in the node's desired state, by collection id
 and never by name (`platform.toml`, `[node] quarantine_in_use_before`).
-For a listed copy that decision stands in for tests 1 and 5 while they
-HAVE NOT RUN or CANNOT RUN, and for nothing else: not the gate, which the
+For a listed copy that decision stands in for test 1 while it HAS NOT
+RUN or CANNOT RUN (test 5 waits for nothing, above), and for nothing
+else: not the gate, which the
 peer runs by itself; not the licence (04 §4.4); not a test that failed,
 which quarantines a listed copy like any other. Nothing is pretended:
 the copy is in use, `hold collection show` prints the decision beside
@@ -988,20 +1027,18 @@ While in quarantine a copy enters no search, in either leg, and the
 response names it as withheld with the reason (05 §5.3). It is not
 announced and not served; nothing is embedded for it, contributed to
 it, imported into it or certified. What goes on is what makes it
-testable: the fetch its operator asked for, the five tests, the gate.
+testable: the fetch its operator asked for, the tests, the gate.
 
-A copy RETURNS to quarantine in two cases. When its encoder states a
-run this peer has not tested — a model relaunched with another flag, a
-new image, a new driver — until the gate has run, which it does at
-once; every collection of that space on the peer goes with it. And
-when this peer's own `records-vs-origin`, under the Codex's image or an
-equivalent one, FAILS on a part whose root matches the signed
-snapshot: the flag is published as above, and the copy is not used
-here until a person decides, because a copy that does not reproduce
-its origin is not one to search. A `roots` or `chunks` failure stays
-what this section already makes it, one part's local fault. An
-encoder or an origin that cannot be reached is a deferral: it returns
-nothing to quarantine.
+A copy RETURNS to quarantine in one case: when its encoder states a run
+this peer has not tested — a model relaunched with another flag, a new
+image, a new driver — until the gate has run, which it does at once;
+every collection of that space on the peer goes with it. A failing
+`records-vs-origin` returns nothing to quarantine (*amended
+2026-11-01*): its flag is published as above and shown, and trust
+levels read it (§3.6). A `roots` or `chunks` failure stays what this
+section already makes it, one part's local fault. An encoder or an
+origin that cannot be reached is a deferral: it returns nothing to
+quarantine.
 
 `hold collection show` prints the state, every reason, and the test or
 the command that clears each (07 §7.8). Quarantine applies to a copy

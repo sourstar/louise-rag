@@ -25,7 +25,7 @@ frame_len bytes to the payload start, and decodes the index. The index:
 Frame offsets are absolute in the file, so a frame is one pread.
 
 THE OTHER CONTAINER (09 §9.5 "The file (B): Parquet", operator 2026-10-20;
-docs/notes/gutenberg-graph-amendments.md A-K4). A part whose path ends in
+docs/notes/wiki-gutenberg-amendments.md A-K4). A part whose path ends in
 `.parquet` is one Parquet file: one row per record in record order, one
 STRING column per key of the record line in the line's key order — a
 scalar (`uid`, `title`, `date`, …) as the string or null, a nested value
@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
 import pyarrow as pa
+
+from app.backend import GroupCache
 
 FRAME_RECORDS = 1000
 ZSTD_LEVEL = 9
@@ -206,7 +208,7 @@ def content_hash(title: str, sections: list) -> str:
 
 def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 frame_records: int = FRAME_RECORDS,
-                record_line: int = 1) -> ShardInfo:
+                record_line: int = 1, lines: Sequence[bytes] | None = None) -> ShardInfo:
     """Write `records` (dicts with RECORD_KEYS) as one shard, atomically
     (tmp + rename). Records are written in the order given. A path ending
     in `.parquet` is written in the other container (09 §9.5 "The file (B)").
@@ -214,6 +216,10 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
     `record_line` comes from the collection's Codex and is 1 or 2 (09
     §9.5); it is the SHARD's, not the record's, so every line in a file is
     the same shape.
+
+    `lines`: each record's `canonical_line`, already encoded (by the build's
+    pool, `pack.build.with_line`), in the records' order; None encodes them
+    here. A Parquet part encodes its own cells and ignores them.
     """
     keys_for_line(record_line)          # refuse a bad line before any bytes
     path = Path(path)
@@ -245,6 +251,7 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
         with open(tmp, "wb") as f:
             buf: list[bytes] = []
             first_in_frame = [None]
+            given = iter(lines) if lines is not None else None
             for record in records:
                 uid = record["uid"]
                 if uid in uids:
@@ -252,7 +259,7 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 if not buf:
                     first_in_frame[0] = uid
                 uids[uid] = [len(frames), len(buf)]
-                buf.append(canonical_line(record, record_line=record_line))
+                buf.append(next(given) if given is not None else canonical_line(record, record_line=record_line))
                 n_records += 1
                 n_chunks += int(record.get("chunks") or 0)
                 first_uid = first_uid or uid
@@ -520,9 +527,9 @@ def iter_records(path: Path) -> Iterator[dict]:
 
 _lock = threading.Lock()
 _indexes: OrderedDict = OrderedDict()      # path -> ShardIndex
-_frames: OrderedDict = OrderedDict()       # (path, k) -> list[bytes]
+#: (path, k) -> list[bytes]: 64 MiB of lines (app/backend.py); it held 16 frames
+_frames = GroupCache(64 << 20)
 _MAX_INDEXES = 64
-_MAX_FRAMES = 16
 
 
 def cached_index(path: Path) -> ShardIndex:
@@ -539,25 +546,22 @@ def cached_index(path: Path) -> ShardIndex:
         _indexes.move_to_end(key)
         while len(_indexes) > _MAX_INDEXES:
             _indexes.popitem(last=False)
-        for k in [k for k in _frames if k[0] == key]:
-            _frames.pop(k, None)
+        _frames.forget(lambda k: k[0] == key)
     return index
 
 
-def cached_frame(path: Path, k: int) -> list[bytes]:
+def cached_frame(path: Path | str, k: int) -> list[bytes]:
+    """Frame k's lines, from the cache when it holds them. `path` may be a
+    str: the records build names a held part per record, and a Path built
+    and rendered for each was ~4 % of its child (2026-11-02); it is made
+    here only on a miss."""
     key = (str(path), k)
-    with _lock:
-        hit = _frames.get(key)
-        if hit is not None:
-            _frames.move_to_end(key)
-            return hit
+    hit = _frames.get(key)
+    if hit is not None:
+        return hit
+    path = Path(path)
     lines = read_frame(path, cached_index(path), k)
-    with _lock:
-        _frames[key] = lines
-        _frames.move_to_end(key)
-        while len(_frames) > _MAX_FRAMES:
-            _frames.popitem(last=False)
-    return lines
+    return _frames.put(key, lines, sum(len(x) for x in lines))
 
 
 def read_record(path: Path, uid: str) -> dict:
@@ -598,8 +602,76 @@ def read_fields(path: Path, uid: str, fields: Sequence[str]) -> dict:
     return out
 
 
-def read_record_at(path: Path, frame: int, line: int) -> dict:
-    return json.loads(cached_frame(path, frame)[line])
+def iter_fields(path: Path, fields: Sequence[str]) -> Iterator[dict]:
+    """Stream every record's `fields`, in order, without the rest — what a
+    pass over one field of every record held needs (a range facet's values,
+    app/ask/ranges.py): from a Parquet part only those columns are
+    decompressed, as `read_fields` does for one record; a frame part has no
+    columns, so each record is read and cut."""
+    if not is_parquet(path):
+        for record in iter_records(path):
+            yield {f: record.get(f) for f in fields}
+        return
+    pf = _parquet_file(path)
+    names = set(pf.schema_arrow.names)
+    cols = [f for f in fields if f in names]
+    for g in range(pf.metadata.num_row_groups):
+        table = pf.read_row_group(g, columns=cols)
+        data = {c: table.column(c).to_pylist() for c in cols}
+        for i in range(table.num_rows):
+            out: dict = {}
+            for f in fields:
+                v = data[f][i] if f in data else None
+                out[f] = json.loads(v) if (f in NESTED_KEYS and v is not None) else v
+            yield out
+
+
+#: orjson (Rust) PARSES held lines for the records build (operator,
+#: 2026-11-02: "I want all the optimizations"; python-hot-spots.md "F"):
+#: 1.6-2.1x json.loads on the hotspots' record lines, the guard below
+#: included (0.7-40 KB; measured 2026-11-02). It never WRITES one: every
+#: byte that is hashed, signed or stored is `canonical_line`'s json.dumps
+#: (09 §9.5). Absent (a checkout without the image's packages), lines parse
+#: with json.loads, as they always did.
+try:
+    import orjson as _orjson
+except ImportError:                         # pragma: no cover — the image pins it
+    _orjson = None
+
+#: every byte to "0" if it is an ASCII digit, else to "."
+_DIGIT_MASK = bytes(0x30 if 0x30 <= b <= 0x39 else 0x2E for b in range(256))
+#: 19 digits in a row: the shortest integer that can fall outside the 64 bits
+#: orjson parses exactly. Outside them orjson does NOT raise — it returns a
+#: FLOAT (measured, 3.13.0: 18446744073709551616 -> 1.8446744073709552e+19,
+#: -9223372036854775809 -> -9.223372036854776e+18) where json.loads returns
+#: the int, and the line re-encoded would differ. Any integer of 18 digits
+#: or fewer is inside the range, so a line with no such run cannot hold one.
+_LONG_RUN = b"0" * 19
+
+
+def loads_line(line) -> dict:
+    """`json.loads(line)`, the same object, by orjson where orjson gives it.
+
+    json.loads parses wherever orjson might differ: a line with a run of 19
+    digits anywhere (a big integer, above; a run inside a string costs only
+    the slower parse), a line that is not bytes, and a line orjson refuses
+    for ANY reason — NaN and Infinity, a number that overflows a double,
+    lone surrogates, invalid UTF-8, a BOM, nesting past 1,024 levels — and
+    then json.loads gives its own answer or its own error, as before.
+    Duplicate keys: both keep the last value at the first key's place.
+    Proven equal on every fixture line and on generated ones
+    (tests/pack/test_ship_batches.py)."""
+    if _orjson is None or not isinstance(line, (bytes, bytearray)) \
+            or line.translate(_DIGIT_MASK).find(_LONG_RUN) != -1:
+        return json.loads(line)
+    try:
+        return _orjson.loads(line)
+    except Exception:                       # noqa: BLE001 — json.loads decides, as before
+        return json.loads(line)
+
+
+def read_record_at(path: Path | str, frame: int, line: int) -> dict:
+    return loads_line(cached_frame(path, frame)[line])
 
 
 def reset_caches() -> None:

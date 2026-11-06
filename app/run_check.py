@@ -81,12 +81,14 @@ def _stopping(stop: Callable[[], bool] | None, name: str) -> None:
 
 def answers(recipe, *, query: bool = False, how: str = "normalised",
             stop: Callable[[], bool] | None = None, name: str = "",
-            collection: Any = None, asked: bool = True) -> runs_mod.Answers:
+            collection: Any = None, asked: bool = True,
+            timeout: float = 300) -> runs_mod.Answers:
     """The node's embedding client as an `Answers`.
 
     `how`: "normalised" — what a write stores; "one" — each text alone, as
     the endpoint returned it (the fingerprint); "contribute" — the same raw
-    vectors, sent the way THIS peer contributes: its EMBED_BATCH, its
+    vectors, sent the way THIS peer contributes: its batch (the collection's
+    `[encoder] batch`, else EMBED_BATCH), its
     EMBED_CONCURRENCY, and as many requests at once as its worker keeps
     documents in flight (`recipe.concurrency`). That last one is the setting
     the batching fault of 2026-07 lived in, so it is reproduced, not assumed.
@@ -103,7 +105,11 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
     receives them — the gate and the re-check prefix the space's instruction
     themselves, as calibration did — so the client does not prefix it again
     (2026-10-21: it did, and every query run was gated on the instruction
-    twice). A caller handing raw queries passes `asked=False`."""
+    twice). A caller handing raw queries passes `asked=False`.
+
+    `timeout` bounds each request (a card's 300 s by default); the CPU
+    reference passes its own, scaled to the space's window
+    (`cpu_reference.request_timeout`)."""
     def normalised(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), SLICE):
@@ -113,7 +119,7 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
                 out += embeddings.embed_chunks(collection, part, recipe=recipe, runs=seen)
             else:
                 out += embeddings.embed_calibration(recipe, part, query=query, runs=seen,
-                                                    asked=asked)
+                                                    asked=asked, timeout=timeout)
         return out
 
     def one(texts: list[str], seen: set) -> list[list[float]]:
@@ -121,7 +127,8 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         for text in texts:
             _stopping(stop, name)
             out += embeddings.embed_calibration(recipe, [text], query=query, runs=seen,
-                                                one_at_a_time=True, asked=asked)
+                                                one_at_a_time=True, asked=asked,
+                                                timeout=timeout)
         return out
 
     def contribute(texts: list[str], seen: set) -> list[list[float]]:
@@ -129,14 +136,15 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         lanes = max(1, min(int(getattr(recipe, "concurrency", 1) or 1), len(texts)))
         if lanes == 1:
             return embeddings.embed_calibration(recipe, texts, query=query,
-                                                raw=True, runs=seen, asked=asked)
+                                                raw=True, runs=seen, asked=asked,
+                                                timeout=timeout)
         # as the worker does it: `lanes` documents in flight, each its own call
         groups = [list(range(k, len(texts), lanes)) for k in range(lanes)]
         with ThreadPoolExecutor(max_workers=lanes) as ex:
             parts = list(ex.map(
                 lambda idx: embeddings.embed_calibration(recipe, [texts[i] for i in idx],
                                                          query=query, raw=True, runs=seen,
-                                                         asked=asked),
+                                                         asked=asked, timeout=timeout),
                 groups))
         out: list[Any] = [None] * len(texts)
         for idx, vectors in zip(groups, parts):
@@ -150,8 +158,18 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
 
 def batched(recipe) -> bool:
     """Does this peer contribute otherwise than strictly one text at a time?"""
-    return (config.EMBED_BATCH > 1 or config.EMBED_CONCURRENCY > 1
+    return (embeddings.batch_size(recipe) > 1 or config.EMBED_CONCURRENCY > 1
             or int(getattr(recipe, "concurrency", 1) or 1) > 1)
+
+
+def contributing(recipe) -> dict[str, int] | None:
+    """How this peer contributes, as the gate's `contribute` pass measures it
+    and `runs.check` compares it (`runs.record_batching`); None for strictly
+    one text at a time, which every gate measures."""
+    if not batched(recipe):
+        return None
+    return {"embed_batch": embeddings.batch_size(recipe), "embed_concurrency": int(config.EMBED_CONCURRENCY),
+            "lanes": int(getattr(recipe, "concurrency", 1) or 1)}
 
 
 def _endpoint(recipe, query: bool) -> str:
@@ -244,6 +262,37 @@ def _pinned(recipe, role: str, kind: str, name: str):
                               collection=name)
 
 
+#: how long the multi-load gate waits for a model it stopped to answer again
+RELOAD_WAIT_S = 600.0
+
+
+def _reloader(recipe, *, query: bool, stop=None, name: str = ""):
+    """THE MULTI-LOAD GATE'S RELOAD (docs/notes/near-exact-runs.md §3): stop the
+    model at its runner, then wait — bounded — until it answers again, so the
+    gate's next text is the first of a fresh load. Only a VeGa encoder, whose
+    runner is LocalAI, is reloaded; for any other the gate measures one load."""
+    if getattr(recipe, "api", None) != "vega":
+        return None
+    import time
+
+    def reload() -> None:
+        embeddings.reload_model(recipe, query=query)
+        deadline = time.monotonic() + RELOAD_WAIT_S
+        while True:
+            _stopping(stop, name)
+            try:
+                embeddings.embed_calibration(recipe, ["load"], query=query, runs=set(),
+                                             one_at_a_time=True)
+                return
+            except Exception as e:                  # noqa: BLE001 — loading, or gone
+                if time.monotonic() > deadline:
+                    raise emb.GateDeferred(f"{name}: the model did not come back within "
+                                           f"{RELOAD_WAIT_S:.0f} s of its reload: "
+                                           f"{type(e).__name__}: {e}") from e
+                time.sleep(2.0)
+    return reload
+
+
 def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
              key=None, now: str | None = None,
              stop: Callable[[], bool] | None = None,
@@ -278,14 +327,28 @@ def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docum
         # member (09 §9.12, amended 2026-10-08) — read where the gate always
         # read it, so a text space fails here exactly as it did
         items = calibration_items(root, name, codex)
+        # the stored CPU reference for these weights, when one was made
+        # (docs/notes/near-exact-runs.md §2): every answer is held to it
+        from .hold import cpu_reference as cpu_ref
+        cpu = cpu_ref.find(root, name, role, weights=stated.weights,
+                           set_id=codex.space.calibration.set, count=len(reference_vectors))
         body = runs_mod.validate(
             root, name, codex, role=role,
             reference=reference_vectors,
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
-            stated=stated, key=key, now=now or _now(), items=items, on_run=on_run)
+            stated=stated, key=key, now=now or _now(), items=items, on_run=on_run,
+            cpu_reference=None if cpu is None else (cpu.run_id, cpu.vectors),
+            reload=_reloader(recipe, query=query, stop=stop, name=name),
+            # the Codex's requirement wins over the node's setting: a node may
+            # be stricter than its collection, never looser (09 §9.3)
+            exactness=(emb.EXACT if runs_mod.requires_exact(codex)
+                       else getattr(recipe, "exactness", emb.EXACT)))
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
+        measured = contributing(recipe)
+        if measured is not None:
+            runs_mod.record_batching(root, name, role, body["run"], measured)
         return body
     except (runs_mod.RunRefused, emb.GateError):
         raise
@@ -513,7 +576,7 @@ def guard(root: Path, name: str, codex: Codex, recipe, answered: set, *,
     who = signer(key)
     try:
         runs_mod.check(root, name, codex, answered, signer=who, role=role,
-                       batched=together)
+                       batched=together, contributes=contributing(recipe) if together else None)
         _foreign(root, name, role, log)
         stale = [r for r in sorted(r for r in answered if r)
                  if not recheck(root, name, codex, recipe, r, role=role, key=key,
@@ -529,7 +592,7 @@ def guard(root: Path, name: str, codex: Codex, recipe, answered: set, *,
     body = validate(root, name, codex, recipe, role=role, key=key, stop=stop)
     if log is not None:
         log(f"{name}: {_told(body)}")
-    runs_mod.check(root, name, codex, answered, signer=who, role=role, batched=together)
+    runs_mod.check(root, name, codex, answered, signer=who, role=role, batched=together, contributes=contributing(recipe) if together else None)
 
 
 def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
@@ -672,11 +735,16 @@ def check_write(collection, recipe, answered: set) -> None:
     codex = collection.codex
     try:
         runs_mod.check(_root(), collection.name, codex, answered, signer=signer(),
-                       role="document", batched=batched(recipe))
+                       role="document", batched=batched(recipe), contributes=contributing(recipe))
         # A KEPT STATEMENT NOT YET RE-CHECKED IN THIS PROCESS is not relied
         # on: a deferral, and the stage's next `embed_allowed` re-checks it
-        kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
-                                             signer=signer())
+        # this collection's own statements first — one cached listing; the
+        # space's other collections only for a run it holds none for (a
+        # borrowed statement is copied in, so that happens once)
+        kept = runs_mod.statements(_root(), collection.name, codex, "document", signer=signer())
+        if any(r and r not in kept for r in answered):
+            kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
+                                                 signer=signer())
         for run_id in sorted(r for r in answered if r):
             if run_id not in kept or not rechecked(codex, "document", run_id, kept[run_id]):
                 raise runs_mod.RunUnvalidated(
@@ -751,12 +819,12 @@ def _look(collection, stop: Callable[[], bool] | None,
         who = signer()
         try:
             runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                           batched=batched(recipe))
+                           batched=batched(recipe), contributes=contributing(recipe))
             _foreign(_root(), name, "document", log)
             if not recheck(_root(), name, codex, recipe, run_id, stop=stop, log=log):
                 log(_told(validate(_root(), name, codex, recipe, stop=stop)))
                 runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                               batched=batched(recipe))
+                               batched=batched(recipe), contributes=contributing(recipe))
         except runs_mod.RunUnvalidated as e:
             if e.failed:
                 raise
@@ -764,7 +832,7 @@ def _look(collection, stop: Callable[[], bool] | None,
             log(f"run {run_id[:23]}… is new to this peer; running the gate against it")
             log(_told(validate(_root(), name, codex, recipe, stop=stop)))
             runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                           batched=batched(recipe))
+                           batched=batched(recipe), contributes=contributing(recipe))
         return True, f"run {run_id[:23]}… is validated for this space", run_id
     except (runs_mod.RunRefused, runs_mod.RunUnvalidated, emb.GateError) as e:
         return False, str(e), run_id

@@ -92,7 +92,7 @@ def _file(tmp_path: Path, name: str, *, url: str, weights: str | None = None,
 
 def _run(ref: str, *against: str, extra: list[str] | None = None) -> int:
     argv = ["hold", "embedder", "calibrate", "--encoder-weights", W_REF,
-            "--engine", ref, "--ctx", str(CTX)]
+            "--engine", ref, "--ctx", str(CTX), "--cut", "characters"]
     if against:
         argv += ["--against", *against]
     return louise.main(argv + (extra or []))
@@ -131,6 +131,31 @@ def test_a_known_perturbation_yields_the_expected_tolerance(tmp_path, monkeypatc
     assert out["reference"]["runs"] == ["sha256:run-ref"]
     assert out["against"][0]["runs"] == ["sha256:run-other"]
     assert set(asked) == {REF_URL, OTHER_URL}
+
+
+def test_each_lane_holds_its_encoder_while_it_embeds(tmp_path, monkeypatch, capsys,
+                                                     isolated_config):
+    """The worker's idle sweep unloads an embedder no collection names unless a
+    lease says it is in use: unleased, it stopped a Nemotron calibration's CPU
+    twin every minute, mid-request (2026-11-03). Each lane is leased while it
+    embeds, and released after."""
+    from app import model_load, model_pins, node_state
+    monkeypatch.setattr(model_pins, "hold", lambda *a, **k: False)
+    monkeypatch.setattr(model_pins, "release", lambda *a, **k: None)
+    _fake_endpoints(monkeypatch)
+    fake, leases = embeddings._request_vectors, []
+
+    def watched(batch, timeout, recipe, runs=None):
+        leases.append(node_state.leased_encoders())
+        return fake(batch, timeout, recipe, runs)
+    monkeypatch.setattr(embeddings, "_request_vectors", watched)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, extra='model = "ref-m"\n')
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_OTHER,
+                  extra='model = "other-m"\n')
+    assert _run(ref, other) == 0
+    assert {(model_load.server_of(REF_URL), "ref-m")} in leases
+    assert {(model_load.server_of(OTHER_URL), "other-m")} in leases
+    assert node_state.leased_encoders() == set(), "released when the lane ends"
 
 
 def test_a_larger_perturbation_bears_a_lower_tolerance(tmp_path, monkeypatch, capsys):
@@ -241,3 +266,83 @@ def test_a_relative_path_cannot_pose_as_the_harness_lanes(tmp_path, monkeypatch,
     monkeypatch.chdir(tmp_path)
     assert _run("reference/e.toml", "same/e.toml") == 0
     assert json.loads(capsys.readouterr().out)["tolerance"] == _expected(1e-3)[1]
+
+
+def test_the_cpu_lane_is_kept_once_and_the_next_calibration_asks_it_nothing(tmp_path, monkeypatch,
+                                                                           capsys):
+    """Operator, 2026-11-06: "I already asked to save the cpu reference values
+    so that we don't have to repeat that time consuming part". A lane whose
+    run states the CPU is the node's stored CPU reference: computed once,
+    one text a request, then taken by the next calibration (and by the
+    collection's `hold embedder cpu-reference`)."""
+    from types import SimpleNamespace
+
+    from app import run_check
+    asked = _fake_endpoints(monkeypatch)
+
+    from app.hold import calibrate as calib
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
+    engine = calib.read_endpoint(ref, weights=W_REF).engine.to_dict()
+
+    def stated(recipe, **kw):
+        cpu = recipe.url == OTHER_URL
+        return SimpleNamespace(driver="cpu" if cpu else "xe 1.3 / level-zero 1.21",
+                               run_id="sha256:run-" + recipe.url.split("//")[1].split(".")[0],
+                               engine=engine, weights=W_REF)
+    monkeypatch.setattr(run_check, "stated_run", stated)
+    assert _run(ref, other) == 0
+    first = json.loads(capsys.readouterr().out)
+    lane = first["against"][0]["cpu_reference"]
+    assert lane["how"] == "computed" and Path(lane["path"]).is_file()
+    assert asked.count(OTHER_URL) >= cal.SIZE, "one text a request on the CPU"
+    asked.clear()
+    assert _run(ref, other) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["against"][0]["cpu_reference"]["how"] == "stored"
+    assert OTHER_URL not in asked, "the CPU twin is not asked again"
+    assert second["tolerance"] == first["tolerance"]
+
+
+def test_an_engine_file_that_is_not_the_runs_is_refused_before_any_text(tmp_path, monkeypatch,
+                                                                       capsys):
+    """2026-11-06: wikidata's chain kept engine files of the engine before
+    (16acc89); calibrate measured for 1.5 h, then `collection create` refused
+    the tolerance's engine. The run that answers is held to the file first."""
+    from types import SimpleNamespace
+
+    from app import run_check
+    from app.hold import calibrate as calib
+    asked = _fake_endpoints(monkeypatch)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL, weights=W_REF)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_REF)
+    live = dict(calib.read_endpoint(ref, weights=W_REF).engine.to_dict(),
+                image="sha256:" + "44" * 32)          # the engine rebuilt since the file
+    monkeypatch.setattr(run_check, "stated_run", lambda recipe, **kw: SimpleNamespace(
+        driver="xe", run_id="sha256:run-x", engine=live, weights=W_REF))
+    assert _run(ref, other) == 2
+    assert "hold embedder run" in capsys.readouterr().err
+    assert asked == [], "nothing was embedded"
+
+
+def test_the_cut_is_stated_used_and_recorded(tmp_path, monkeypatch, capsys):
+    """2026-11-06, wikidata: calibrate cut by characters (its recipe named no
+    cut) while the space cuts by tokens; the lanes agreed on inputs the gate
+    never sends. --cut is stated, every lane's recipe carries it, and the
+    result names it with the window."""
+    cuts = []
+    _fake_endpoints(monkeypatch)
+    real = embeddings._request_vectors
+
+    def seen(batch, timeout, recipe, runs=None):
+        cuts.append(recipe.cut)
+        return real(batch, timeout, recipe, runs)
+    monkeypatch.setattr(embeddings, "_request_vectors", seen)
+    ref = _file(tmp_path, "ref.toml", url=REF_URL)
+    other = _file(tmp_path, "other.toml", url=OTHER_URL, weights=W_OTHER)
+    assert _run(ref, other) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(cuts) == {"characters"} and (out["cut"], out["ctx"]) == ("characters", CTX)
+    with pytest.raises(SystemExit):
+        louise.main(["hold", "embedder", "calibrate", "--encoder-weights", W_REF, "--engine", ref,
+                     "--against", other, "--ctx", str(CTX)])

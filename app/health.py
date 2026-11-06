@@ -76,6 +76,19 @@ _WAITING = {
     "embed": "in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0",
 }
 _INDEXED = "documents INDEXED BY idx_documents_scope"
+#: A stage count stops here and says "over": COUNT(*) walks the waiting rows
+#: along the covering index, 16.6 s for wikidata's 72.9 M during discovery
+#: and 24 s for wikipedia-v8 mid-build, so `node show` took 20-33 s (München,
+#: 2026-10-27). Exact below the cap, ~0.25 s at it. The standard bounded
+#: count (a LIMIT under the COUNT); the stage's state does not depend on
+#: the size, only on whether there is any.
+WAITING_CAP = 1_000_000
+#: Below this many rows the count is made exact: the errored rows among them
+#: are read through the table (one lookup each, which is what the cheap count
+#: avoids) and counted apart. gutenberg's 33 "waiting" rdf documents were all
+#: errored since September — out of every selection — and read as stuck work
+#: (München, 2026-10-30). Above it the errored few stay inside the count.
+ERRORED_EXACT_BELOW = 100_000
 
 IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"
 
@@ -94,7 +107,12 @@ def _held_by_mode(mode: str) -> tuple[str, ...]:
     if mode not in node_state.MODE_RUNS:
         return ()
     return tuple(stage for stage, needs in _STAGE_NEEDS.items()
-                 if not node_state.runs(mode, needs))
+                 if not node_state.mode_runs(mode, needs))
+
+
+#: the stages the node PROFILE's cpu_cores = 0 pauses (worker._cpu_paused):
+#: the parse pool's work; embedding is held by the profile's `mode`, not its cores
+_PROFILE_PAUSED = ("rdf", "fts", "archive")
 
 
 def _held_reason(mode: str | None, stage: str) -> str:
@@ -103,6 +121,23 @@ def _held_reason(mode: str | None, stage: str) -> str:
         # live report read "held — held — the node is…" (staged check)
         return (f"the node is {mode}; this runs when the Library's "
                 f"mode is set to running")
+    if stage in _STAGE_NEEDS:
+        # THE NODE PROFILE (app/cpu_limit.py, the operator's schedule): its
+        # mode suspends processing in the quiet windows (operator,
+        # 2026-11-02), and its cpu_cores = 0 pauses rdf, fts and the archive
+        # pass; the stage read "waiting" with no reason while the worker's
+        # log alone said "profile quiet: paused until 13:30" (operator,
+        # 2026-10-31)
+        try:
+            from . import cpu_limit, node_state
+            lim = cpu_limit.current()
+            if lim.suspends and not node_state.mode_runs(lim.mode or "", _STAGE_NEEDS[stage]):
+                return f"{lim.says()} (the node's schedule, platform.toml)"
+            if stage in _PROFILE_PAUSED and lim.cores == 0:
+                goes_on = "; embedding goes on" if node_state.profile_runs(node_state.EMBED) else ""
+                return f"{lim.says()} (the node's schedule, platform.toml){goes_on}"
+        except Exception:   # noqa: BLE001 — a health check never raises
+            pass
     return ""
 
 
@@ -151,10 +186,19 @@ class Stage:
     waiting: int
     state: str
     reason: str = ""
+    #: True when `waiting` is the cap (WAITING_CAP): there are more
+    over: bool = False
+    #: documents at this stage with an error recorded: out of every selection
+    #: until a person retries them, so NOT waiting — counted apart where the
+    #: count is small enough to read exactly (ERRORED_EXACT_BELOW)
+    errored: int = 0
 
     def line(self) -> str:
         mark = {IDLE: "  ", RUNNING: "->", HELD: "..", BLOCKED: "!!"}[self.state]
-        got = f"{mark} {self.name:<7} {self.waiting:>12,}  {self.state}"
+        n = f"over {self.waiting:,}" if self.over else f"{self.waiting:,}"
+        got = f"{mark} {self.name:<7} {n:>17}  {self.state}"
+        if self.errored:
+            got += f"  ({self.errored:,} errored, not waiting)"
         return f"{got}  — {self.reason}" if self.reason else got
 
 
@@ -166,6 +210,10 @@ class Report:
     note: str = ""
     #: the node's mode this report was judged against ("" = not given)
     mode: str = ""
+    #: the origin's inconsistencies flagged, per code (app/issues.py; 06
+    #: §6.1, amended 2026-10-25) — shown, never blocking: they are the
+    #: origin's, and no stage waits on them
+    issues: dict = field(default_factory=dict)
 
     def blocked(self) -> list[Stage]:
         return [s for s in self.stages if s.state == BLOCKED]
@@ -205,6 +253,11 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     except Exception:       # noqa: BLE001 — a health check never raises
         report.note = "manifest unreadable"
         return report
+    try:
+        from . import issues
+        report.issues = issues.counts(con)      # the code index alone
+    except Exception:       # noqa: BLE001 — a health check never raises
+        report.issues = {}
 
     withheld = _withheld(collection)
     quarantined, said = _copy_state(collection)
@@ -213,7 +266,8 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     for name, where in _WAITING.items():
         try:
             waiting = con.execute(
-                f"SELECT COUNT(*) FROM {_INDEXED} WHERE {where}").fetchone()[0]
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {_INDEXED} WHERE {where} "
+                f"LIMIT {WAITING_CAP + 1})").fetchone()[0]
         except Exception as e:  # noqa: BLE001 — NAMED, never skipped. A stage
             # that silently vanished from the report would read as an
             # all-clear, which is the one failure a health check must not
@@ -223,6 +277,14 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
             report.stages.append(
                 Stage(name, 0, BLOCKED, f"cannot be counted: {type(e).__name__}: {e}"))
             continue
+        errored = 0
+        if 0 < waiting <= ERRORED_EXACT_BELOW:
+            try:
+                errored = con.execute(f"SELECT COUNT(*) FROM {_INDEXED} WHERE {where} "
+                                      f"AND error IS NOT NULL").fetchone()[0]
+            except Exception:   # noqa: BLE001 — the cheap count stands
+                errored = 0
+            waiting -= errored
         # a copy in quarantine is not embedded for; its records and its text
         # index are what its tests read, and go on (03 §3.6)
         reason = withheld or (
@@ -240,7 +302,8 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
             state, reason = HELD, held
         else:
             state = RUNNING
-        report.stages.append(Stage(name, waiting, state, reason))
+        over = waiting > WAITING_CAP
+        report.stages.append(Stage(name, min(waiting, WAITING_CAP), state, reason, over, errored))
     return report
 
 
@@ -468,5 +531,9 @@ def render(reports: list[Report]) -> str:
         out.append(head)
         for s in r.stages:
             out.append(s.line())
+        if r.issues:
+            out.append("   origin inconsistencies: "
+                       + ", ".join(f"{c} {n:,}" for c, n in sorted(r.issues.items()))
+                       + f" — `louise hold issues list {r.collection}`")
         out.append("")
     return "\n".join(out).rstrip() + "\n"

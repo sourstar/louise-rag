@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import sys
 import threading
+import time
 from typing import Any, Callable
 
 #: how often an endpoint asks whether its caller is still there: a quarter
@@ -51,6 +53,15 @@ class Token:
         self._event = threading.Event()
         self._lock = threading.Lock()
         self._watched: list = []
+        #: when the search last passed a checkpoint, and in which function:
+        #: what tells a STUCK search from a slow one (app/relay.py says so
+        #: to the page; operator, 2026-10-28)
+        self.last_progress = time.monotonic()
+        self.where = "start"
+
+    def progress(self, where: str) -> None:
+        self.last_progress = time.monotonic()
+        self.where = where
 
     @property
     def cancelled(self) -> bool:
@@ -98,9 +109,12 @@ def current() -> Token | None:
 
 def checkpoint() -> None:
     """Stop here if the caller has gone. Outside a cancellable search (the
-    worker, a CLI, a test) there is no token and this does nothing."""
+    worker, a CLI, a test) there is no token and this does nothing. Every
+    checkpoint is also PROGRESS: the time and the function that reached it
+    are kept on the token (`Token.progress`)."""
     token = _current.get()
     if token is not None:
+        token.progress(sys._getframe(1).f_code.co_name)
         token.check()
 
 
@@ -143,6 +157,7 @@ async def while_connected(request, fn: Callable[..., Any], *args: Any, **kwargs:
     Cancelled it raises is never reported as an unretrieved exception."""
     from starlette.concurrency import run_in_threadpool
     token = Token()
+    t0 = time.monotonic()
     work = asyncio.ensure_future(run_in_threadpool(run, token, fn, *args, **kwargs))
     while True:
         done, _ = await asyncio.wait({work}, timeout=POLL_S)
@@ -151,7 +166,18 @@ async def while_connected(request, fn: Callable[..., Any], *args: Any, **kwargs:
         if await request.is_disconnected():
             token.cancel()
             work.add_done_callback(_consume)
+            # SAID, because nothing else is: uvicorn logs no line for a caller
+            # who left, so a question that got no answer left no trace at all
+            # (2026-10-27: 65 s of cold model loads, the browser gone, nothing
+            # in any log — München)
+            path = getattr(getattr(request, "url", None), "path", "?")
+            _say(f"{path}: the caller left after {time.monotonic() - t0:.1f} s; "
+                 f"the search is cancelled")
             raise Cancelled()
+
+
+def _say(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} [web info:ask] {msg}", flush=True)
 
 
 def _consume(future: asyncio.Future) -> None:

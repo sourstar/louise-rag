@@ -29,6 +29,23 @@ def test_every_text_is_scored_at_its_own_index_in_length_sorted_batches():
     assert all(q == "q" for b in seen for q, _t in b), "the query rides in every pair"
 
 
+def test_a_fixed_reranker_infers_full_batches_and_drops_the_fillers():
+    """Every inference `batch` pairs (one static shape): a short batch is
+    filled with copies of its first pair, whose scores are dropped, so a
+    document's score depends on (query, document) alone."""
+    seen = []
+
+    def infer(pairs):
+        seen.append(len(pairs))
+        return [float(len(t)) for _q, t in pairs]
+    r = server.Reranker(lambda pairs: pairs, infer, batch=4, fixed=True)
+    texts = ["abc", "abcdefgh", "a", "abcde", "ab"]
+    assert r.logits("q", texts) == [3.0, 8.0, 1.0, 5.0, 2.0]
+    assert seen == [4, 4], "the second batch, of one pair, filled to four"
+    alone = server.Reranker(lambda pairs: pairs, infer, batch=4, fixed=True)
+    assert alone.logits("q", ["abcde"]) == [5.0]
+
+
 def test_the_sigmoid_is_teis_and_extreme_logits_do_not_overflow():
     assert [server.sigmoid(x) for x in (-1000.0, 0.0, 1000.0)] == [0.0, 0.5, 1.0]
 
@@ -41,7 +58,7 @@ def test_a_model_that_drops_a_score_is_an_error_not_a_misaligned_ranking():
 
 def test_the_compiled_model_is_kept_where_the_models_yaml_says(monkeypatch):
     """OV_CACHE_DIR reaches OpenVINO as CACHE_DIR; unset, nothing is cached
-    (docs/notes/rage.md §20)."""
+    (model-pool.md@c572c3b §20)."""
     import sys
     import types
     calls = []
@@ -159,3 +176,21 @@ def test_one_forward_pass_on_the_card_at_a_time(monkeypatch, make):
     for t in threads:
         t.join()
     assert most[0] == 1
+
+
+def test_a_fixed_encoder_gives_one_static_shape_and_the_same_real_tokens(tmp_path):
+    """`fixed`: every input padded to max_tokens (OpenVINO's GPU plugin was
+    not bit-reproducible at some dynamic shapes, 2026-10-30); the attention
+    mask still counts the real tokens alone."""
+    pytest.importorskip("tokenizers")
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    tok = Tokenizer(models.WordLevel({"[PAD]": 0, "[UNK]": 1, "a": 2, "b": 3}, unk_token="[UNK]"))
+    tok.pre_tokenizer = pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tok.save(str(path))
+    dynamic = server.make_encoder(str(path), 8)([("a b", "a")])
+    fixed = server.make_encoder(str(path), 8, fixed=True)([("a b", "a"), ("a", "b b a")])
+    assert dynamic["input_ids"].shape == (1, 3)
+    assert fixed["input_ids"].shape == (2, 8)
+    assert [int(sum(m)) for m in fixed["attention_mask"]] == [3, 4]
+    assert list(fixed["input_ids"][0][:3]) == list(dynamic["input_ids"][0])

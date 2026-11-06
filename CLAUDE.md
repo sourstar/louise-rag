@@ -10,7 +10,16 @@ time, as long as the final artifact is indistinguishable from one made by
 the book. For example:
 - reuse bytes that are provably identical;
 - carry a space whose vectors already exist;
-- resume a build instead of redoing it.
+- resume a build instead of redoing it;
+- re-create a collection nothing official was published from, instead of
+  continuing it with a daughter (operator, 2026-10-24: "No official
+  daughters so far, rule 1") — carrying what is identical;
+- stop the node whenever that speeds up the work (operator, 2026-10-30:
+  "this in not a production software, the node can be stopped any time it
+  speeds up the developments"), and the peers the same ("Same for the
+  peers, their only purpose is to test the architecture") — a tool that
+  needs the worker's writers asks for a stop, not for code that works
+  around one.
 
 Tell the operator about each such intervention, but it is the default
 choice, not an exception to ask about. A spec rule that forces a
@@ -79,14 +88,21 @@ are the ones that have drifted; prefer to add a test when you touch them.
    versions and parameters (one chunker per layer, every document in
    exactly one layer by a declared rule, the layer list fixed at creation;
    a collection with one layer is the common case and its layer IS its
-   chunker), `cleaning_version`, the space block's dim, dtype, ctx,
-   pooling, normalisation and query encoder's weights, and the epoch. Not
+   chunker) and each layer's INPUT form (text, or a tokenizer pair),
+   `cleaning_version`, the space block's dim, dtype, ctx, pooling,
+   normalisation, its query side (the query encoder's weights and its
+   `instruction`), its document `instruction` where the space declares one
+   (Codex version 11, 2026-11-02: Nemotron's "passage: "), its `cut` where
+   the space declares one (characters or tokens), and the epoch (09 §9.3's
+   formula; a version-2 Codex still has its engine image inside). Not
    the ENGINE — the tested build, image, args, env and device are frozen
    in the Codex as `space.encoder.engine` (inside `collection_id`,
    outside `space_id`); any engine may contribute once its RUN passes
    the calibration gate, validated once, and a vector is written only from
-   an answer whose `Louise-Run` names a validated run — checked per answer,
-   before the write (docs/03 §3.3). Not the tolerance, not the calibration.
+   an answer whose run is a validated one — named by the answer's VeGa
+   receipt for an `api = "vega"` encoder (bound to the input and vector
+   digests), by its `Louise-Run` header otherwise — checked per answer,
+   before the write (docs/03 §3.3, app/embeddings.py). Not the tolerance, not the calibration.
    A vector table whose
    dim/space mismatches the Codex is a
    REFUSE-TO-START error FOR THAT COLLECTION, never a warning or
@@ -111,15 +127,43 @@ are the ones that have drifted; prefer to add a test when you touch them.
    of the thing that changed, explicitly — never silently, and never via a
    global knob that re-pins collections whose chunker never changed.
    *Enforced: test (golden) + boot (space pin).*
-4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the
-   LLM context as pinned blocks and NEVER enter RRF. Ranked lists from corpus
-   legs ALWAYS go through RRF — when they answer the same question. Two
-   ranked lists that answer different questions (docs/05 §5.1; homology vs
-   function in the genome collection is the case) are presented separately,
-   never fused. Do not blend the types. *Enforced: test + review.*
+4. FUSION TYPES AND WEIGHTS. ReferenceSource lookups are facts-by-key:
+   they go into the LLM context as pinned blocks and NEVER enter a ranking.
+   Within a collection, the ranked lists of its legs that answer the same
+   question ALWAYS go through RRF (their scores share no scale). Two ranked
+   lists that answer different questions (docs/05 §5.1) are presented
+   separately, never fused. Do not blend the types. Across collections, the
+   reranked lists merge on calibrated relevance where every list has a
+   calibration, by RRF otherwise (docs/05 §5.6; operator 2026-10-31, B). An
+   identifier the query names pins its facts and restricts nothing unless
+   the reader asks for it as the `keys` filter (docs/05 §5.2, operator
+   2026-10-25).
+   WEIGHTS (operator, 2026-10-31, replacing "nothing boosts": the fault of
+   ENTITY_BOOST, removed 2026-10-25, was a weight nobody could see or
+   measure, not weighting). A weight may reorder results only if:
+     (1) it comes from a named, attributed source — an annotations
+         collection, a calibration;
+     (2) every result it moved shows what moved it and by how much;
+     (3) it is the reader's choice, or a default measured on the judged
+         query set (tools/measure/fusion_calibration.py) and approved by
+         the operator;
+     (4) it reorders and never removes — removing is a filter the reader
+         asks for;
+     (5) the same query, data and annotation versions give the same order.
+   A point of view (a political lens, say) is the reader's choice only,
+   never a default, and the page says it is applied: biased rankings shift
+   undecided readers without their noticing (Epstein & Robertson, PNAS
+   2015). Approved defaults in force: after the reranker, the record the
+   catalogue leg ranks first takes position 1 and nothing else moves
+   (operator 2026-10-25: "The final goal is the quality of the information
+   retrieval"; docs/05 §5.6; titles MRR 0.782 against 0.720 fused by RRF
+   and 0.578 reranked alone); the hit says so (`moved_by`).
+   *Enforced: test + review.*
 5. BANDWIDTH. No code path moves bytes without drawing from the central
    token-bucket budget (transfer manager). No per-tool rate limits as a
-   substitute. *Enforced: review.*
+   substitute. *Enforced: test (tests/test_invariant_5_bandwidth.py: every
+   app/ module doing network I/O draws from the budget or is on its named
+   exemption list — model-server calls, each with its reason).*
 6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
    assumptions. SQLite holds state (never travels); Lance holds vectors
    locally — a bundle travels as Parquet (docs/09 §9.7) and rests in the
@@ -130,7 +174,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
    random-access data — a plugin's pack, a label table — goes under
    `LOUISE_CACHE_DIR` (the fast drive) when set, keyed on the origin's
    physical identity (`app/derived.py`); the archive and the authoritative
-   state never do (operator, 2026-10-20; docs/07 §7.8). *Enforced: review.*
+   state never do (operator, 2026-10-20; docs/07 §7.8). *Enforced: test
+   (tests/test_invariant_6_storage.py: no VACUUM in app/, tools/, deploy/;
+   every write-open of a manifest sets WAL; only app/derived.py resolves
+   LOUISE_CACHE_DIR, for named derived data) + review (SMB/NFS).*
 7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
    HTTP (CHAT_URL / TRANSLATE_URL / RERANK_URL, and each collection's own
    [encoder] — there is no default encoder). Embedding calls go through the
@@ -138,7 +185,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
 8. SECRETS. Secrets — key material AND tokens — are referenced by filesystem
    path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
    or error messages, and never in an env VALUE where a path is possible.
-   *Enforced: test + review.*
+   *Enforced: test (tests/test_invariant_8_secrets.py: sentinel token and
+   key files, real config loading in a fresh process, never in log, stderr,
+   stdout or an HTTP answer over startup, bad tokens, an admitted request,
+   bad key files and an unreadable token file; tests/test_invariant_guards.py)
+   + review.*
 9. LICENSE GATES. A yellow- or red-class source requires a recorded
    acknowledgement (timestamp + sha256 of terms text) before its data is
    USED — however the data arrived (docs/04 §4.4). Acquisition: before
@@ -165,7 +216,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
     `state/node.sqlite`, app/node_state.py) SURVIVES a restart until it is
     changed. No file sets it, so there is nothing to reset it to, and an
     expiry would turn acquire-only back into running — starting the
-    encoder — on every deploy. docs/07 §7.8 says the same. Do not "fix" it.
+    encoder — on every deploy. A paused COLLECTION (`node pause
+    <collection>`) survives a restart for the same reason
+    (app/node_state.py). docs/07 §7.8 says the same. Do not "fix" it.
     *Enforced: test.*
 11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
     a way that prevents verification against the original form, and
@@ -191,13 +244,37 @@ are the ones that have drifted; prefer to add a test when you touch them.
     collection to add later. If you cannot decide whether something is
     (d) or entity information, ASK; do not guess it away.
     Losing the ability to re-fetch the origin and reproduce what we kept
-    is equally forbidden.
+    is equally forbidden. EVERYTHING HELD IS VERIFIABLE (operator,
+    2026-10-25): a superseded part version is kept where the origin keeps
+    its history and dropped where it replaces in place, since it can no
+    longer be checked against the source (01 promise 7, 06 §6.2
+    `origin_versions`, app/hold/shard.py).
+    NOTHING IS PRUNED UNLESS WRITTEN (operator, 2026-10-24): "If not
+    written explicitly in the guidelines a collection cannot prune any
+    information from the corpus, in other words I cannot get from the raw
+    corpus more information than those I can get from the parsed corpus
+    and possibly from queries." A pruning rule (wikidata's scholarly
+    articles, D1) is written in the plugin's guidelines and its Codex form
+    before it applies; cost is answered by choosing what to EMBED, never by
+    leaving entities out of the records.
+    EVERYTHING THAT BELONGS TO A COLLECTION IS PART OF IT (operator, the
+    same day): "everything belonging a collection must be part of the
+    collection; if structurally independent it can be an optional download
+    and/or embedding. As already happens, for instance, with languages in
+    some collections." A structurally independent part — a language of
+    Wikipedia, a family of Wikidata, Wikidata's lexemes — is a SLICE a node
+    may hold or not and embed or not; it is never a separate collection and
+    never left out. ONE EXCEPTION, by operator decision (2026-10-28:
+    "European laws, one collection per language … Better to not mix up
+    too many things in one collection"): EU law is ONE COLLECTION PER
+    LANGUAGE. A language not yet created is a collection not yet made,
+    never a pruning.
     Concretely: every record carries `origin_hash` — the hash of the origin
     unit it was parsed from — and `origin` locates that unit, while the
     Codex names the acquisition spec and parser version that produced it
     (docs/02 §2.3, docs/06 §6.4), so `records-vs-origin` can re-fetch a
     sample and reproduce it. A record with no `origin_hash` is REFUSED at
-    build (`hold records build`; `pack build` until the migration lands),
+    build (`hold records build`; `pack build` is retired),
     never warned about: a SHARD whose records all verify
     internally while being permanently unverifiable against the source is
     the worst artefact we could ship, and it is published once and adopted
@@ -206,35 +283,54 @@ are the ones that have drifted; prefer to add a test when you touch them.
     API, dump vs live), choose the one that best fits our goals and RECORD
     the choice with its reason beside the plugin — the form is part of what
     a verifier needs in order to reproduce our records. *Enforced: build +
-    test (tests/pack/test_origin_fidelity.py); the form choice by review.*
-12. ENCODER DETERMINISM. *(Operator, 2026-10-18: a fundamental pillar.)*
-    The same input on the same card, the same build and the same flags
-    gives the SAME BYTES, every time — not "within tolerance". Tolerance
-    (03 §3.1) is for what no vendor can promise, agreement ACROSS
-    hardware; it is never a cover for a card that does not reproduce its
-    own output, because a vector its own encoder cannot reproduce cannot
-    be checked by anyone. So every encoder run on a card uses its stack's
-    bitwise-reproducibility mode, set in the MODEL's YAML `env` so the
-    stated run carries it (docs/notes/approved-encoders.md, "Bitwise
-    reproducibility, by vendor"):
-      - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0` (rocBLAS reduces with
-        atomics by default; llama.cpp's F16 models go through its gemm_ex);
+    test (tests/pack/test_origin_fidelity.py); the form choice recorded by
+    test (tests/test_invariant_11_origin_form.py: every registered plugin's
+    source module carries "THE ORIGIN FORM, and why"), its content by
+    review.*
+12. ENCODER REPRODUCIBILITY. *(Operator, 2026-10-18: a fundamental
+    pillar; amended 2026-11-01, operator's choice B: "considering that
+    collections embedding is ideally distributed, that different hw
+    produce slightly different vectors, and the acceptance policy is
+    anyway a tolerance threshold, it makes not much sense to enforce local
+    bit exactness in this scenario".)* Every encoder run must REPRODUCE
+    ITSELF: the same input on the same card, build and flags gives answers
+    within cosine 0.99999 of each other — across orders, fresh loads and
+    batches — and reaches the stored CPU reference at 0.999; a run that
+    does not FAILS, however good its cosines to the calibration member,
+    because that is how a broken engine shows (oneDNN's SDPA: a NaN and a
+    vector at cosine 0.09). A run that gives back its own BYTES is recorded
+    **exact**, one within the bound **near-exact**, and the statement says
+    which (docs/notes/near-exact-runs.md, 03 §3.3). BIT-EXACT IS THE
+    DEFAULT (operator, 2026-11-02: "bit exactness is at best a 5% to pay,
+    it is worth the price"; measured within +0.5 % of the speed mode for
+    every live llama.cpp encoder): `exactness = "exact"`, bytes or nothing,
+    unless a collection opts into `exactness = "near"`, where a near-exact
+    run is admitted. Peers accept each other at the space's tolerance
+    (03 §3.1): no two kinds of hardware give the same bytes, so local byte
+    equality is evidence, never the condition of admission between peers.
+    Each card still runs with its stack's reproducibility mode in the
+    MODEL's YAML `env` until a setting without it is measured, one at a
+    time, faster and within the bound
+    (docs/notes/approved-encoders.md, "Bitwise reproducibility, by vendor"):
+      - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0`;
       - Intel SYCL: `GGML_SYCL_ENABLE_DNN=0` (oneDNN chooses kernels by
         heuristic and drifts run to run; llama-intel-arc-b70);
       - NVIDIA CUDA: none to set — cuBLAS disallows atomics by default;
-        a single stream (`parallel:1`) keeps it so;
       - Vulkan, llama.cpp CPU: no mode offered — measure, do not assume.
-    And it is MEASURED, never assumed: before a new engine (card, build,
-    flags, env) embeds for a collection, the same texts are embedded over
-    several fresh loads and in several orders, and every vector must come
-    back bit-identical (llama-intel-arc-b70 `capture.py` + a byte compare;
-    the prompt cache and overlapping requests are what break it — `-np 1`).
+    And it is MEASURED, never assumed: the gate embeds the sixteen
+    fingerprint texts one at a time, again in reverse order, over three
+    fresh loads with a sweep of lengths, and the way the peer contributes
+    (its batch and concurrency), before any vector of the run is written.
     *Enforced: the VeGa wrapper states no card run whose model env lacks
-    its vendor's mode (deploy/vega/vega_wrapper.py `DETERMINISM`,
-    tests/vega/test_wrapper_logic.py); the bit-exact measurement by
-    review until the gate runs it.* Open: torch (louise-python) and
-    OpenVINO have their own controls (`torch.use_deterministic_algorithms`,
-    CUBLAS_WORKSPACE_CONFIG) and are not yet checked by the wrapper.
+    its vendor's mode, but for ONE setting the model's env declares measured
+    near-exact on that very backend (`LOUISE_NEAR_EXACT_MEASURED`, 2026-11-02)
+    (deploy/vega/vega_wrapper.py `DETERMINISM`, `near_exact_relaxed`,
+    tests/vega/test_wrapper_logic.py); the gate's verdicts — exact,
+    near-exact, fail — and the batch bound (app/hold/embedder.py,
+    app/hold/runs.py `passing`, tests/hold/test_near_exact.py).* Open:
+    torch (louise-python) and OpenVINO have their own controls
+    (`torch.use_deterministic_algorithms`, CUBLAS_WORKSPACE_CONFIG) and are
+    not yet checked by the wrapper.
 
 ## Engineering rules (blocking in review; each one was paid for)
 - **"Fix it after" is NEVER an option** (docs/01, promise 8). A known
@@ -263,6 +359,37 @@ are the ones that have drifted; prefer to add a test when you touch them.
   digest's existing messages, BitTorrent v2 and the mainline DHT
   (docs/notes/p2p-review-open-issues.md); a vector index refresh as
   Lance's own delta index, not a rebuild of ours.
+- **Multi-threading is a must, not an option** (operator, 2026-10-30,
+  the second time a records build ran on one core of the eight allowed).
+  Every pass over a corpus or a collection uses the cores the node profile
+  allows — the parse pool for per-document work, threads for I/O. A pass
+  that runs in one process is a defect, found by measuring (`docker top`,
+  one process at ~100 % of a core) and fixed like any other.
+- **A fix that makes a running job faster is deployed NOW, and the job
+  resumed** (operator, 2026-10-30: "what's the point of waiting 68 minutes
+  when by stopping and updating you would likely end in 10 minutes?").
+  Every stage is resumable (invariant 2) and the node can be stopped any
+  time (RULE 1), so letting a slow run finish "because its bytes are the
+  same anyway" is never the reason to wait: compare the finish times and
+  take the shorter, without asking.
+- **PERFORMANCE IS SECOND ONLY TO CONSISTENCY** (operator, 2026-10-30:
+  "the consistency of the results is fundamental, but the performance is
+  almost equally important to make this platform usable. ANYTHING can be
+  postponed to deploy and test a performance improvement"). A known
+  speed-up is never "written down for later" because the pass it speeds is
+  short, one-off or rare — it is built, deployed and measured now, and
+  whatever else was queued waits. The finish-time comparison above decides
+  only WHEN a running job is restarted onto it, never WHETHER it is built.
+- **LOUISE SURVIVES A CRASH WITHOUT AN AGENT** (operator, 2026-10-30, after
+  the worker's OOM kill: "this must not happen without an automatic
+  recovery not involving this agent. This applies to any worker";
+  "Louise must survive without an agent surveying each crash"). Every
+  long-running process has a memory cap and a restart policy (the app's
+  containers: `mem_limit` + `restart: unless-stopped`); every operator
+  pass runs under `deploy/supervise-pass.sh` (rerun until it completes,
+  the pool halved after an OOM); a pool child the kernel kills never ends
+  its pass (`parallel.each_part`, `parallel.compute`). A process that
+  needs an agent to come back is a defect, fixed like any other.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
@@ -304,6 +431,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
   (3) the recommendation, and what happens if the operator says nothing.
   A question that does not fit that shape is not asked. Never re-ask a
   decision already presented; decide and proceed.
+- **Always give the pros AND the cons** (operator, 2026-10-24: "Always
+  give a pros cons"): every proposal, option and recommendation carries
+  both — in a choices table, a pros column and a cons column per row,
+  the status quo included. A benefit stated without its cost, or a
+  recommendation without the cons of what it keeps, is not given.
 - **Answer at one fifth the length that feels right.** MANDATORY, and it
   binds explanations hardest — the finding, not the retelling. State the
   outcome, anything that needs a decision, and stop. No recap of work the

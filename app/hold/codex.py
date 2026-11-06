@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Any, Callable, Iterable, Iterator
 
 CODEX_KIND = "louise-codex"
@@ -42,7 +43,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -116,12 +117,12 @@ CUT_VERSION = 8
 TOKEN_CUT = "tokens"
 
 #: THE GRAPH AMENDMENT (operator, 2026-10-20; 09 §9.3, §9.5, §9.14, §9.18;
-#: docs/notes/gutenberg-graph-amendments.md, A-K1–A-K4). From this version a
+#: docs/notes/wiki-gutenberg-amendments.md, A-K1–A-K4). From this version a
 #: Codex declares its record parts' CONTAINER, `slicing.container` —
 #: `"jsonl"`, the zstd-framed lines of every collection so far, or
 #: `"parquet"`, one Parquet file per part (09 §9.5 "The file") — REQUIRED at
 #: this version and an unknown key below it, where it reads as JSONL; an
-#: annotations Codex carries `annotates` as a LIST of targets (gutenberg-graph
+#: annotations Codex carries `annotates` as a LIST of targets (wiki-gutenberg
 #: annotates gutenberg's text AND wikidata's entities), a list even of one;
 #: and its claims may be of the `mention`, `relation` and `community` types
 #: (app/hold/annotations.py). Written for a Codex that declares one of them
@@ -132,11 +133,46 @@ TOKEN_CUT = "tokens"
 #: tokens); `annotates` is present exactly on an annotations Codex (the one
 #: whose `space` is null), a list of at least one target.
 GRAPH_VERSION = 9
+
+#: THE EXACTNESS AMENDMENT (operator, 2026-11-01: "if it useful add a parameter
+#: in the codex specifying if the collection requires bit exactness or near bit
+#: exactness, we don't know yet what the futures will bring"; CLAUDE.md
+#: invariant 12, docs/notes/near-exact-runs.md). Invariant 12 admits a run that
+#: reproduces itself within the near-exact bound, and that is the rule for every
+#: collection; a space may REQUIRE more: `space.exactness` `"exact"`, every
+#: contributing run giving back its own bytes (and batched answers equal to the
+#: single-text ones). ABSENT means the rule, never null, so no Codex, space or
+#: `collection_id` already written moves. Outside `space_id` (it admits runs, it
+#: does not change the function, like the engine), inside `collection_id`.
+#: Written for a Codex that declares it ALONE, and required there: a version-10
+#: Codex is version 9 plus `space.exactness` (so its `slicing.container` is
+#: required too, and its cut present where declared).
+EXACTNESS_VERSION = 10
+#: The one value `space.exactness` takes; its absence is the near-exact rule.
+EXACT_REQUIRED = "exact"
+
+#: THE DOCUMENT-INSTRUCTION AMENDMENT (operator, 2026-11-02: Nemotron-3-Embed
+#: for wikidata, gutenberg and wikipedia; docs/notes/nemotron-embed.md). Some
+#: encoders are trained with a prefix on the DOCUMENT side too — Nemotron's
+#: "passage: ", e5's "passage: " — and a document embedded without it is not
+#: the function the model card and our measurements describe. A space states
+#: it: `space.document` `{instruction: string}`, prepended to every document
+#: input (a chunk, the calibration set, the gate's texts, a probe) exactly as
+#: `space.query.instruction` is to a query, by the one client that sends
+#: documents (app/embeddings.py `_sent`). It changes every document vector,
+#: so it is INSIDE `space_id`. ABSENT, never null, where a space declares
+#: none, so no Codex, space or `collection_id` already written moves.
+#: Written for a Codex that declares it ALONE, and required there: a
+#: version-11 Codex is version 10 plus `space.document` (so `exactness` is
+#: required too). A text form only: a pair layer's documents are pairs, and a
+#: prefix on one half would be a function nobody else could name.
+DOCUMENT_VERSION = 11
+
 #: The two containers (09 §9.5); absent below GRAPH_VERSION means JSONL.
 JSONL, PARQUET = "jsonl", "parquet"
 CONTAINERS = (JSONL, PARQUET)
 #: What this build WRITES: both, since 2026-10-20 (app/pack/records.py's
-#: Parquet writer, step 2b of docs/notes/gutenberg-graph-amendments.md). A
+#: Parquet writer, step 2b of docs/notes/wiki-gutenberg-amendments.md). A
 #: container the format declared and the build could not yet write would be
 #: refused at CREATE here, as `record_line` 2 is, never written as the other.
 CONTAINERS_WRITABLE = CONTAINERS
@@ -495,6 +531,12 @@ class Space:
     #: TOKEN_CUT from CUT_VERSION; None — absent — below it: the platform's
     #: character cut every space before 2026-10-18 was calibrated through
     cut: str | None = None
+    #: EXACT_REQUIRED at EXACTNESS_VERSION; None — absent — the near-exact rule
+    #: (CLAUDE.md invariant 12): what a run must reproduce to be admitted
+    exactness: str | None = None
+    #: `space.document.instruction` at DOCUMENT_VERSION: prepended to every
+    #: document input; None — absent — documents are sent as they are
+    document_instruction: str | None = None
 
     @property
     def has_engine(self) -> bool:
@@ -527,6 +569,14 @@ class Space:
         if self.cut is not None:
             # ABSENT, never null, where the space declares none (CUT_VERSION)
             out["cut"] = self.cut
+        if self.exactness is not None:
+            # ABSENT, never null, where the space requires no more than the
+            # rule (EXACTNESS_VERSION)
+            out["exactness"] = self.exactness
+        if self.document_instruction is not None:
+            # ABSENT, never null, where documents are sent as they are
+            # (DOCUMENT_VERSION)
+            out["document"] = {"instruction": self.document_instruction}
         return out
 
 
@@ -901,10 +951,13 @@ class Codex:
 
     # ---- derived identities -------------------------------------------------
 
-    @property
+    @cached_property
     def collection_id(self) -> str:
         """The identity. Two creators who write the same recipe under
-        different titles write the same collection."""
+        different titles write the same collection. Computed once per
+        Codex (frozen; `replace` makes a new one): the Library's coverage
+        view asked it once per part, 18 % of a warm view (München,
+        2026-10-27)."""
         return digest(canonical_json(self.identity_dict()))
 
     @property
@@ -954,6 +1007,10 @@ class Codex:
             # the cut is the function's (CUT_VERSION): inside where declared,
             # absent where not, so no `space_id` already written moves
             space["cut"] = sp.cut
+        if sp.document_instruction is not None:
+            # every document vector is a function of it (DOCUMENT_VERSION):
+            # inside where declared, absent where not
+            space["document"] = {"instruction": sp.document_instruction}
         return digest(canonical_json({
             "cleaning_version": self.cleaning_version,
             "encoder": encoder,
@@ -1044,6 +1101,10 @@ def written_version(space: Space, version: int) -> int:
     Raising a version below INPUT_VERSION to 6 would add `input` to the
     layers and so move `space_id`; the callers that promise to keep a
     space (`derive` in her mother's space) refuse that case themselves."""
+    if space.document_instruction is not None:
+        return DOCUMENT_VERSION             # a document instruction makes a Codex 11
+    if space.exactness is not None:
+        return EXACTNESS_VERSION            # bit-exactness required makes a Codex 10
     if space.cut is not None:
         return CUT_VERSION                  # the token cut alone makes a Codex 8
     if space.has_backend:
@@ -1385,10 +1446,11 @@ def validate_options(options: Any, where: str = "options") -> None:
     string. ABSENT when there are none — so an empty object, a third way of
     saying "none" that would hash differently from the absence, is refused.
 
-    AN OPTION NAMING ANY OTHER ABSOLUTE PATH IS REFUSED: the weights digest
-    covers `${WEIGHTS}` and nothing else, so a run that loads a second file —
-    a projector, a LoRA, a draft model — would carry a file no digest names
-    (09 §9.3: such a run "cannot be stated yet")."""
+    AN OPTION NAMING ANY OTHER ABSOLUTE PATH IS REFUSED: a second file the
+    load opens — a LoRA, a projector, a draft model — is written by its
+    placeholder `${WEIGHTS:<field>}` and covered by the weights digest
+    (09 §9.3, amended 2026-10-31); a path written out is a file no digest
+    names."""
     if not isinstance(options, dict) or not options:
         raise CodexError(
             f"{where} is a non-empty object of the options the engine was loaded with, "
@@ -1406,8 +1468,8 @@ def validate_options(options: Any, where: str = "options") -> None:
                 raise CodexError(
                     f"{path} names an absolute path ({value!r}). The weights file is "
                     f"written {OPTION_PLACEHOLDERS[0]} and the runner's models directory "
-                    f"{OPTION_PLACEHOLDERS[1]}; any other file is one no weights digest "
-                    f"covers, so a run that loads it cannot be stated yet (09 §9.3)")
+                    f"{OPTION_PLACEHOLDERS[1]}, a second file ${{WEIGHTS:<field>}}; a "
+                    f"path written out is a file no weights digest covers (09 §9.3)")
             return
         if isinstance(value, dict):
             for k, v in value.items():
@@ -1479,6 +1541,32 @@ def _validate_encoder_shape(codex: Codex) -> None:
             f"{'declares it' if sp.cut is not None else 'does not'}")
     if sp.cut is not None and sp.cut != TOKEN_CUT:
         raise CodexError(f"space.cut is \"{TOKEN_CUT}\" (09 §9.3), got {sp.cut!r}")
+    # THE EXACTNESS REQUIRED (09 §9.3, EXACTNESS_VERSION): declared exactly at
+    # version 10, which is written for it alone; one value
+    if (sp.exactness is not None) != (codex.version >= EXACTNESS_VERSION):
+        raise CodexError(
+            f"space.exactness is declared exactly in a version {EXACTNESS_VERSION} Codex, which "
+            f"is written for a space that requires bit-exact runs (09 §9.3, §9.18); this version "
+            f"{codex.version} Codex {'declares it' if sp.exactness is not None else 'does not'}")
+    if sp.exactness is not None and sp.exactness != EXACT_REQUIRED:
+        raise CodexError(f"space.exactness is \"{EXACT_REQUIRED}\" (09 §9.3), got {sp.exactness!r}")
+    # THE DOCUMENT INSTRUCTION (09 §9.3, DOCUMENT_VERSION): declared exactly
+    # at version 11, a non-empty text, and on text layers only
+    if (sp.document_instruction is not None) != (codex.version >= DOCUMENT_VERSION):
+        raise CodexError(
+            f"space.document is declared exactly in a version {DOCUMENT_VERSION} Codex, which "
+            f"requires it (09 §9.3); this version {codex.version} Codex "
+            f"{'declares it' if sp.document_instruction is not None else 'does not'}")
+    if sp.document_instruction is not None:
+        if not isinstance(sp.document_instruction, str) or not sp.document_instruction:
+            raise CodexError(f"space.document.instruction is a non-empty text (09 §9.3), "
+                             f"got {sp.document_instruction!r}")
+        paired = [i for i, l in enumerate(codex.layers) if l.form != "text"]
+        if paired:
+            raise CodexError(
+                f"space.document.instruction prefixes a text, and layers {paired} feed the "
+                f"encoder pairs: a prefix on one half is a function nobody else could name "
+                f"(09 §9.3)")
     if sp.cut is not None and not sp.has_backend:
         raise CodexError(
             "a space that cuts by tokens has the ENCODER cut, with the model's own "
@@ -1939,8 +2027,22 @@ def from_dict(d: dict[str, Any]) -> Codex:
         sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
                                 "normalise", "query", "tolerance", "calibration",
                                 "envelope", "epoch", "evaluation")
-                   + (("cut",) if version == CUT_VERSION or (graph and "cut" in d["space"]) else ()),
+                   + (("cut",) if version == CUT_VERSION or (graph and "cut" in d["space"]) else ())
+                   + (("exactness",) if version >= EXACTNESS_VERSION else ())
+                   + (("document",) if version >= DOCUMENT_VERSION else ()),
                    "space")
+        # 09 §9.3: `document` from version 11, required there, `{instruction}`
+        # only; below it an unknown key, which `_only` has refused
+        if version >= DOCUMENT_VERSION and not isinstance(sp.get("document"), dict):
+            raise CodexError(f"a version {DOCUMENT_VERSION} Codex's space states its document "
+                             f"instruction, \"document\": {{\"instruction\": \"…\"}} (09 §9.3); "
+                             f"this one says {sp.get('document')!r}")
+        # 09 §9.3: `exactness` from version 10, required there, one value;
+        # below it an unknown key, which `_only` has refused
+        if version >= EXACTNESS_VERSION and sp.get("exactness") != EXACT_REQUIRED:
+            raise CodexError(f"a version {EXACTNESS_VERSION} Codex's space requires bit-exact runs, "
+                             f"\"exactness\": \"{EXACT_REQUIRED}\" (09 §9.3); this one says "
+                             f"{sp.get('exactness')!r}")
         # 09 §9.3: `cut` from version 8, required there; below it an unknown
         # key, which `_only` has refused; at GRAPH_VERSION present where declared
         if "cut" in sp and sp.get("cut") != TOKEN_CUT:
@@ -2098,8 +2200,23 @@ def _space(sp: dict[str, Any]) -> Space:
         calibration=Calibration(ca["set"], ca["vectors"], qm["n"], qm["min_pass"],
                                 ca.get("query_vectors")),
         envelope=sp["envelope"], epoch=sp["epoch"], evaluation=sp["evaluation"],
-        cut=sp.get("cut"),
+        cut=sp.get("cut"), exactness=sp.get("exactness"),
+        document_instruction=_document_instruction(sp.get("document")),
     )
+
+
+def _document_instruction(block: Any) -> str | None:
+    """`space.document` -> its instruction; None where the space has none.
+    `{instruction}` only, a non-empty text (09 §9.3, DOCUMENT_VERSION)."""
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise CodexError(f"space.document is {{\"instruction\": \"…\"}} (09 §9.3), got {block!r}")
+    d = _only(block, ("instruction",), "space.document")
+    if not isinstance(d["instruction"], str) or not d["instruction"]:
+        raise CodexError(f"space.document.instruction is a non-empty text (09 §9.3), "
+                         f"got {d['instruction']!r}")
+    return d["instruction"]
 
 
 def _certifier(c: dict[str, Any] | None) -> Certifier | None:

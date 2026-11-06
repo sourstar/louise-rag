@@ -73,13 +73,22 @@ def _origin_one(plugin, locator: str, base) -> str:
         return path + (DEFAULT_MEMBER_SEP + member if member else "")
     p = Path(path)
     if base is not None:
-        try:
-            p = p.relative_to(Path(base))
-        except ValueError:
-            # Not under this peer's origin base — a hand-placed file, or a
-            # corpus moved since discovery. Fall back to the name rather
-            # than emitting an absolute path, which §9.5 forbids outright.
-            p = Path(p.name)
+        rel_p = relative_to_base(p, Path(base))
+        if rel_p is None:
+            # NOT UNDER THE ORIGIN BASE, by any path that reaches it. This
+            # used to fall back to the file's bare NAME — "000.parquet#0::15"
+            # — which locates nothing and, where every language of an
+            # archive has its own 000.parquet, cannot even say which file
+            # (wikipedia-v8, 2026-10-28: every record of the archive layer,
+            # its manifest paths carried from the old collection under
+            # /corpora/wikivec; records-vs-origin found none of 52,440).
+            # 09 §9.5: the origin locates the record's own bytes, or the
+            # record is not made.
+            raise OriginOutsideBase(
+                f"{path}: not under the origin base {base}, by its own path, "
+                f"its resolved path or a link the base holds; a record must "
+                f"locate its own origin bytes (09 §9.5, invariant 11)")
+        p = rel_p
     rel = p.as_posix()
     # 06 §6.4: a record whose text a credited archive supplies is located
     # IN that archive — a URL, never a path under this node's copy of it.
@@ -87,6 +96,74 @@ def _origin_one(plugin, locator: str, base) -> str:
     url_of = getattr(plugin, "origin_url_of", None)
     url = url_of(rel) if url_of else None
     return (url or rel) + (DEFAULT_MEMBER_SEP + member if member else "")
+
+
+class OriginOutsideBase(ValueError):
+    """A document's origin bytes are not under the collection's origin base
+    by any path that reaches it: no 09 §9.5 `origin` can be written for it."""
+
+
+class StaleUnit(ValueError):
+    """The row's locator names less than its origin unit now holds — a
+    locator from before the plugin's parser took more of the origin in
+    (wikipedia parser 5's page_props, 2026-10-31: archive-layer records cut
+    on 10-28 without their QIDs). A record cut from it would hold less than
+    the origin gives (invariant 11): the records build stops, and a scan
+    re-locates the row."""
+
+
+def stale_unit(plugin, row, collection=None) -> str | None:
+    """Why the row's locator names an incomplete unit, or None. A plugin
+    says so through its optional `stale_unit(row, collection)`."""
+    check = getattr(plugin, "stale_unit", None)
+    return check(row, collection) if check is not None else None
+
+
+#: base -> [(name, resolved target)] of the base's symbolic links, read once
+_base_links: dict[str, list[tuple[str, Path]]] = {}
+
+
+def relative_to_base(p: Path, base: Path) -> Path | None:
+    """`p` relative to the origin base, or None when nothing reaches it.
+
+    In order: `p` as given; both resolved (a base that is itself a link);
+    and through a symbolic link the base holds — the node's
+    `/corpora/wikipedia/data` is a link to `/corpora/wikivec/data`, so an
+    archive file found under the second is `data/<lang>/<file>` under the
+    first. A path already relative is taken as relative to the base."""
+    if not p.is_absolute():
+        return p
+    try:
+        return p.relative_to(base)
+    except ValueError:
+        pass
+    try:
+        rp, rb = p.resolve(), base.resolve()
+    except OSError:
+        return None
+    try:
+        return rp.relative_to(rb)
+    except ValueError:
+        pass
+    key = str(base)
+    if key not in _base_links:
+        links = []
+        try:
+            for child in base.iterdir():
+                if child.is_symlink():
+                    try:
+                        links.append((child.name, child.resolve()))
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        _base_links[key] = sorted(links)
+    for name, target in _base_links[key]:
+        try:
+            return Path(name) / rp.relative_to(target)
+        except ValueError:
+            continue
+    return None
 
 
 def local_locator(plugin, origin: str, base) -> tuple[Path, str]:
@@ -141,12 +218,18 @@ def origin_unit(plugin, origin: str, base) -> tuple[str, int | None]:
 
 
 def metadata(plugin, row) -> dict:
+    """The rdf stage's fields for one document — and, under `issues`, the
+    origin's inconsistencies the read met (06 §6.1, amended 2026-10-25),
+    which the stage records for the codes `metadata_checks` names. A
+    plugin's lazy `read_metadata` that says nothing about issues returns no
+    `issues` key, and nothing is recorded for it."""
     if hasattr(plugin, "read_metadata"):
         return plugin.read_metadata(Path(row["path"]), int(row["native_id"]))
     doc = canonical_doc(plugin, row)
     meta = {"title": doc.title, "authors": "; ".join(doc.creators),
             "lang": doc.language, "subjects": "|".join(doc.subjects),
-            "bookshelves": str(doc.extra.get("bookshelves", ""))}
+            "bookshelves": str(doc.extra.get("bookshelves", "")),
+            "issues": list(doc.issues or ())}
     # one record per Expression (app/validity.py): the start of validity,
     # the Work and whether the version has text, for the rdf stage to record
     from app import validity
@@ -156,6 +239,16 @@ def metadata(plugin, row) -> dict:
         if got is not None:
             meta["validity"] = got
     return meta
+
+
+def metadata_checks(plugin) -> frozenset[str]:
+    """The issue codes `metadata` examines for this plugin: every code the
+    plugin declares when it falls back to the full parse, and only what a
+    lazy `read_metadata` declares it reads (`METADATA_ISSUES`) otherwise —
+    so the rdf stage never clears what only the full parse can see."""
+    if hasattr(plugin, "read_metadata"):
+        return frozenset(getattr(plugin, "METADATA_ISSUES", ()) or ())
+    return frozenset(getattr(plugin, "ISSUES", None) or {})
 
 
 def work_identity(meta: dict) -> str:

@@ -1,5 +1,5 @@
 """MedCPT's article encoder as a LocalAI backend: `Embedding` of a TEXT PAIR, on
-OpenVINO (docs/notes/input-forms.md, RAGE). The model code is
+OpenVINO (docs/notes/input-forms.md, the model pool). The model code is
 deploy/medcpt-rerank/server.py, copied beside this file as `medcpt.py`, as for
 louise-medcpt-rerank: its `make_encoder` is the model's own pair tokenizer
 (tokenizer.json), which builds the segment ids llama.cpp's BERT graph zeroes.
@@ -26,6 +26,10 @@ The load call:
                   pairs:true      a marked string is a pair; without it one
                                   is refused (the front never sends one)
     env           OV_CACHE_DIR, where OpenVINO keeps the compiled model
+
+On the GPU every input is padded to ContextSize, one static shape: the GPU
+plugin did not reproduce its own bytes at some dynamic shapes (pubmed pairs of
+65–73 tokens, 2026-10-30; medcpt.make_encoder).
 """
 from __future__ import annotations
 
@@ -69,7 +73,9 @@ class Servicer:
                 raise lb.LoadError("context_size (tokens per text or pair) is set in the "
                                    "model's YAML")
             device = lb.openvino_device(opts["device"])
-            self.encode = self._encoder(str(tok), request.ContextSize)
+            # ONE STATIC SHAPE on the GPU: at some dynamic shapes its plugin
+            # does not give back its own bytes (invariant 12; medcpt.make_encoder)
+            self.encode = self._encoder(str(tok), request.ContextSize, fixed=device == "GPU")
             self.infer = self._infer(str(xml), device, os.environ.get("OV_CACHE_DIR") or None)
             # the first inference compiles its kernels, and says the dimension
             vector, _ = self._vector(("warm-up", "the first inference compiles its kernels"))

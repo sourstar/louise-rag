@@ -16,9 +16,16 @@ quoted. The order matters; §1 saves the most time.
 | which inputs a `vega-` model refuses to cut at a window | `tools/vega_cut_scan.py` |
 | a collection's `vectors-sample` against a twin on another device | `tools/cross_device_check.py` |
 | embed endpoint concurrency, safe settings | `louise dev embedder-profile` (tools/profile_embed.py: production-shaped texts, rejects a setting that wins on speed but drifts on cosine) |
+| where one embedding request's time goes: VeGa's tag, the POST, the receipts read, the check, against a raw model server on the same texts | `louise dev embedder-profile --stages --model vega-X --model X-raw --pool <bakeoff dir>` (one request in flight, each model leased, worst cosine between the arms) |
 | whether stored vectors still match the endpoint | `tools/vector_compliance.py` |
 | tolerance for cross-backend comparison | `tools/calibrate_space.py` |
 | scheduler cost and round timings | `louise dev schedule-report` (scheduling.md §7) |
+| the card's busy time, idle gaps with work waiting, who held each encoder | `louise dev schedule-report --gpu` (the worker's per-second record, app/rage/card_record.py; the probe's GET /busy, app/gpu_busy.py — not `/root/measure/gpu_busy.py` any more) |
+| one collection's BEFORE/AFTER row: busy, chunks/s, lost, gaps, alone | `louise dev schedule-report --bench <collection> --since HH:MM --until HH:MM` (app/rage/bench.py, from the same per-second record; `--json` for the log) |
+| an encoder's retrieval on a held collection's OWN judged queries (a pool of its chunks, its stored vectors scored without recomputing) | `python -m tools.encoder_bakeoff pool`, then `embed --from-collection C --stored-vectors` / `--query-like C` (gutenberg-encoder-bakeoff.md); `rerank --from-collection C` runs the whole search on the pool stage by stage (BM25 with the plan's translations, each encoder, fused, and the reranker over the top 10/40/50/100: tools/measure/pipeline_eval.py) |
+| a candidate encoder's GGUF against the model as sentence-transformers runs it (the conversion check before its rows count) | `python -m tools.measure.st_parity pick / reference / compare` (the reference in a throwaway torch venv, the candidate through VeGa as the rows embed it; nemotron-embed.md step 5) |
+| what a cast to f16 does to a bf16 checkpoint (values that become inf or 0) | `python -m tools.measure.f16_range <model.safetensors>` (no torch; nemotron-embed.md step 2) |
+| a person's search under corpus load: each step's wait, failures, what the corpus loses | `python -m tools.measure.query_under_load` (an idle run first, then `--baseline` under load; `--card-record` for the corpus side; gpu-saturation-plan.md I4) |
 
 **The incident.** An encoder A/B was run with a purpose-built harness while
 `llama-intel-arc-b70` sat unopened in the same workspace: numbers that could
@@ -103,11 +110,14 @@ report the interval, not just the point; measure at the depth the system uses
 - [ ] The vendor's deterministic mode on, and bit-exactness measured (invariant 12)
 - [ ] Used the existing harness, or said why not
 - [ ] Inputs are real production shapes, not synthetic stand-ins
-- [ ] One job on the machine; nothing else contending
+- [ ] One job on the machine; nothing else contending — the node paused and every other pass (a calibration, a CPU reference, a build, a test run, a download) stopped or finished first, and the write-up says so (§10)
+- [ ] Warm answers only: the model loaded and warmed up before the clock starts, pinned for the run, and any answer that paid a load counted and left out of the time (§10)
 - [ ] Free space checked before and after
 - [ ] Artefacts on a host path, and cleaned up — no container left running
 - [ ] Numbers labelled measured / modelled / published
+- [ ] A difference CLASSIFIED: wrong (a bug — finite but unrelated, a NaN, a value outside its definition) or arithmetic order (valid last bits): only the first is reported upstream; the second is controlled, never filed (approved-encoders.md "Bugs against arithmetic order")
 - [ ] Written where it belongs
+- [ ] A PILOT read before the whole run: the first 3 items of every category (§12)
 
 ## 7. Added 2026-10-18 (the AMD peer)
 
@@ -125,3 +135,141 @@ report the interval, not just the point; measure at the depth the system uses
   through the engine that will run.
 - **A monitor's default view can lie.** Task Manager's GPU graphs show 3D;
   WSL compute lands on "Compute 0".
+
+## 8. Added 2026-10-30 (the wikidata build)
+
+- **Read a container's CPU from its cgroup (`cpu.stat` `usage_usec`), not
+  from a sum over its processes.** A process that exits inside the window
+  takes its CPU out of the second sample. With a pool replacing its
+  children every few seconds, `/proc` deltas read 135 % and then −1866 %,
+  while the cgroup read 982 %. `tools/sched_measure.sh` now reads the cgroup.
+- **`ps`/`docker top` %CPU is a lifetime average.** The worker's "37 %"
+  was its average since boot, not the window's. Use deltas: the cgroup
+  for the whole container, `/proc/<pid>/stat` for one long-lived process.
+- **The worker log's batch lines were throttled samples until #78.** A
+  run's lines summed to 604 of its 2,000 books. Each line now carries
+  the totals of the batches it stands for.
+
+## 9. Added 2026-11-02 (gutenberg's CPU reference)
+
+- **`docker pause` is not lossless for a VeGa client.** A request in flight
+  comes back after the pause, but VeGa keeps a receipt for a limited time.
+  A pause longer than that leaves the answer with no receipt, so it is not
+  taken (`ReceiptDeferred: … expired`). The CPU reference lost 352 answers
+  that way after a 5 h pause; the pass is now journalled
+  (near-exact-runs.md §2).
+  - To free a CPU for minutes, pause.
+  - For hours, stop the pass: SIGTERM finishes its unit, and the next start
+    resumes.
+- **A supervisor restarts the image it captured.** After a deploy, a pass
+  under `supervise-pass.sh` that restarts runs the OLD image until it is
+  stopped and started again on the new one.
+- **An armed step waits on a FILE MARKER its producer creates, never on a
+  log grep.** On 2026-11-02 three armed steps fired early because a grep for
+  a step's last line matched an older line of the same kind (`harrier:
+  done$` matched "prof-harrier: done"; `end$` matched a stopped pass's end):
+  - the approved old-data deletion ran at 18:13 instead of after the
+    pipeline steps;
+  - two BEFORE/AFTER rows (before-rows3d, lever3e) measured the wrong
+    window and are invalid.
+  The producing step writes its marker (as EVAL-OVER and NEMO-DONE do), and
+  the armed step tests that file. A row whose trigger matched a stale line is
+  rerun, never reported.
+- **A model loaded before an in-place backend rebuild keeps its old
+  process.** `/models/reload` does not stop it (localai-bugs B8 is the same
+  family). Unload each one (`/backend/shutdown`) before the rebuild, and
+  check that the first gate after it names a NEW engine and run. A repeated
+  id means the gate ran on the old process.
+
+## 10. Added 2026-11-03 (the chat model check) — a general rule
+
+The operator, 2026-11-03: "For your chat benchmark suspend all the parasite
+tasks to test an unloaded system", "consider only warm model answers", and
+"note it as a general benchmarking rule, this is not the first time it
+happens".
+
+- **An unloaded system.** Before a timed benchmark:
+  - the node is paused (`node pause`; its mode restored after);
+  - every other pass is finished or stopped: a calibration, a CPU reference,
+    a records build, a deploy's test run, a download;
+  - the write-up names what was stopped.
+
+  Qwen3-8B's first row (prefill 180–190 tok/s, gen 20–23) ran beside
+  wikidata's calibrate CPU lane (8 threads) and wikipedia's fts, and was
+  discarded.
+- **Warm answers only.** A request that loads its model pays the load in
+  its time:
+  - a time to the first token after `backend/shutdown` is load plus
+    prefill, not a prefill rate;
+  - the first Ask answer of a run carries the load of the chat model.
+
+  So the model is loaded and warmed up with one throwaway request before
+  the clock starts, and pinned for the run (app/model_pins.py), so that
+  nothing evicts it between answers. An answer during which its backend
+  was (re)loaded is counted and left out of the time. The backend can be
+  missing before the answer, or have another pid after it
+  (`model_load.backend_pid`). tools/measure/chat_eval.py does this: the
+  `warm` field, and the `cold (not timed)` column.
+- **Fresh loads are for reproducibility, not for speed.** The "same bytes
+  over three fresh loads" check reloads on purpose. Its answers are compared
+  for bytes, and the speed is read from warm answers after each load.
+
+## 11. Added 2026-11-03 — what is validated: an embedder, not a chat model
+
+The operator, 2026-11-03: "Skip the cpu tolerance, it makes sense to
+validate a new embedder, not a chat model. Fucking up embedding is BAD, we
+assume that a chat model works, unless we patched llama.cpp ourselves to run
+it and we must be confident."
+
+- **An embedder is validated in full before any vector is written**:
+  - the CPU reference and the tolerance (`hold embedder cpu-reference`,
+    `hold embedder calibrate`);
+  - the gate's reproducibility (invariant 12);
+  - parity with the reference implementation.
+
+  A wrong vector is stored, shared and searched; it is never recalled.
+- **A chat model is assumed to work** when it runs on an engine as
+  published. It gets no CPU tolerance and no same-bytes-over-fresh-loads
+  check. What is measured is what decides the choice:
+  - it loads on the card, and fits beside the embedders and the reranker;
+  - no thinking text reaches the content;
+  - warm speed (§10);
+  - the task's own scores (tools/measure/chat_eval.py).
+- **The exception is our patch.** When we patched llama.cpp ourselves to
+  run a model, that model is checked until we are confident of the patch:
+  - the same answer as the unpatched or reference runtime;
+  - no garbage;
+  - the same bytes where the engine promises them.
+
+  P1–P5 on our engine are for embedding and T5; none of them was made to
+  run a chat model.
+
+## 12. Added 2026-11-03 — a pilot before every whole run
+
+The operator, 2026-11-03: "Check the first 3 question/answer per test
+category one by one before launching a whole test that may produce
+garbage."
+
+That day showed why. A whole run produced:
+- a model whose answers were raw tool calls, in 17 of 20 questions;
+- a checker that was ~2–5 % precise;
+- rewrites that slowed every search 3×.
+
+Each was visible in the first few answers.
+
+- **Every whole run starts with a pilot:** the first 3 items of every
+  category (for chat_eval, every language), run on exactly the settings
+  of the whole run.
+- **The pilot is read one item at a time:** the question, the answer, the
+  sources it cites, the flags and the time. It is a reading, not a
+  score.
+- **The whole run starts only after the reading,** recorded with who read
+  it and what they found. chat_eval enforces this:
+  - `run --pilot 3` writes `runs/<name>/pilot-<tag>.md`;
+  - `pilot-ok --name --tag --by --note` records the reading;
+  - `run` without a recorded reading refuses.
+
+  The pilot's answers are kept, and the whole run resumes after them
+  (RULE 1).
+- **A defect in the pilot is fixed before the whole run**, never "noted
+  for the results".

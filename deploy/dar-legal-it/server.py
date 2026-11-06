@@ -11,7 +11,7 @@ closed and Python is the route, as it is for MADLAD and MedCPT.
 SERVED BY LocalAI: deploy/localai/backends/louise-dar-legal-it imports this
 module and answers `Embedding`, one text per call. SUSPENDED since 2026-10-04
 (operator): no collection uses it, and its YAML is in
-deploy/rage/localai-models/suspended/. Its HTTP server, its length-budgeted
+the model pool's suspended model files (in git before 6a4f517). Its HTTP server, its length-budgeted
 batches and its query prefix went with llama-swap at 15g
 (docs/notes/legacy-to-delete.md §8): LocalAI sends one text at a time, and
 Louise prepends the Codex's `space.query.instruction` herself.

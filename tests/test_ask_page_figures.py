@@ -135,3 +135,25 @@ def test_the_reader_links_every_marker_of_a_collection_without_plates(client, mo
         html = _reader(client, monkeypatch, **kw)
         assert "<img" not in html and "/api/ask/figure" not in html
         assert html.count("— at the source") == 2
+
+
+def test_a_held_plate_that_is_not_displayable_is_offered_as_a_download(client, monkeypatch):  # noqa: F811
+    """08 §8.7 amended 2026-10-25 ("Every plate"): an SVG is carried and
+    held, and the page says it is not displayable — its type and size — and
+    links the file with `download=1`; never an <img>."""
+    place, _ = _placing({"hash": H, "media_type": "image/svg+xml", "bytes": 12_000, "caption": "A plan",
+                         "state": "held"})
+    html = _page(client, monkeypatch, place, text="[Illustration: A plan] …")
+    assert "<img" not in html
+    dl = (f"/api/ask/figure?collection=gutenberg&amp;uid=gutenberg%3A2701&amp;hash=blake2b%3A{'ab' * 16}"
+          "&amp;download=1")
+    assert f'href="{dl}" download' in html
+    assert "A plan — not displayable (image/svg+xml, 11.7 KB) — download" in html
+
+
+def test_the_reader_offers_a_plate_it_may_not_show_as_a_download(client, monkeypatch):  # noqa: F811
+    html = _reader(client, monkeypatch, per_seq={3: [
+        {"hash": H, "media_type": "image/jpeg", "caption": "The whale", "state": "held"},
+        {"hash": H, "media_type": "image/gif", "bytes": 300, "caption": "Map", "state": "held"}]})
+    assert html.count("<img") == 1, "the jpeg is drawn, the gif is not"
+    assert "Map — not displayable (image/gif, 300 bytes) — download" in html and "download=1" in html

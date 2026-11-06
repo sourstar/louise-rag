@@ -27,6 +27,8 @@ would publish nothing whenever one check was inconclusive.
 """
 from __future__ import annotations
 
+import math
+
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -221,6 +223,14 @@ class Ctx:
     #: a listing on the network, so only the units the bound reaches are
     #: weighed (app/acquire/file_origin.py)
     weigh_unit: Callable[[str], int | None] | None = None
+    #: `records-vs-origin`'s comparisons for MANY records, in order:
+    #: `(uid, locator, line)` items in, `(uid, outcome, error)` out, where
+    #: outcome is `verdict`'s or "unreachable"/"errored". Given (by the CLI)
+    #: where the origin is local, it runs them in the parse pool's processes
+    #: (CLAUDE.md, multi-core: one wikidata check re-parsed 3.7 M records at
+    #: 38/s on one core, ~27 h; München, 2026-11-01). None: `reparse`, one
+    #: record at a time — and the outcome is the same either way.
+    reparse_many: Callable[[Any], Any] | None = None
 
     @property
     def shard_tree(self) -> Path:
@@ -248,6 +258,109 @@ def _shard_ids(codex, shards: Sequence[snap.Shard], space: str | None = None
 # --------------------------------------------------------------------------
 # the checks
 
+# --------------------------------------------------------------------------
+# PER PART, IN PROCESSES: every part's check is independent of every other's,
+# and in one process the check of wikipedia-v8 took 46 min (2026-10-28) —
+# the pieces root of 89 GB, every sampled record decoded and re-cut. The
+# parts go to spawned processes, the outcomes come back in the parts' order
+# (operator, 2026-10-30: "multi threading is a must"). Serial where the node
+# allows one process (PARSE_PROCESSES; the tests pin it to 1).
+
+def _map_parts(fn, tasks: list[tuple]) -> list:
+    from app import parallel
+    return list(parallel.each_part(fn, tasks))
+
+
+def _root_part(path: str, root: str) -> bool | None:
+    """None where the part is not held; else whether its bytes have `root`."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    return shard_mod.pieces_root_of(p) == root
+
+
+#: this process's parsed family maps, by their sha256: the member is read
+#: and hashed on every call, only the parse is kept
+_maps: dict[str, Any] = {}
+
+
+def _family_map_at(tree: Path, codex):
+    """`_family_map` for a SHARD tree and a Codex: `(map or None, failure or None)`."""
+    from app.pack import slicing as sl
+    named = sl.family_map_of(getattr(codex, "slicing", None))
+    if named is None:
+        return None, None
+    p = Path(tree) / sl.map_member(named)
+    if not p.is_file():
+        return None, f"{sl.map_member(named)}:missing"
+    raw = p.read_bytes()
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != named:
+        return None, f"{sl.map_member(named)}:hash"
+    if named not in _maps:
+        from app.plugins.wikidata import families
+        _maps[named] = families.load_map(raw)
+    return _maps[named], None
+
+
+def _records_part(tree: str, codex, path: str, name: str, records_root: str,
+                  last_of_slice: bool) -> tuple[int | None, list[str]]:
+    """One sampled part's records check: `(records seen, failures)`, or
+    `(None, [])` where the part is not held."""
+    from app.pack import records as pack_records, slicing as sl
+    p = Path(tree) / path
+    if not p.is_file():
+        return None, []
+    fmap, _broken = _family_map_at(Path(tree), codex)     # the parent reports a broken map
+    rule = sl.parts_rule_of(getattr(codex, "slicing", None))
+    slice_ = name.rsplit("/", 1)[0]
+    seen, failed = 0, []
+    hashes: list[str] = []
+    uids: list[str] = []
+    for r in pack_records.iter_records(p):
+        seen += 1
+        hashes.append(r["content_hash"])
+        uids.append(r["uid"])
+        sections = [tuple(x) for x in r.get("sections") or []]
+        if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
+            failed.append(r["uid"])
+        elif not r.get("origin_hash"):
+            # invariant 11: a record with no `origin_hash` is
+            # permanently unverifiable against its source, which is the
+            # worst artefact we could ship.
+            failed.append(r["uid"])
+        elif fmap is not None and _slice_unless_walked(fmap, r) not in (None, slice_):
+            failed.append(f"{r['uid']}:slice")
+    if rec.records_root(hashes) != records_root:
+        failed.append(f"{name}:records_root")
+    if rule is not None and not _cut_by_content(rule, uids, last_of_slice):
+        failed.append(f"{name}:cut")
+    return seen, failed
+
+
+def _chunks_part(tree: str, codex, path: str, name: str, chunks: int,
+                 chunks_root: str) -> tuple[int | None, list[str]]:
+    """One sampled part's chunks check: `(records seen, failures)`, or
+    `(None, [])` where the part is not held."""
+    from .. import layers as layers_mod
+    from app.pack import records as pack_records
+    p = Path(tree) / path
+    if not p.is_file():
+        return None, []
+    seen, failed = 0, []
+    pairs: list[tuple[str, str]] = []
+    for r in pack_records.iter_records(p):
+        seen += 1
+        row = {"uid": r["uid"], "native_id": r.get("native_id", 0)}
+        sections = [tuple(x) for x in r.get("sections") or []]
+        pairs.extend((c["id"], c["text"]) for c in
+                     layers_mod.chunks_for_document(codex, row, sections))
+    if len(pairs) != chunks:
+        failed.append(f"{name}:chunks={len(pairs)} not {chunks}")
+    if rec.chunks_root(pairs) != chunks_root:
+        failed.append(f"{name}:chunks_root")
+    return seen, failed
+
+
 def check_roots(ctx: Ctx) -> Outcome:
     """"every shard's bytes have the `root` the snapshot lists" (03 §3.2).
 
@@ -257,12 +370,13 @@ def check_roots(ctx: Ctx) -> Outcome:
     and the check stays honest about what it covered.
     """
     failed, held = [], []
-    for s in _shards(ctx, "roots", every=True):
-        p = ctx.shard_tree / s.path
-        if not p.is_file():
+    shards = _shards(ctx, "roots", every=True)
+    for s, ok in zip(shards, _map_parts(_root_part, [(str(ctx.shard_tree / s.path), s.root)
+                                                     for s in shards])):
+        if ok is None:
             continue
         held.append(s)
-        if shard_mod.pieces_root_of(p) != s.root:
+        if not ok:
             failed.append(f"{s.slice}/{s.n:05d}")
     if not held:
         return Outcome("roots", INCONCLUSIVE,
@@ -273,34 +387,65 @@ def check_roots(ctx: Ctx) -> Outcome:
                        f"are not the snapshot's root")
 
 
+def _family_map(ctx: Ctx):
+    """The family map the Codex's slicing names, read from its SHARD member
+    and checked against the sha256 (pack-format.md §2, amended
+    2026-10-24): `(map or None, the failure or None)`. The map's reader is
+    pure (app/plugins/wikidata/families.py: JSON and hashlib), so a peer that
+    is only checking still needs no plugin machinery."""
+    return _family_map_at(ctx.shard_tree, ctx.codex)
+
+
+def _slice_unless_walked(fmap, record: dict) -> str | None:
+    """The slice the map gives a record, or None when one of its classes is
+    newer than the map (placed by the dump's own links, which a record
+    alone does not carry: not checked here)."""
+    from app.plugins.wikidata import families
+    x = record.get("extra") or {}
+    classes = list(families.item_values((x.get("claims") or {}).get("P31")))
+    if any(q > fmap.max_item and q not in fmap.classes for q in classes):
+        return None
+    return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""), fmap.families)
+
+
+def _cut_by_content(rule, uids: list[str], last_of_slice: bool) -> bool:
+    """A part cut by content ends at its first record the rule ends a part
+    with, and nowhere else; the slice's last part may end with the slice."""
+    from app.pack import slicing as sl
+    for i, uid in enumerate(uids, 1):
+        if sl.ends_part(uid, i, rule):
+            return i == len(uids)
+    return last_of_slice
+
+
 def check_records(ctx: Ctx) -> Outcome:
     """"every sampled record's `content_hash` recomputes from its own title
     and sections and it carries an `origin_hash`; each sampled shard's
     `records_root` recomputes from its records' `content_hash` values in
-    order" (03 §3.2)."""
+    order" (03 §3.2) — and, where the Codex slices by a family map
+    (2026-10-24), the map member hashes to it and every sampled record whose
+    classes the map knows sits in the slice the map gives it; where it cuts
+    parts by content (02 §2.2, amended 2026-10-24), each sampled part ends
+    at its first record the rule ends a part with — the last part of a
+    slice at the slice's end."""
+    from app.pack import slicing as sl
     shards = _shards(ctx, "records")
     seen, failed, ran = 0, [], []
-    for s in shards:
-        try:
-            records = ctx.records_of(s)
-        except FileNotFoundError:
+    fmap, broken = _family_map(ctx)
+    if broken:
+        failed.append(broken)
+    rule = sl.parts_rule_of(getattr(ctx.codex, "slicing", None))
+    last_n: dict[str, int] = {}
+    for s in ctx.snapshot.shards if rule is not None else ():
+        last_n[s.slice] = max(last_n.get(s.slice, 0), s.n)
+    tasks = [(str(ctx.shard_tree), ctx.codex, s.path, f"{s.slice}/{s.n:05d}", s.records_root,
+              s.n == last_n.get(s.slice)) for s in shards]
+    for s, (n_seen, part_failed) in zip(shards, _map_parts(_records_part, tasks)):
+        if n_seen is None:
             continue
         ran.append(s)
-        hashes: list[str] = []            # the root's input, kept; the records are not
-        for r in records:
-            seen += 1
-            hashes.append(r["content_hash"])
-            sections = [tuple(x) for x in r.get("sections") or []]
-            if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
-                failed.append(r["uid"])
-            elif not r.get("origin_hash"):
-                # invariant 11: a record with no `origin_hash` is
-                # permanently unverifiable against its source, which is the
-                # worst artefact we could ship.
-                failed.append(r["uid"])
-        root = rec.records_root(hashes)
-        if root != s.records_root:
-            failed.append(f"{s.slice}/{s.n:05d}:records_root")
+        seen += n_seen
+        failed.extend(part_failed)
     if not ran:
         return Outcome("records", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -321,27 +466,16 @@ def check_chunks(ctx: Ctx) -> Outcome:
     it cut — the vectors would then be of different text under the same
     ids, which is exactly the drift nothing else notices.
     """
-    from .. import layers as layers_mod
     shards = _shards(ctx, "chunks")
     seen, failed, ran = 0, [], []
-    for s in shards:
-        try:
-            records = ctx.records_of(s)
-        except FileNotFoundError:
+    tasks = [(str(ctx.shard_tree), ctx.codex, s.path, f"{s.slice}/{s.n:05d}", s.chunks, s.chunks_root)
+             for s in shards]
+    for s, (n_seen, part_failed) in zip(shards, _map_parts(_chunks_part, tasks)):
+        if n_seen is None:
             continue
         ran.append(s)
-        pairs: list[tuple[str, str]] = []
-        for r in records:
-            seen += 1
-            row = {"uid": r["uid"], "native_id": r.get("native_id", 0)}
-            sections = [tuple(x) for x in r.get("sections") or []]
-            pairs.extend((c["id"], c["text"]) for c in
-                         layers_mod.chunks_for_document(ctx.codex, row, sections))
-        name = f"{s.slice}/{s.n:05d}"
-        if len(pairs) != s.chunks:
-            failed.append(f"{name}:chunks={len(pairs)} not {s.chunks}")
-        if rec.chunks_root(pairs) != s.chunks_root:
-            failed.append(f"{name}:chunks_root")
+        seen += n_seen
+        failed.extend(part_failed)
     if not ran:
         return Outcome("chunks", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -562,25 +696,12 @@ def check_calibration(ctx: Ctx) -> Outcome:
 
 def check_vectors_sample(ctx: Ctx) -> Outcome:
     """Step 4h's check, under the plan (03 §3.2)."""
-    from . import land as landing
     from . import vectors_check as vck
     if ctx.vectors_for is None:
         return Outcome("vectors-sample", INCONCLUSIVE,
                        why="no vector store on this peer")
-    cut: dict[str, dict] = {}
-
-    def ids_for(entry):
-        cut.clear()
-        cut.update(landing.cut(ctx.codex, landing.records_for(
-            ctx.root, ctx.name, ctx.snapshot,
-            f"{entry.slice}/{entry.n:05d}", None)))
-        return sorted(cut)
-
-    r = vck.check(ctx.codex, ctx.snapshot, seed=ctx.seed,
-                  chunk_ids_for=ids_for,
-                  # a pair layer's chunk with its `fields`, re-cut from the
-                  # record; a text layer's text, as ever
-                  text_of=lambda cid: landing.input_of(cut, cid),
+    # each sampled part cut and sampled in the pool, while the parent embeds
+    r = vck.check(ctx.codex, ctx.snapshot, seed=ctx.seed, shard_tree=ctx.shard_tree,
                   vectors_for=ctx.vectors_for, embed=ctx.embed,
                   fraction=ctx.override)
     checked = sum(s.checked for s in r.shards)
@@ -595,6 +716,47 @@ def check_vectors_sample(ctx: Ctx) -> Outcome:
                    tuple(sorted(f"{ctx.codex.collection_id}/{space}/{s.shard}"
                                 for s in r.shards)),
                    why=r.why)
+
+
+def verdict(line: bytes, got: bytes) -> str:
+    """A re-parsed line against the record's: "same", "moved", "changed" or
+    "failed" (03 §3.2) — the same rules wherever the re-parse ran."""
+    if got == line:
+        return "same"
+    if _moved_only(line, got):
+        # MOVED, not failed (03 §3.2, amended 2026-10-07): the origin unit
+        # changed since the build and the record re-parsed from it is
+        # otherwise identical. The mirror rewrote half of a sample of
+        # gutenberg's book folders on 2026-10-05 without changing one parsed
+        # record, and every one of them failed.
+        return "moved"
+    if _origin_changed(line, got):
+        # CHANGED AT THE ORIGIN, not failed (03 §3.2, amended 2026-10-11): the
+        # origin unit is no longer the bytes the record was parsed from, so the
+        # record cannot be reproduced from it — and it is no evidence against
+        # the record either. Gutenberg revises texts and catalogue entries
+        # upstream; 17 of 4,055 sampled records were such on 2026-10-11, and
+        # the check failed for every image, the Codex's own included.
+        return "changed"
+    # The FIRST differing record, named — §9.8's detail asks for exactly that,
+    # because a list of every difference between two parsers is a diff and
+    # not a finding. Only a record whose origin unit is the very bytes it was
+    # parsed from can fail.
+    return "failed"
+
+
+def _compared_here(reparse, items):
+    """`Ctx.reparse_many` in this process, one record at a time."""
+    for uid, locator, line in items:
+        try:
+            got = reparse(uid, locator)
+        except FileNotFoundError:
+            yield uid, "unreachable", None
+            continue
+        except Exception as e:                          # noqa: BLE001
+            yield uid, "errored", f"{uid}: {type(e).__name__}: {e}"[:200]
+            continue
+        yield uid, verdict(line, got), None
 
 
 def check_records_vs_origin(ctx: Ctx) -> Outcome:
@@ -629,6 +791,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # and lets it go. The one-pass form held every sampled line until the
     # bound had run — pubmed's 2 million, 13 GB, to compare a few thousand.
     size_of: dict[str, int | None] = {}
+    per_unit: dict[str, int] = {}
     sampled_records = 0
     for s in shards:
         try:
@@ -645,6 +808,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             if ctx.origin_unit is not None:
                 unit, size = ctx.origin_unit(r["origin"])
                 size_of.setdefault(unit, size)
+                per_unit[unit] = per_unit.get(unit, 0) + 1
     if not ran:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -669,6 +833,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            "against itself")
 
     keep, bound = _origin_units_taken(ctx, size_of)
+    in_part = _compared_in_part(ctx, ran, keep, size_of, per_unit, bound)
 
     def chosen():
         """The sampled records of the taken units, as (uid, origin, line),
@@ -679,8 +844,12 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             for r in ctx.records_of(s):
                 if not r.get("origin"):
                     continue
-                if keep is not None and ctx.origin_unit(r["origin"])[0] not in keep:
-                    continue
+                if keep is not None:
+                    unit = ctx.origin_unit(r["origin"])[0]
+                    if unit not in keep:
+                        continue
+                    if unit in in_part and r["uid"] not in in_part[unit]:
+                        continue
                 # THE CODEX'S SHAPE, on both sides. `canonical_line` defaults
                 # to `record_line` 1, which drops the `figures` key — so on a
                 # plates collection this re-canonicalised a shape-2 record as
@@ -703,39 +872,18 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # that had every reason to believe 1.6M records had drifted from
     # PubMed, and the collection's own records were perfect.
     failed, moved, changed, errored, unreachable, compared = [], [], [], [], 0, 0
-    for uid, locator, line in chosen():
+    for uid, outcome, error in (ctx.reparse_many(chosen()) if ctx.reparse_many is not None
+                                else _compared_here(ctx.reparse, chosen())):
         compared += 1
-        try:
-            got = ctx.reparse(uid, locator)
-        except FileNotFoundError:
+        if outcome == "unreachable":
             unreachable += 1
-            continue
-        except Exception as e:                          # noqa: BLE001
-            errored.append(f"{uid}: {type(e).__name__}: {e}"[:200])
-            continue
-        if got != line:
-            if _moved_only(line, got):
-                # MOVED, not failed (03 §3.2, amended 2026-10-07): the origin
-                # unit changed since the build and the record re-parsed from
-                # it is otherwise identical. The mirror rewrote half of a
-                # sample of gutenberg's book folders on 2026-10-05 without
-                # changing one parsed record, and every one of them failed.
-                moved.append(uid)
-                continue
-            if _origin_changed(line, got):
-                # CHANGED AT THE ORIGIN, not failed (03 §3.2, amended
-                # 2026-10-11): the origin unit is no longer the bytes the
-                # record was parsed from, so the record cannot be reproduced
-                # from it — and it is no evidence against the record either.
-                # Gutenberg revises texts and catalogue entries upstream; 17
-                # of 4,055 sampled records were such on 2026-10-11, and the
-                # check failed for every image, the Codex's own included.
-                changed.append(uid)
-                continue
-            # The FIRST differing record, named — §9.8's detail asks for
-            # exactly that, because a list of every difference between two
-            # parsers is a diff and not a finding. Only a record whose origin
-            # unit is the very bytes it was parsed from can fail.
+        elif outcome == "errored":
+            errored.append(error)
+        elif outcome == "moved":
+            moved.append(uid)
+        elif outcome == "changed":
+            changed.append(uid)
+        elif outcome == "failed":
             failed.append(uid)
     if errored and not failed:
         return Outcome(
@@ -776,6 +924,10 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                 f"origin file(s) the sampled shards reach into, {bound['origin_bytes'] >> 20} "
                 f"MiB of the {bound['origin_bytes_bound'] >> 20} MiB one check may read of "
                 f"the origin ({compared} of {sampled_records} sampled records)")
+        for u in bound.get("origin_units_in_part", ()):
+            said += (f"; {u['unit']} ({u['weight'] >> 20} MiB) heavier than the bound, compared "
+                     f"in part: {u['compared']} of its {u['sampled']} sampled records, drawn by "
+                     f"the seed (03 §3.2, amended 2026-11-01)")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
                    {"records": seen, "compared": compared,
                     "failed": sorted(failed)[:64], "moved": sorted(moved)[:64],
@@ -927,11 +1079,45 @@ def _moved_only(line: bytes, got: bytes) -> bool:
     return a == b
 
 
+def _compared_in_part(ctx: Ctx, ran, keep, size_of: dict, per_unit: dict,
+                      bound: dict) -> dict[str, set[str]]:
+    """A UNIT HEAVIER THAN THE BOUND IS COMPARED IN PART (03 §3.2, amended
+    2026-11-01, operator, RULE 1): of its `n` sampled records, the
+    ⌈n × bound / weight⌉ — at least one — that `sample(seed, …)` ranks first
+    over their uids. Only the first unit taken can be one (the rest are
+    taken within the bound). wikidata's every record points into its one
+    dump file, so its check re-parsed all 3.7 M sampled records, ~27 h at
+    38/s; the share is ~6,800. The seed still decides which records, and
+    the report names, for each such unit, its weight, `n` and the share.
+    Returns {unit: the uids compared}; `bound` gets the record."""
+    if keep is None:
+        return {}
+    heavy = [u for u in sorted(keep) if (size_of.get(u) or 0) > ctx.origin_bytes]
+    if not heavy:
+        return {}
+    shares = {u: min(per_unit[u], max(1, math.ceil(per_unit[u] * ctx.origin_bytes / size_of[u])))
+              for u in heavy}
+
+    def uids_of(unit):
+        for s in ran:
+            for r in ctx.records_of(s):
+                if r.get("origin") and ctx.origin_unit(r["origin"])[0] == unit:
+                    yield r["uid"]
+    out = {u: set(cx.sample(ctx.seed, shares[u], uids_of(u))) for u in heavy}
+    bound["origin_units_in_part"] = [
+        {"unit": u, "weight": size_of[u], "sampled": per_unit[u], "compared": shares[u]}
+        for u in heavy]
+    return out
+
+
 def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
     """The origin units this run reads — `size_of` is unit -> bytes for every
     unit the sampled records point into — and the bound's record. None when
     nothing bounds the run (no `origin_unit`): every sampled record is
-    compared. The ranking and the cut are `_within_the_origin_bound`'s."""
+    compared. The units are ranked by the ONE sampling rule (09 §9.1) under
+    the shards' seed and taken up to the last that keeps their sizes within
+    `ctx.origin_bytes`, the first whatever it weighs (`_compared_in_part`
+    then compares a share of a unit heavier than the bound)."""
     if ctx.origin_unit is None or not size_of:
         return None, {}
     taken: list[str] = []
@@ -960,42 +1146,6 @@ def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
                         **({"origin_units_unlisted": unweighed} if unweighed else {})}
 
 
-def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:
-    """The sampled records this run will answer for, and what it reads to do so.
-
-    The sampled shards' records are grouped by ORIGIN UNIT — the file of the
-    origin a record's locator points into. The units are ranked by the ONE
-    sampling rule (09 §9.1), under the same seed the shards were drawn with,
-    and taken in that order up to the last one that keeps their sizes within
-    `ctx.origin_bytes`; the first is always taken, whatever its size. EVERY
-    sampled record of a taken unit is compared, byte for byte, as before.
-
-    So the seed still decides everything — a verifier cannot be steered toward
-    files a producer prepared, and anyone can recompute from the attestation
-    which files it read — and what a check costs is bounded by bytes, not by
-    how the collection happens to be sliced against its origin."""
-    if ctx.origin_unit is None or not lines:
-        return lines, {}
-    size_of: dict[str, int | None] = {}
-    unit_of: list[str] = []
-    for _uid, locator, _line in lines:
-        unit, size = ctx.origin_unit(locator)
-        size_of.setdefault(unit, size)
-        unit_of.append(unit)
-    taken: list[str] = []
-    used = 0
-    for unit in cx.sample(ctx.seed, len(size_of), iter(sorted(size_of))):
-        size = size_of[unit] or 0
-        if taken and used + size > ctx.origin_bytes:
-            break
-        taken.append(unit)
-        used += size
-    keep = set(taken)
-    return ([item for item, unit in zip(lines, unit_of) if unit in keep],
-            {"origin_units": len(taken), "origin_units_sampled": len(size_of),
-             "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes})
-
-
 def check_figures(ctx: Ctx) -> Outcome:
     """Every plate the sampled shards' records name and this peer HOLDS
     hashes to the name the record gave it (03 §3.2, 09 §9.8).
@@ -1008,10 +1158,11 @@ def check_figures(ctx: Ctx) -> Outcome:
     that is the one thing the hash on the record line exists to catch.
 
     A `carried: false` entry names a plate the ORIGIN has and this
-    collection does not admit (a media type outside 08 §8.7, a figure over
-    a cap). It is not counted as named: there is nothing to hold and never
-    will be, and counting it would make `named - held` grow with every
-    refused SVG.
+    collection did not carry — a record written before 08 §8.7's amendment
+    of 2026-10-25 ("Every plate"), which left SVGs behind; every plate is
+    carried since. It is not counted as named: there is nothing to hold and
+    never will be, and counting it would make `named - held` grow with
+    every such entry.
     """
     from . import figures as figures_mod
 
@@ -1032,6 +1183,9 @@ def check_figures(ctx: Ctx) -> Outcome:
         ran.append(s)
         want: set[str] = set()
         for r in records:
+            if len(r.get("figures") or []) > figures_mod.MAX_PER_RECORD:
+                failed.append(f"{r.get('uid')}:names {len(r['figures'])} figures, over "
+                              f"{figures_mod.MAX_PER_RECORD} (08 §8.7)")
             for f in r.get("figures") or []:
                 if f.get("carried") is False:
                     continue
@@ -1095,6 +1249,10 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "evaluation": _not_yet(
         "evaluation", "needs the suite `space.evaluation` names; this "
                       "collection declares none" ),
+    "model-agreement": _not_yet(
+        "model-agreement", "re-runs a `model` method's claims (02 §2.10); "
+                           "not built — no collection has a `model` method "
+                           "yet, and its floor is measured before the first"),
 }
 
 
@@ -1109,7 +1267,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         against: dict | None = None,
         only_shards: Sequence[str] | None = None,
         live: Path | None = None,
-        log=None) -> Report:
+        log=None, reparse_many=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that.
 
     `origin_bytes` RAISES what `records-vs-origin` may read of the origin for
@@ -1135,7 +1293,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
               max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None,
-              Path(live) if live else None, weigh_unit)
+              Path(live) if live else None, weigh_unit, reparse_many=reparse_many)
     outcomes = []
     for c in want:
         try:

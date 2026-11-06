@@ -17,7 +17,7 @@ The load call:
     NBatch        pairs per inference
     options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu; no AMD or NVIDIA card)
     env           OV_CACHE_DIR, where OpenVINO keeps the model compiled for
-                  the card (docs/notes/rage.md §20) — in the run, as the
+                  the card (model-pool.md@c572c3b §20) — in the run, as the
                   engine's `env` (operator, 2026-10-01)
 """
 from __future__ import annotations
@@ -54,10 +54,14 @@ class Servicer:
                 raise lb.LoadError("context_size (tokens per pair) and batch (pairs per "
                                    "inference) are set in the model's YAML")
             device = lb.openvino_device(opts["device"])
+            # ONE STATIC SHAPE on the GPU: padded to its batch's longest pair, a
+            # document's score depended on its batch-mates (invariant 12;
+            # medcpt.Reranker)
+            fixed = device == "GPU"
             reranker = medcpt.Reranker(
-                self._encoder(str(tok), request.ContextSize),
+                self._encoder(str(tok), request.ContextSize, fixed=fixed),
                 self._infer(str(xml), device, os.environ.get("OV_CACHE_DIR") or None),
-                batch=request.NBatch)
+                batch=request.NBatch, fixed=fixed)
             reranker.logits("warm-up", ["the first inference compiles its kernels"])
         except Exception as e:                          # noqa: BLE001 — said to LocalAI
             return lb.refused(self.pb, e)

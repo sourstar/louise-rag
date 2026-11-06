@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from contextlib import contextmanager
 from typing import Callable
 
 
@@ -62,6 +64,55 @@ def release(holder: str) -> None:
     except Exception:   # noqa: BLE001 — it expires on its own
         pass
     model_pins.release(holder)
+
+
+@contextmanager
+def held(recipe, *, holder: str, query: bool = False, collection: str | None = None,
+         every_s: float | None = None):
+    """The encoder leased and pinned for the WHOLE of a block (München,
+    2026-11-01: `hold embedder cpu-reference` held no lease, and the
+    worker's idle sweep unloaded its CPU twin every minute — "Failed to
+    shut down model … still busy"). `leasing` renews before each batch; a
+    command whose one call outlives a lease (the CPU's 512 items: hours)
+    needs the renewal beside the call, so a thread renews every quarter of
+    the lease's life. Released when the block ends, however it ends; a
+    lease a killed process left expires on its own."""
+    from app import model_load, model_pins, node_state
+    if query:                                    # the side asked: the query encoder's
+        from app import embeddings
+        try:
+            recipe = embeddings._side(recipe, True)
+        except Exception:   # noqa: BLE001 — a recipe that names no query side leases its own
+            pass
+    model, url = getattr(recipe, "model", None), getattr(recipe, "url", None)
+    if not model or not url:
+        yield
+        return
+    server = model_load.server_of(url)
+    every = every_s if every_s is not None else node_state.ENCODER_LEASE_TTL_S / 4
+
+    def renew() -> None:
+        try:
+            node_state.lease_encoder(server, model, holder)
+        except Exception as e:   # noqa: BLE001 — a courtesy to the sweep, never a gate
+            print(f"louise: encoder lease not written ({type(e).__name__}: {e}); the worker's "
+                  f"sweep may unload {model}", file=sys.stderr)
+
+    renew()
+    model_pins.hold(url, model, holder, collection=collection)
+    done = threading.Event()
+
+    def keep() -> None:
+        while not done.wait(every):
+            renew()
+    t = threading.Thread(target=keep, name=f"lease {model}", daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        done.set()
+        t.join(timeout=5)
+        release(holder)
 
 
 def callables(codex, recipe, *, root, name: str, stop, holder: str,

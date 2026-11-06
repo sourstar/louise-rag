@@ -4,7 +4,7 @@ scanned and not fed by an archive — however the data arrived.
 
 The packed-collection half of this file (a pack's own terms, the create
 dialog over a pack) is boxed with the `packed` plugin in
-attic/tests/test_license_gate.py (2026-09-14).
+attic/tests/test_license_gate.py (2026-09-14; attic/ removed 2026-11-01).
 """
 from dataclasses import replace
 from pathlib import Path

@@ -31,7 +31,7 @@ import httpx
 
 #: The pool. Sized for the callers that share it: a few model endpoints, each
 #: with its own dispatch gate bounding how many requests can be in flight
-#: (`app/dispatch.py`), plus the searches. Keepalive holds a connection per
+#: (`app/rage/dispatch.py`), plus the searches. Keepalive holds a connection per
 #: endpoint per lane rather than re-handshaking each time.
 LIMITS = httpx.Limits(max_connections=64, max_keepalive_connections=32,
                       keepalive_expiry=120.0)

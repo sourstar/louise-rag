@@ -189,7 +189,8 @@ def test_a_collection_that_finished_its_batch_holds_nothing():
 
 def _node_store():
     """The worker makes the node store at boot; a claim never does."""
-    from app import dispatch, node_state
+    from app import node_state
+    from app.rage import dispatch
     node_state.connect().close()
     dispatch.reset()
 
@@ -200,7 +201,7 @@ def test_a_query_claim_is_visible_to_the_worker(tmp_path, isolated_config):
     neither one's in-process scheduler can see the other's demand. And it
     is released when the last interactive call ends — not a TTL later,
     which would idle the encoder for nothing after every query."""
-    from app import dispatch
+    from app.rage import dispatch
     c, con = _discovered(tmp_path)
     _node_store()
     assert worker.query_waiting(con) is False
@@ -218,7 +219,7 @@ def test_a_claim_left_by_a_dead_web_process_expires(tmp_path, isolated_config):
     one forever would stop corpus embedding for good."""
     import time as _time
 
-    from app import dispatch
+    from app.rage import dispatch
     c, con = _discovered(tmp_path)
     _node_store()
     dispatch._write_claim(_time.time() + 60)
@@ -233,7 +234,7 @@ def test_the_claim_is_polled_not_read_per_request(tmp_path, isolated_config, mon
     """A CORPUS request waiting at a gate asks every poll, and at 175
     embeds/s an unmemoised read would be a query on the node store per
     chunk."""
-    from app import dispatch
+    from app.rage import dispatch
     _node_store()
     opened = []
     real = dispatch._node_con

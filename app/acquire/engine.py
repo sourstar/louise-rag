@@ -151,7 +151,8 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
                       endpoints: list | None = None,
                       extras_selected: tuple[str, ...] = (),
                       stop=None,
-                      priority: Priority = Priority.BACKFILL) -> list[RemoteFile]:
+                      priority: Priority = Priority.BACKFILL,
+                      until: float | None = None) -> list[RemoteFile]:
     # A STOP ENDS THE LISTING, not only the transfer after it. The listing
     # used to run with no stop at all — gutenberg's rsync listing is ~12
     # minutes — so a pause or SIGTERM arriving during it was seen only when
@@ -204,6 +205,12 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         if f.rel_path not in seen:
             seen.add(f.rel_path)
             all_files.append(f)
+    if until is not None:
+        # `records fetch --snapshot` on an origin of update files (06 §6.2's
+        # cutoff_rule): the files published before the cutoff, by the
+        # listing's own date. A file the listing gives no date cannot be
+        # placed before it, and waits for a fetch without a cutoff
+        all_files = [f for f in all_files if f.mtime is not None and f.mtime < until]
     louise = _apply_filters(all_files, spec.filters, profile_filter)
     return louise + _select_extras(all_files, spec, extras_selected, louise)
 
@@ -383,7 +390,8 @@ def peer_sources(collection) -> tuple[str, ...]:
     return tuple(s.strip() for s in items if s.strip())
 
 
-def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> AcquisitionPlan:
+def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
+                     until: float | None = None) -> AcquisitionPlan:
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
@@ -395,7 +403,7 @@ def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> Ac
         # and lists nothing.
         return _plan_from_files(con, collection, spec, [])
     spec = effective_spec(collection, spec, profile)
-    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
+    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None), until=until)
     return _plan_from_files(con, collection, spec, files)
 
 
@@ -983,7 +991,8 @@ def _retry_on_next_mirror(transport, collection, spec, manager, ranked, stop,
 
 def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                      stop: threading.Event | None = None,
-                     priority: Priority = Priority.BACKFILL) -> dict:
+                     priority: Priority = Priority.BACKFILL,
+                     until: float | None = None) -> dict:
     """Idempotent and resumable (CLAUDE.md invariant 2). Raises
     LicenseAckRequiredError / DiskPreflightError before any byte moves;
     per-file failures are isolated so one stalled file doesn't abort an
@@ -1006,7 +1015,7 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     """
     _require_license_ack(spec, collection)
     try:
-        return _run_acquisition(con, collection, spec, profile, stop, priority)
+        return _run_acquisition(con, collection, spec, profile, stop, priority, until)
     except TransferAborted as e:
         # A STOP BEFORE THE POOL — in the listing, the benchmark, the index
         # resolve or the planning — is a stop, not a failure: it returns
@@ -1025,7 +1034,7 @@ def _no_counts() -> dict:
 
 
 def _run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
-                     stop, priority) -> dict:
+                     stop, priority, until: float | None = None) -> dict:
     # The CLAIM covers the WHOLE pass, enumeration included, with a
     # keepalive so it cannot go stale under a long listing. It used to be
     # taken only around the transfer loop — so during gutenberg's first
@@ -1055,7 +1064,7 @@ def _run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                     try:
                         part = _run_acquisition_claimed(
                             con, collection, replace(spec, endpoints=(endpoint,)),
-                            profile, stop, priority)
+                            profile, stop, priority, until)
                     except TransferAborted as e:
                         # keep what the torrents before this one landed: the
                         # worker's post-fetch rescan keys on "fetched"
@@ -1065,7 +1074,7 @@ def _run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                         total[k] = total.get(k, 0) + v if isinstance(v, (int, float)) else v
                 return total
             return _run_acquisition_claimed(con, collection, spec, profile,
-                                            stop, priority)
+                                            stop, priority, until)
         finally:
             keepalive.stop()
 
@@ -1102,7 +1111,7 @@ class _ClaimKeepalive:
 
 
 def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: str,
-                              stop, priority) -> dict:
+                              stop, priority, until: float | None = None) -> dict:
     # Mirrored sources: benchmark FIRST — it is the structure gate and it
     # decides which single mirror the (expensive) listing runs against.
     endpoints = list(spec.endpoints)
@@ -1121,7 +1130,7 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None),
                              endpoints=endpoints,
                              extras_selected=getattr(collection, "extras", ()),
-                             stop=stop, priority=priority)
+                             stop=stop, priority=priority, until=until)
     _stop_check(stop, "after listing")
     plan = _plan_from_files(con, collection, spec, files)
     # the per-file planning passes scale with the listing and are not

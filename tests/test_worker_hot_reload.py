@@ -266,3 +266,52 @@ def test_the_broken_file_is_reported_once_not_every_round(
     for _ in range(4):
         kept = worker._sync_collections(kept, cons, {c.name: 0.0 for c in kept})
     assert rounds() == 1, "a round loop that logs every five seconds is noise"
+
+
+def test_a_name_that_holds_another_collection_leaves_and_joins_again(
+        isolated_config, config_dir, quiet_discover, monkeypatch):
+    """2026-10-27: `forget wikidata`, then `rename wikidata-p2 wikidata`, between
+    two rounds. The name never went missing, so the worker kept the deleted
+    manifest's connections and lock, wrote its rows into the new collection's
+    catalog index and never discovered the new one."""
+    import dataclasses
+    import types
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
+    _without_the_default(config_dir)
+    _write_toml(config_dir, "a")
+    start = collections_mod.load_all()
+    cons = {c.name: db.connect(c) for c in start}
+    old_con = cons["a"]
+    last_discover = {c.name: 0.0 for c in start}
+    held = start[0]
+    other = dataclasses.replace(held, codex=types.SimpleNamespace(
+        **{**vars(held.codex), "collection_id": "sha256:" + "e" * 64})
+        if hasattr(held.codex, "__dict__") else types.SimpleNamespace(collection_id="sha256:" + "e" * 64))
+    assert worker._identity(other) != worker._identity(held)
+    monkeypatch.setattr(collections_mod, "load_all", lambda *a, **k: [other])
+    monkeypatch.setattr(spaces, "validate_boot", lambda cs: None)   # a stand-in Codex
+
+    result = worker._sync_collections(start, cons, last_discover)
+
+    assert [c.name for c in result] == ["a"] and result[0] is other
+    assert cons["a"] is not old_con, "a new connection for the new collection"
+    with pytest.raises(Exception):
+        old_con.execute("SELECT 1")
+    assert ("a", "added") in quiet_discover
+    events = [e["message"] for e in cons["a"].execute("SELECT message FROM events WHERE stage='worker'")]
+    assert any("added" in m for m in events)
+
+
+def test_a_thread_of_the_old_collection_is_not_handed_the_new_one():
+    import types
+    from pathlib import Path
+    old = types.SimpleNamespace(name="a", manifest_path=Path("/m"),
+                                codex=types.SimpleNamespace(collection_id="sha256:1"))
+    new = types.SimpleNamespace(name="a", manifest_path=Path("/m"),
+                                codex=types.SimpleNamespace(collection_id="sha256:2"))
+    worker._publish_collections([new])
+    try:
+        assert worker._live_collection(old) is old
+        assert worker._live_collection(new) is new
+    finally:
+        worker._publish_collections([])

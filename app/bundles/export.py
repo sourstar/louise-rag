@@ -95,10 +95,36 @@ def _read_vectors(collection, native_ids: list[int]) -> tuple[list[tuple], int, 
     """Pull (chunk_id, seq, vector) for the given documents out of Lance.
 
     Returns (rows, dim, dtype). Text, lang and chapter are never read.
+    A split collection (app/vector_parts.py): each document from its part.
     """
+    from .. import vector_parts
+    if vector_parts.is_split(collection):
+        parts = [(vector_parts.view(collection, v), books) for v, books in
+                 vector_parts.route(collection, native_ids, probe=embeddings._holds).items()]
+    else:
+        parts = [(collection, list(native_ids))]
+    rows: list[tuple] = []
+    dim, dtype = 0, ""
+    tables = 0
+    for part, books in parts:
+        got = _read_table(part, books)
+        if got is None:
+            continue
+        tables += 1
+        part_rows, dim, dtype = got
+        rows += part_rows
+    if not tables:
+        raise ExportError("this collection has no vector table yet")
+    if not rows:
+        raise ExportError("no vectors found for the requested uids")
+    return rows, dim, dtype
+
+
+def _read_table(collection, native_ids: list[int]) -> tuple[list[tuple], int, str] | None:
+    """`_read_vectors` on one table; None when there is no table."""
     conn = embeddings._conn(collection)
     if embeddings.TABLE not in conn.table_names():
-        raise ExportError("this collection has no vector table yet")
+        return None
     table = conn.open_table(embeddings.TABLE)
     field = table.schema.field("vector")
     dim = int(getattr(field.type, "list_size", 0) or 0)
@@ -117,8 +143,6 @@ def _read_vectors(collection, native_ids: list[int]) -> tuple[list[tuple], int, 
         if vec.shape != (dim,):
             raise ExportError(f"vector for {chunk_id!r} has the wrong width")
         rows.append((chunk_id, 0, vec))
-    if not rows:
-        raise ExportError("no vectors found for the requested uids")
     return rows, dim, dtype
 
 

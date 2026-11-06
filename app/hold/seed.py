@@ -31,7 +31,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Callable
 
-from .codex import Codex, CodexError
+from .codex import JSONL, Codex, CodexError
 
 #: 09 §9.4's snapshot ids: `YYYY-MM` or `YYYY-Www`.
 SNAPSHOT_ID_RE = re.compile(r"^\d{4}-(\d{2}|W\d{2})$")
@@ -52,6 +52,18 @@ def split_ref(ref: str) -> tuple[str, str | None]:
     return ref, None
 
 
+def records_slicing(c: Codex) -> Any:
+    """The slicing as it decides record bytes. `slicing.container` "jsonl" is
+    what its absence below GRAPH_VERSION means (09 §9.5), so a version-9+
+    Codex declaring it and an older one leaving it out hold the same parts
+    (wikidata re-created in a version-11 space from its version-8 Codex,
+    2026-11-03); "parquet" is other parts."""
+    s = c.slicing
+    if not isinstance(s, dict) or s.get("container") != JSONL:
+        return s
+    return {k: v for k, v in s.items() if k != "container"} or None
+
+
 def record_differences(a: Codex, b: Codex) -> list[str]:
     """What decides a record byte and differs between two Codexes: 02 §2.7's
     list, `record_line`, `facets`, and each layer's chunker (id, version,
@@ -63,7 +75,7 @@ def record_differences(a: Codex, b: Codex) -> list[str]:
             "toolchain.platform_image": c.toolchain.platform_image,
             "parser": c.parser.to_dict(),
             "cleaning_version": c.cleaning_version,
-            "slicing": c.slicing,
+            "slicing": records_slicing(c),
             "license": c.license.to_dict(),
             "privacy": c.privacy,
             "erasure": c.erasure,

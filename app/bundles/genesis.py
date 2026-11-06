@@ -26,6 +26,7 @@ collection's uids.
 """
 import hashlib
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,7 +40,6 @@ from .. import (chunking, config, db, embeddings, licensing, parallel,
 from ..collections import recipe_for
 from . import ledger
 from .checks import check_degenerate, check_structural
-from .writer_lock import vector_write_lock
 
 RE_ENCODE_TAU = 0.95      # same-function gate; calibrated tau supersedes later
 # The proof is a QUORUM, not a worst-of: an archive is a snapshot of a
@@ -400,22 +400,51 @@ def _bump_coverage_epoch() -> None:
     global _coverage_epoch
     _coverage_epoch += 1
 
-# One page of the candidate walk; the walk is capped so one round never
-# spends more than a bounded number of row lookups deciding there is
-# nothing to read.
-_CANDIDATE_PAGE = 2048
-_CANDIDATE_SCAN_CAP = 65536
+# THE SEED WALK READS ONE WINDOW OF ROWIDS PER STEP (2026-11-03). It used to
+# page up to 65,536 candidates from rowid 0 every 10 s; on wikipedia, whose
+# embedding is off, the candidate set is 14.6 M documents. So every walk read
+# the same first 65,536, found nothing (0 shards, 395 straddlers), and took
+# 23.5 % of the pipeline thread's own time (München's py-spy, 04:05: ~2.3 s
+# a walk in the worker against 0.2 s alone; the row-by-row GIL hand-back
+# beside the busy main thread, or both threads walking, are the candidates).
+# A per-round cost that tracked a cap, not the work (CLAUDE.md). A window is
+# bounded by construction: one rowid range of the index, whatever the corpus.
+_SEED_WINDOW = 65_536
+# the seed spends at most this share of the drain's thread
+_SEED_DUTY = 0.05
+# a finished seed starts again after this long: announced demand can miss an
+# edge (a scope widened, an error cleared, an embed reset), and a stranded
+# document must cost one paced probe, never a vector that never comes (the
+# scheduler's IDLE_REPROBE_S rule, scheduling.md §11)
+_RESEED_S = 3600.0
+# every this many windows the seed says where it is, with its pace and the
+# time left, and saves its cursor beside the manifest (`_seed_file`): a
+# worker restart resumes the seed instead of starting it at rowid 0 again
+# (München, 2026-11-03: restarted at 04:39 and 05:26, 1,233 windows to go)
+_SEED_REPORT = 100
+# an announced document not yet visible as a candidate (its fts marks were
+# not committed when the drain looked) is looked for again this many times
+_ANNOUNCE_TRIES = 3
+# announced documents waiting for a drain that does not come (the archive
+# stopped, vector writes held): past this many they are dropped and the seed
+# starts again, which finds them — memory stays bounded, nothing is lost
+_ANNOUNCE_CAP = 100_000
 
 # Selection is the per-collection embed-candidate set, walked in index order
 # — a prefix of idx_documents_scope (in_scope, rdf_done, fts_done,
-# embed_done) with rowid as the tail key, so `rowid>? ORDER BY rowid` pages
-# through the index range without a TEMP B-TREE. This is what replaced
-# sweeping the shard LIST: the candidates' own locators name the shards
-# worth reading, and a shard nobody is waiting for is never opened.
+# embed_done) with rowid as the tail key, so a rowid range is an index range
+# without a TEMP B-TREE. This is what replaced sweeping the shard LIST: the
+# candidates' own locators name the shards worth reading, and a shard nobody
+# is waiting for is never opened. `path LIKE '%.parquet%'` hands Python only
+# the rows that can name an archive shard: a dump page (wikipedia's layer 2)
+# never can, and every locator `_shard_of_locator` or `_straddles` acts on
+# holds ".parquet" — the filter drops nothing the walk would act on.
+_CANDIDATE_WHERE = ("in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
+                    "AND error IS NULL")
 _CANDIDATES_PAGE_SQL = (
     "SELECT rowid, uid, path, updated_at FROM documents "
-    "WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
-    "AND error IS NULL AND rowid>? ORDER BY rowid LIMIT ?")
+    f"WHERE {_CANDIDATE_WHERE} AND rowid>? AND rowid<=? "
+    "AND path LIKE '%.parquet%' ORDER BY rowid")
 
 
 def _residual_of(collection, shard: str) -> frozenset[str]:
@@ -426,7 +455,10 @@ def _residual_of(collection, shard: str) -> frozenset[str]:
 def _record_residual(collection, shard: str, uids) -> None:
     with _residual_lock:
         _residual[(str(collection.manifest_path), shard)] = frozenset(uids)
-    _forget_demand(collection)          # what this shard is wanted for has changed
+    # the read consumed what this shard was wanted for; what it could not
+    # cover is its residual, and anything fts commits there later is
+    # announced anew
+    _drop_demand(collection, shard)
 
 
 def reset_revisit_state() -> None:
@@ -446,9 +478,27 @@ _RELEASED = "(released)"
 
 def _add_residual(collection, shard: str, uids) -> None:
     key = (str(collection.manifest_path), shard)
+    uids = frozenset(uids)
     with _residual_lock:
-        _residual[key] = _residual.get(key, frozenset()) | frozenset(uids)
-    _forget_demand(collection)
+        _residual[key] = _residual.get(key, frozenset()) | uids
+    _drop_demand(collection, uids=uids)
+
+
+def forget_residuals(collection, uids) -> None:
+    """Residuals no longer eligible (embedded, errored, out of scope) leave
+    every set of this collection: the embed stage re-queried each of them on
+    every call that found fewer candidates than it wanted (the producer's
+    time on wikipedia, München's py-spy, 2026-10-30). A residual is only ever
+    a candidate; an ineligible one is nothing to wait for."""
+    gone = frozenset(uids)
+    if not gone:
+        return
+    key = str(collection.manifest_path)
+    with _residual_lock:
+        for k in [k for k in _residual if k[0] == key]:
+            left = _residual[k] - gone
+            if len(left) != len(_residual[k]):
+                _residual[k] = left
 
 
 def residual_uids(collection) -> list[str]:
@@ -513,93 +563,353 @@ def _straddles(locator: str, split_locator) -> bool:
     return len(segments) > 1 and str(segments[0][0]).endswith(".parquet")
 
 
-#: manifest path -> (when it was walked, what it found). The walk below pages
-#: through up to _CANDIDATE_SCAN_CAP candidates FROM THE START, and the drain
-#: calls it once per round: on the node, 2026-09-22, that was 142 ms every
-#: round of wikipedia's pipeline thread — 30 % of the worker's CPU — to
-#: rediscover the same five stragglers, while the thread's real work (rdf and
-#: fts) waited behind it. The candidate set moves slowly in the only way that
-#: matters here: a document becomes a candidate when fts commits it, and a
-#: shard stops being demanded when it is imported. So the answer is memoised
-#: for a few seconds and dropped outright whenever this process changes what
-#: the archive covers (an import, a residual, a retry).
-_demand_seen: dict[str, tuple[float, list]] = {}
+#: THE CANDIDATE DEMAND, ANNOUNCED AND SEEDED (2026-11-03; "Demand is
+#: announced, not polled", scheduling.md §10-11). Process-local, per manifest:
+#: - a document becomes a candidate when fts commits it, and the fts stage
+#:   ANNOUNCES it (`announce`): it joins the demand on the next call, by a
+#:   primary-key lookup — a cost that is the work done, nothing else;
+#: - the SEED finds what was a candidate before this process started: one
+#:   rowid window per step, paced to _SEED_DUTY of the thread, and it STOPS
+#:   at the end of the table. It also reaches the whole set, where the capped
+#:   walk never saw past the first 65,536 candidates;
+#: - an import drops its shard (`_record_residual`), a release drops its
+#:   documents (`_add_residual`), a retry starts the seed again;
+#: - a demand is checked against the manifest just before its shard is read
+#:   (`_still_wanted`), so nothing that left the candidate set meanwhile buys
+#:   a ~10 s read.
+#: Both the pipeline thread and the main loop may drain a local archive: one
+#: walks while the other is answered from what is known (`busy`); demand
+#: entries are replaced, never mutated, so a drain holding one is safe.
+#: Standardized alternative, written down (CLAUDE.md, "Do not reinvent the
+#: wheel"): a SQLite trigger feeding a demand table on fts_done/embed_done
+#: changes would make the set exact and durable across restarts; it is a
+#: schema change on every manifest, and would pay when more than one local
+#: archive exists (today: wikipedia's alone).
+@dataclass
+class _Walk:
+    cursor: int = 0               # the seed's next window starts above this rowid
+    done: bool = False            # the seed reached the end of the table
+    next_at: float = 0.0          # monotonic: when the seed may take its next window
+    finished_at: float = 0.0      # monotonic: when the seed last finished
+    busy: bool = False            # a thread is walking or placing
+    loaded: bool = False          # the saved cursor was read (`_load_seed`)
+    started: float = 0.0          # monotonic: when this seed's first window was read
+    windows: int = 0              # this seed's windows so far
+    read_s: float = 0.0           # this seed's time spent reading them
+    demand: dict = field(default_factory=dict)      # shard -> ShardDemand (replaced, never mutated)
+    announced: dict = field(default_factory=dict)   # uid -> placement attempts so far
+
+
+_walks: dict[str, _Walk] = {}
 _demand_lock = threading.Lock()
-_DEMAND_TTL_S = 10.0
+#: tests about WHAT the drain decides change eligibility by SQL and ask again:
+#: True walks the whole table on every call, as the drain did before demand
+#: was announced (tests/bundles/conftest.py). Never set in production.
+_WALK_EVERY_CALL = False
 
 
 def _forget_demand(collection=None) -> None:
-    """Drop the memo — for one collection, or all of them."""
+    """Start the walk again — for one collection, or all of them: what the
+    archive covers changed in a way no announcement carries (a retry)."""
     with _demand_lock:
         if collection is None:
-            _demand_seen.clear()
+            _walks.clear()
         else:
-            _demand_seen.pop(str(collection.manifest_path), None)
+            _walks.pop(str(collection.manifest_path), None)
+
+
+def _drop_demand(collection, shard: str | None = None, uids=frozenset()) -> None:
+    """A shard's demand consumed (`shard`), or documents no longer wanted
+    from any shard (`uids`): released, rejected, covered."""
+    with _demand_lock:
+        w = _walks.get(str(collection.manifest_path))
+        if w is None:
+            return
+        if shard is not None:
+            w.demand.pop(shard, None)
+        if uids:
+            for name, d in list(w.demand.items()):
+                if not uids & d.locators.keys():
+                    continue
+                kept = [u for u in d.uids if u not in uids]
+                if kept:
+                    w.demand[name] = ShardDemand(name, kept, d.oldest,
+                                                 {u: d.locators[u] for u in kept})
+                else:
+                    del w.demand[name]
+
+
+def _seed_file(collection) -> Path:
+    """Beside the manifest, keyed on its path: where the seed's cursor
+    survives a restart. A hint, never state: lost or unreadable, the seed
+    starts at rowid 0, as it always could."""
+    m = Path(collection.manifest_path)
+    return m.with_name(m.name + ".genesis-seed.json")
+
+
+def _load_seed(collection, w: _Walk) -> None:
+    """Under `_demand_lock`, once per walk: resume the saved cursor, or keep
+    a seed finished less than _RESEED_S ago finished. What the seed had
+    found before the restart and the drain had not yet read is found again
+    by the next seed; fts announces everything new meanwhile."""
+    w.loaded = True
+    try:
+        saved = json.loads(_seed_file(collection).read_text())
+        cursor, done_at = int(saved.get("cursor") or 0), saved.get("done_at")
+    except (OSError, ValueError, TypeError, AttributeError):
+        return
+    if done_at is not None:
+        age = time.time() - float(done_at)
+        if 0 <= age < _RESEED_S:
+            w.done, w.finished_at = True, time.monotonic() - age
+        return
+    w.cursor = max(0, cursor)
+
+
+def _save_seed(collection, cursor: int, done: bool) -> None:
+    path = _seed_file(collection)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps({"cursor": cursor,
+                                   "done_at": time.time() if done else None}))
+        os.replace(tmp, path)
+    except OSError:
+        pass                    # a hint: the seed simply starts over next time
+
+
+def announce(collection, uids) -> None:
+    """THE FTS STAGE'S: these documents were just indexed, so they are embed
+    candidates once its marks commit. Only a LOCAL archive keeps demand; for
+    any other collection this is a dictionary lookup."""
+    archive = ARCHIVES.get(getattr(collection, "genesis_archive", None) or "")
+    if archive is None or not archive.local:
+        return
+    with _demand_lock:
+        w = _walks.setdefault(str(collection.manifest_path), _Walk())
+        for u in uids:
+            w.announced.setdefault(u, 0)
+        if len(w.announced) > _ANNOUNCE_CAP:
+            w.announced.clear()
+            w.done, w.cursor = False, 0
 
 
 def _candidate_shards(con, collection) -> list[ShardDemand]:
     """For a LOCAL archive: the shards holding documents that are
     embed-eligible and not yet covered, found from the candidates' own
-    locators — never by sweeping the shard list — in candidate index
-    order. Empty when there is nothing the archive could do this round.
+    locators — never by sweeping the shard list — in the order they were
+    found. Empty when there is nothing the archive could do this round.
 
-    Memoised for `_DEMAND_TTL_S` (see above): the caller consumes at most one
-    demand per call and a shard read costs ~10 s, so a few seconds of
-    staleness cannot delay anything that matters, and the walk stops being
-    the pipeline thread's largest cost."""
-    memo_key = str(collection.manifest_path)
+    Places what fts announced, and takes one seed window when the seed is
+    due; otherwise answers from what is known, at no cost."""
+    key = str(collection.manifest_path)
+    if _WALK_EVERY_CALL:
+        _forget_demand(collection)
     with _demand_lock:
-        seen = _demand_seen.get(memo_key)
-    if seen is not None and time.monotonic() - seen[0] < _DEMAND_TTL_S:
-        return seen[1]
-    found = _walk_candidate_shards(con, collection)
-    with _demand_lock:
-        _demand_seen[memo_key] = (time.monotonic(), found)
-    return found
-
-
-def _walk_candidate_shards(con, collection) -> list[ShardDemand]:
-    from ..plugins.wikipedia.archive import split_locator   # format v1 locators
-    root = collection.corpus_dir
-    demand: dict[str, ShardDemand] = {}
-    # A REJECTED shard is never re-read (`genesis retry` puts it back): its
-    # documents are the local encoder's, and only its — the archive's
-    # declared range stays the archive's everywhere else (worker.
-    # _covered_ranges). ≤ one row per shard read, on a primary-key prefix.
-    rejected = {r["shard"] for r in con.execute(
-        "SELECT shard FROM genesis_imports WHERE archive=? AND state='rejected'",
-        (collection.genesis_archive or "",))}
+        w = _walks.setdefault(key, _Walk())
+        if not w.loaded and not _WALK_EVERY_CALL:
+            _load_seed(collection, w)
+        if w.busy:
+            return list(w.demand.values())
+        now = time.monotonic()
+        if w.done and now - w.finished_at >= _RESEED_S:
+            w.done, w.cursor = False, 0
+        seed = not w.done and (_WALK_EVERY_CALL or now >= w.next_at)
+        announced, w.announced = w.announced, {}
+        if not seed and not announced:
+            return list(w.demand.values())
+        w.busy = True
+    found: list[tuple[str, str, str, int]] = []
     released: list[str] = []
-    last_rowid, scanned = -1, 0
-    while scanned < _CANDIDATE_SCAN_CAP:
-        page = con.execute(_CANDIDATES_PAGE_SQL,
-                           (last_rowid, _CANDIDATE_PAGE)).fetchall()
-        if not page:
-            break
-        for r in page:
-            shard = _shard_of_locator(root, r["path"], split_locator)
-            if shard is None:
-                if _straddles(r["path"], split_locator):
-                    released.append(r["uid"])
-                continue
-            if shard in rejected:
-                released.append(r["uid"])
-                continue
-            if r["uid"] in _residual_of(collection, shard):
-                continue
-            d = demand.get(shard)
-            ts = int(r["updated_at"] or 0)
-            if d is None:
-                demand[shard] = ShardDemand(shard, [r["uid"]], ts, {r["uid"]: r["path"]})
-            else:
-                d.uids.append(r["uid"])
-                d.locators[r["uid"]] = r["path"]
-                d.oldest = min(d.oldest, ts)
-        last_rowid = page[-1]["rowid"]
-        scanned += len(page)
+    retry: dict[str, int] = {}
+    cursor, done, took, top = w.cursor, w.done, 0.0, 0
+    try:
+        ctx = _WalkContext.of(con, collection)
+        if announced:
+            seen = _classify(ctx, _announced_rows(con, announced), found, released)
+            retry = {u: n + 1 for u, n in announced.items()
+                     if u not in seen and n + 1 < _ANNOUNCE_TRIES}
+        if seed:
+            t0 = time.monotonic()
+            top = con.execute("SELECT max(rowid) FROM documents").fetchone()[0] or 0
+            while not done:
+                hi = cursor + _SEED_WINDOW
+                _classify(ctx, con.execute(_CANDIDATES_PAGE_SQL, (cursor, hi)).fetchall(),
+                          found, released)
+                cursor, done = hi, hi >= top
+                if not _WALK_EVERY_CALL:
+                    break
+            took = time.monotonic() - t0
+    except BaseException:
+        with _demand_lock:
+            w.busy = False
+            for u, n in announced.items():       # nothing announced is lost
+                w.announced.setdefault(u, n)
+        raise
+    with _demand_lock:
+        w.busy = False
+        _merge(w, found)
+        for u, n in retry.items():
+            w.announced.setdefault(u, n)
+        said, save = None, None
+        if seed:
+            if w.cursor == 0 or w.windows == 0:
+                w.started, w.windows, w.read_s = time.monotonic(), 0, 0.0
+                said = (f"archive demand seed started: windows of {_SEED_WINDOW:,} rowids "
+                        f"up to rowid {top:,}, paced to {_SEED_DUTY:.0%} of the thread"
+                        if w.cursor == 0 else
+                        f"archive demand seed resumed at rowid {w.cursor:,} of {top:,} "
+                        f"(its saved cursor), paced to {_SEED_DUTY:.0%} of the thread")
+            w.windows += 1
+            w.read_s += took
+            w.cursor, w.done = cursor, done
+            if done:
+                w.finished_at = time.monotonic()
+                said = (f"archive demand seed reached the end: {w.windows:,} window(s) to "
+                        f"rowid {top:,} in {w.finished_at - w.started:,.0f} s "
+                        f"({w.read_s:,.1f} s reading), {len(w.demand)} shard(s) demanded")
+                save = (cursor, True)
+            elif w.windows % _SEED_REPORT == 0:
+                total, at = -(-top // _SEED_WINDOW), cursor // _SEED_WINDOW
+                # the time left from the WALL time a window has taken: the seed
+                # moves at most one window a round, so the rounds pace it, not
+                # only its 5 % (München, 08:05: 0.00 s reading, 3.2 s a window)
+                wall = (time.monotonic() - w.started) / w.windows
+                said = (f"archive demand seed: window {at:,} of {total:,} (rowid {cursor:,}), "
+                        f"{wall:.1f} s a window ({w.read_s / w.windows:.2f} s reading), "
+                        f"~{(total - at) * wall / 60:,.0f} min to the end, "
+                        f"{len(w.demand)} shard(s) demanded")
+                save = (cursor, False)
+            w.next_at = time.monotonic() + took * (1.0 / _SEED_DUTY - 1.0)
+        result = list(w.demand.values())
+    if not _WALK_EVERY_CALL:
+        if save is not None:
+            _save_seed(collection, *save)
+        if said is not None:
+            # a few lines a seed: started or resumed, every _SEED_REPORT
+            # windows, the end — what its AFTER row times
+            db.log_event(con, "info", "genesis", said)
     if released:
+        # the local encoder's (amendment 11); out of any demand that held them
         _add_residual(collection, _RELEASED, released)
-    return list(demand.values())
+        with _demand_lock:
+            result = list(_walks.get(key, w).demand.values())
+    return result
+
+
+@dataclass
+class _WalkContext:
+    root: Path
+    rejected: set
+    split_locator: Callable
+    collection: object
+
+    @classmethod
+    def of(cls, con, collection) -> "_WalkContext":
+        from ..plugins.wikipedia.archive import split_locator   # format v1 locators
+        # A REJECTED shard is never re-read (`genesis retry` puts it back): its
+        # documents are the local encoder's, and only its — the archive's
+        # declared range stays the archive's everywhere else (worker.
+        # _covered_ranges). ≤ one row per shard read, on a primary-key prefix.
+        rejected = {r["shard"] for r in con.execute(
+            "SELECT shard FROM genesis_imports WHERE archive=? AND state='rejected'",
+            (collection.genesis_archive or "",))}
+        return cls(collection.corpus_dir, rejected, split_locator, collection)
+
+
+def _classify(ctx: _WalkContext, rows, found: list, released: list) -> set[str]:
+    """Each candidate row to its shard's demand, released (a straddler, a
+    rejected shard's document), or nothing (no archive shard, already the
+    shard's residual). Returns the uids seen."""
+    seen: set[str] = set()
+    for r in rows:
+        seen.add(r["uid"])
+        shard = _shard_of_locator(ctx.root, r["path"], ctx.split_locator)
+        if shard is None:
+            if _straddles(r["path"], ctx.split_locator):
+                released.append(r["uid"])
+            continue
+        if shard in ctx.rejected:
+            released.append(r["uid"])
+            continue
+        if r["uid"] in _residual_of(ctx.collection, shard):
+            continue
+        found.append((shard, r["uid"], r["path"], int(r["updated_at"] or 0)))
+    return seen
+
+
+def _merge(w: _Walk, found) -> None:
+    """Under `_demand_lock`: add what was found, a new ShardDemand per shard
+    that changed (a drain may be holding the old one)."""
+    fresh: dict[str, ShardDemand] = {}
+    for shard, uid, path, ts in found:
+        d = fresh.get(shard)
+        if d is None:
+            old = w.demand.get(shard)
+            if old is not None and uid in old.locators:
+                continue
+            d = (ShardDemand(shard, list(old.uids), old.oldest, dict(old.locators))
+                 if old is not None else ShardDemand(shard, [], ts, {}))
+            fresh[shard] = d
+        if uid in d.locators:
+            continue
+        d.uids.append(uid)
+        d.locators[uid] = path
+        d.oldest = min(d.oldest, ts)
+    w.demand.update(fresh)
+
+
+# THE PRIMARY KEY, PINNED. With more than a few uids in the IN list and no
+# sqlite_stat1, SQLite prefers idx_documents_scope's four equalities to the
+# uid key: on wikipedia that walked 14.6 M index entries per 500 uids, 11.8 s
+# each, and wikipedia's fts fell ~8x (München, 2026-11-03 04:40, py-spy 89.4 %
+# here). The unary plus takes the scope columns out of index selection (the
+# SQLite idiom, https://sqlite.org/optoverview.html, "Disqualifying WHERE
+# clause terms"), so only uid=? can drive the lookup.
+_BY_UID_WHERE = ("+in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=0 "
+                 "AND error IS NULL")
+_BY_UID_CHUNK = 500
+
+
+def by_uid_sql(columns: str, n: int) -> str:
+    return (f"SELECT {columns} FROM documents WHERE uid IN ({','.join('?' * n)}) "
+            f"AND {_BY_UID_WHERE}")
+
+
+def _by_uid(con, uids, columns: str) -> Iterator:
+    """Candidate rows of these uids, 500 at a time on the primary key."""
+    uids = list(uids)
+    for i in range(0, len(uids), _BY_UID_CHUNK):
+        part = uids[i:i + _BY_UID_CHUNK]
+        yield from con.execute(by_uid_sql(columns, len(part)), part)
+
+
+def _announced_rows(con, announced) -> list:
+    return list(_by_uid(con, announced, "rowid, uid, path, updated_at"))
+
+
+def _still_wanted(con, d: ShardDemand) -> ShardDemand:
+    """The demand as the manifest has it NOW: its documents that are still
+    candidates at the same locator. A document embedded, errored or moved
+    meanwhile buys no read; one moved is found again by the next seed."""
+    keep: dict[str, str] = {}
+    oldest = None
+    for r in _by_uid(con, d.locators, "uid, path, updated_at"):
+        if r["path"] == d.locators[r["uid"]]:
+            keep[r["uid"]] = r["path"]
+            ts = int(r["updated_at"] or 0)
+            oldest = ts if oldest is None else min(oldest, ts)
+    return ShardDemand(d.shard, [u for u in d.uids if u in keep],
+                       d.oldest if oldest is None else oldest, keep)
+
+
+def _replace_demand(collection, d: ShardDemand) -> None:
+    with _demand_lock:
+        w = _walks.get(str(collection.manifest_path))
+        if w is not None and d.shard in w.demand:
+            if d.uids:
+                w.demand[d.shard] = d
+            else:
+                del w.demand[d.shard]
 
 
 def row_proven(row) -> bool:
@@ -683,12 +993,25 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
             and now - (row["updated_at"] or 0) < 600       # retryable: 10 min
 
     if archive.local:
+        def waits(d: ShardDemand) -> bool:
+            return not eager and len(d.uids) < config.GENESIS_MIN_CANDIDATES \
+                and now - d.oldest < config.GENESIS_MAX_WAIT_SEC
         for d in _candidate_shards(con, collection):
             if in_backoff(d.shard):
                 continue
-            if not eager and len(d.uids) < config.GENESIS_MIN_CANDIDATES \
-                    and now - d.oldest < config.GENESIS_MAX_WAIT_SEC:
+            row = rows.get(d.shard)
+            if row is not None and row["state"] == "rejected":
+                # rejected since its demand was found: its documents are the
+                # local encoder's, as the walk would have released them
+                _add_residual(collection, _RELEASED, d.uids)
+                continue
+            if waits(d):
                 continue                # let the batch grow; rdf/fts run meanwhile
+            # what the manifest says NOW, before paying ~10 s for the read
+            d = _still_wanted(con, d)
+            _replace_demand(collection, d)
+            if not d.uids or waits(d):
+                continue
             try:
                 # `stop=stop` — the remote branch below always passed it and
                 # this one never did, so a LOCAL archive pass observed
@@ -877,9 +1200,9 @@ def _local_shards(collection) -> tuple[str, ...]:
     root = collection.corpus_dir
     if not root.is_dir():
         return ()
-    return tuple(sorted(
-        p.relative_to(root).as_posix()
-        for p in root.rglob("*.parquet") if p.is_file()))
+    from app.plugins import walk
+    return tuple(p.relative_to(root).as_posix()
+                 for p in walk.files(root, "*.parquet"))      # through links (walk.py)
 
 
 # -------- adapters: shard -> iterator of (uid, [vector, ...] by seq) --------
@@ -1139,6 +1462,45 @@ def _sample_re_encode(collection, sampled: list[tuple[str, "embeddings.ChunkLike
         f"are eligible")
 
 
+#: the columns a stored row is compared on before it is rewritten
+_SAME_COLUMNS = ("id", "book_id", "lang", "seq", "chapter", "text", "vector")
+
+
+def unchanged_books(table, rows, natives) -> set[int]:
+    """Of `natives`, the documents whose stored rows are exactly `rows`'
+    rows for them: the same chunk ids, each with the same lang, seq,
+    chapter, text and vector BYTES, and no other row stored. One read by the
+    indexed `book_id`, 500 documents a filter; a read cut at its limit
+    answers nothing, so nothing is skipped on a partial view."""
+    import numpy as np
+    want: dict[int, dict] = {}
+    for r in rows:
+        want.setdefault(int(r["book_id"]), {})[r["id"]] = (
+            r.get("lang"), int(r.get("seq") or 0), r.get("chapter") or "", r["text"],
+            np.asarray(r["vector"]).tobytes())
+    books = sorted({int(n) for n in natives} & set(want))
+    have: dict[int, dict] = {}
+    for i in range(0, len(books), 500):
+        part = ",".join(str(b) for b in books[i:i + 500])
+        try:
+            at = (table.search().where(f"book_id IN ({part})", prefilter=True)
+                  .select(list(_SAME_COLUMNS)).limit(embeddings._RESUME_SCAN_MAX).to_arrow())
+        except Exception:                       # noqa: BLE001 — unread: rewrite as before
+            return set()
+        if at.num_rows >= embeddings._RESUME_SCAN_MAX:
+            return set()
+        if not at.num_rows:
+            continue
+        col = at.column("vector").combine_chunks()
+        vecs = col.flatten().to_numpy(zero_copy_only=False).reshape(at.num_rows, col.type.list_size)
+        cols = {c: at.column(c).to_pylist() for c in _SAME_COLUMNS if c != "vector"}
+        for k in range(at.num_rows):
+            have.setdefault(int(cols["book_id"][k]), {})[cols["id"][k]] = (
+                cols["lang"][k], int(cols["seq"][k] or 0), cols["chapter"][k] or "",
+                cols["text"][k], vecs[k].tobytes())
+    return {b for b in books if have.get(b) == want[b]}
+
+
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                  embed_fn=None, fetch=None, keep_cache: bool = False,
                  revisit: bool = False, stop=None, wanted=None) -> dict:
@@ -1247,34 +1609,72 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     producer = f"genesis:{archive.archive_id}"
     pseudo_bundle = f"genesis:{archive.archive_id}/{shard}"
 
+    def _write_batch(target, rows, natives) -> None:
+        conn = embeddings._conn(target)
+        import pyarrow as pa
+        if embeddings.TABLE in conn.table_names():
+            table = conn.open_table(embeddings.TABLE)
+            # RULE 1: a document whose stored rows ARE these rows — the same
+            # ids, texts and vector bytes, nothing else stored — is left as
+            # it is: deleting and adding the same bytes changes nothing but
+            # the table's version, a small fragment and the vector index
+            # (München, 2026-11-01: wikipedia's re-import after the re-cut,
+            # 441 commits a minute, net ±0, competing with embedding)
+            same = unchanged_books(table, rows, natives)
+            if same:
+                rows = [r for r in rows if int(r["book_id"]) not in same]
+                natives = [n for n in natives if int(n) not in same]
+            # ONE delete per batch, not one per document: a Lance delete
+            # scans the table for its filter, so a million per-document
+            # deletes over a table growing to a million rows was the
+            # quadratic trap in a new coat (pubmed's first shard pass:
+            # ~150 documents/s). Idempotence (invariant 2: delete-then-
+            # insert keyed on the document) is unchanged — the ids are
+            # forced through int() exactly as _book_filter does.
+            ids = ",".join(str(int(n)) for n in natives)
+            if ids:
+                table.delete(f"book_id IN ({ids})")
+            if rows:
+                table.add(rows)
+        elif rows:
+            value_type = pa.float16() if recipe.dtype == "f16" else pa.float32()
+            schema = pa.schema([
+                pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+                pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+                pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+                pa.field("vector", pa.list_(value_type, header_dim)),
+            ])
+            conn.create_table(embeddings.TABLE, data=rows, schema=schema,
+                              storage_options=embeddings.NEW_TABLE_STORAGE)
+
     def flush():
         nonlocal batch_rows, batch_native, batch_uids, batch_chunk_ids
         if not batch_rows:
             return
-        with vector_write_lock(con):
-            conn = embeddings._conn(collection)
-            import pyarrow as pa
-            if embeddings.TABLE in conn.table_names():
-                table = conn.open_table(embeddings.TABLE)
-                # ONE delete per batch, not one per document: a Lance delete
-                # scans the table for its filter, so a million per-document
-                # deletes over a table growing to a million rows was the
-                # quadratic trap in a new coat (pubmed's first shard pass:
-                # ~150 documents/s). Idempotence (invariant 2: delete-then-
-                # insert keyed on the document) is unchanged — the ids are
-                # forced through int() exactly as _book_filter does.
-                ids = ",".join(str(int(n)) for n in batch_native)
-                table.delete(f"book_id IN ({ids})")
-                table.add(batch_rows)
-            else:
-                value_type = pa.float16() if recipe.dtype == "f16" else pa.float32()
-                schema = pa.schema([
-                    pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
-                    pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
-                    pa.field("chapter", pa.string()), pa.field("text", pa.string()),
-                    pa.field("vector", pa.list_(value_type, header_dim)),
-                ])
-                conn.create_table(embeddings.TABLE, data=batch_rows, schema=schema)
+        # THROUGH THE WRITER REGISTRATION, as every other vector write
+        # (`embeddings._write_lock`): a compaction waits for this commit and
+        # holds the next one off. Under the manifest lock alone it committed
+        # underneath wikipedia's compaction, which lost its commit after 4.5
+        # minutes of ~10 cores ("Rewrite transaction was preempted by
+        # concurrent transaction Delete", München 2026-10-30) — normattiva's
+        # lesson of 10-23 on the genesis path. Refused, it is a retryable
+        # commit conflict: the pass defers (`vector_store_contended`, below)
+        # A split collection (app/vector_parts.py): each document to its
+        # part, every part the batch touches registered before the lock
+        from .. import vector_parts
+        targets = [(collection, batch_rows, batch_native)]
+        if vector_parts.ensure_split(collection):
+            by_book: dict[int, list] = {}
+            for r in batch_rows:
+                by_book.setdefault(int(r["book_id"]), []).append(r)
+            targets = []
+            for v, books in vector_parts.route(collection, batch_native).items():
+                rows_v = [r for b in books for r in by_book.get(int(b), [])]
+                embeddings._check_part_rows(collection, v, rows_v)
+                targets.append((vector_parts.view(collection, v), rows_v, books))
+        with embeddings._write_lock(con, parts=[t[0] for t in targets]):
+            for target, rows_t, natives_t in targets:
+                _write_batch(target, rows_t, natives_t)
         now = int(time.time())
         # ONE transaction per flush (invariant 2: marks land after the
         # durable Lance write, together): on the autocommit connection

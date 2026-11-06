@@ -1,5 +1,8 @@
 # Implementation Prompt Pack
 
+> **Superseded** (2026-10-25, handover) by the specification in `docs/01`–`09` and `CLAUDE.md`; its repository assumptions (the `gutenberg-rag` tree, `docs/architecture-v2.md`) are obsolete.
+
+
 Companion to `p2p-rag-architecture-v2.md`. Repo assumptions: the existing `gutenberg-rag`
 tree at the root, the architecture doc at `docs/architecture-v2.md`, this file's CLAUDE.md
 section saved as `CLAUDE.md` at the repo root.
@@ -340,7 +343,7 @@ Goal: make the whole Phase 1 loop true, not just its parts. You own cross-module
 correctness; expect to open fixes in several modules.
 
 Deliverables:
-1. tests/integration/two_node/: docker-compose bringing up producer node, consumer
+1. tests/integration/two_node/ (removed 2026-11-01): docker-compose bringing up producer node, consumer
    node, coordinator, mocked embed endpoint with recorded vectors; scripted flow:
    producer leases+embeds+uploads → consumer demands+imports+verifies → consumer
    answers a query citing imported vectors with correct provenance badges.

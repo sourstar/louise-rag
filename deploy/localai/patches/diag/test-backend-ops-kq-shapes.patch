@@ -1,0 +1,42 @@
+test-backend-ops: GGML_TEST_KQ_SHAPES=1 runs only a decoder's two attention products over an F16 KV cache
+
+The K-side product (a = the K cache view [head dim, keys, heads] and b = the
+queries [head dim, tokens, heads], both permuted {0,2,1,3}) and the V-side
+one (a = the transposed V cache view [keys, head dim, heads] with the cache's
+row stride, b = the probabilities), at the key counts 1..256 and token counts
+1..64 a small batch of sequences reaches, for 16 heads of 128 (T5/MADLAD-400).
+A reproducer for an Intel Arc Pro B70 (SYCL, GGML_SYCL_F16) on which the
+decoded text is wrong whenever two or more sequences decode together, right
+alone and on the CPU, right again with an f32 K cache; the diagnostic build
+(0005-llama-cpp-sycl-cpu-ops-diag.patch) named the K-side product
+(2026-10-28). Run: GGML_TEST_KQ_SHAPES=1 test-backend-ops test -b SYCL0 -o MUL_MAT
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 8826b274b..e1dda3b44 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -9662,6 +9662,24 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     std::vector<std::unique_ptr<test_case>> test_cases;
+     std::default_random_engine rng(0);
+ 
++    // GGML_TEST_KQ_SHAPES=1: ONLY the two attention products of a decoder over an F16 KV cache,
++    // laid out as llama.cpp lays them out, at the key and token counts a small batch of
++    // sequences reaches. KQ: a = the K cache view [head dim, keys, heads] and b = the queries
++    // [head dim, tokens, heads], both permuted {0,2,1,3}. KQV: a = the transposed V cache view
++    // [keys, head dim, heads] with the cache's row stride (k_v cells), b = the probabilities.
++    // Seen on an Intel Arc Pro B70 (SYCL, GGML_SYCL_F16, T5/MADLAD-400: 16 heads of 128): the
++    // decoded text is wrong whenever two or more sequences decode together, right alone and on
++    // the CPU, and right again with an f32 K cache (2026-10-28).
++    if (getenv("GGML_TEST_KQ_SHAPES") != nullptr) {
++        for (int64_t m : {1, 2, 3, 4, 6, 7, 8, 12, 14, 16, 24, 32, 40, 64, 96, 128, 256}) {
++            for (int64_t n : {1, 2, 3, 4, 7, 8, 16, 64}) {
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, m, n, 128, {16, 1}, {1, 1}, {0, 2, 1, 3}));
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 128, n, m, {16, 1}, {1, 1}, {0, 1, 2, 3}, /*k_v*/ 512));
++            }
++        }
++        return test_cases;
++    }
++
+     // unary ops
+     for (ggml_type type : {GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_BF16}) {
+         for (int v : {0, 1}) {

@@ -14,7 +14,7 @@ names the set that decides it — JuriFindIT (Dalla Noce et al., Findings of
 EACL 2026), the first statutory-article-retrieval set for Italian — and
 12.4 recorded its availability as UNVERIFIED because egress blocked the
 check. It is verified: `jurifindit/JuriFindIT` is published as parquet.
-This tool turns 7.2's procedure into something runnable against RAGE.
+This tool turns 7.2's procedure into something runnable against the model pool.
 
 WHAT IS MEASURED. The 179 expert questions of the `validation` split against
 the 23,617-node `corpus` split, scored with the metric definitions of
@@ -65,6 +65,65 @@ plateauing at 2 anyway — `llama-intel-arc-b70`'s concurrency grid):
 LICENCE. JuriFindIT is CC-BY-NC-SA-4.0 — a gated class under invariant 9.
 `fetch` writes LICENCE.txt and a sha256 of every file beside the data so an
 acknowledgement can be recorded against bytes that were actually seen.
+
+OTHER SETS, ONE READER (2026-10-28). The French, German and EU collections
+choose their encoders on published sets, not on questions of our own
+(operator, D4 of docs/notes/legal-fr-de-eu.md: "do not reinvent the wheel").
+MTEB and MLEB publish theirs in the BEIR layout (Thakur et al., NeurIPS
+2021): a corpus, queries, and qrels of (query-id, corpus-id, score). That
+layout is the standard, so this reads it once rather than one reader per
+set; `fetch --suite` names the set (SUITES), and one output directory holds
+one set. A document is `title + " " + text` as MTEB embeds it; a query
+counts when the qrels give it a document with score > 0, as BEIR does. The
+metric code is the same for every set.
+
+A SET FROM A HELD COLLECTION (2026-11-02). The operator, on gutenberg:
+"Measure only, I am wondering if the quantization to 4 bits of qwen3 is
+putting it at the same level of bge at 16 bits". No published set asks
+gutenberg's question, and its own queries exist: the 451 descriptive and 39
+title queries of docs/notes/one-language-per-work.md, each judged by the WORK
+it names (tools/measure/one_language_*.tsv, the works from
+one_language_works.py). `pool` makes them a BEIR set over a POOL of the
+collection's own chunks, read from its vector table as they were embedded:
+every target work's books (the first `--head` chunks and an even spread up to
+`--per-book`), books named with `--negative-books`, and `--random` chunks of
+other books, seeded. A chunk of any book of the named work is relevant
+(binary qrels). The pool's distractors are chosen by no encoder, so no
+encoder's own confusions are favoured; a pool is easier than the whole
+collection, so its numbers compare encoders with each other, never with a
+search over every chunk. Chunk-level MRR@10 is the rank of the first chunk of
+the right work; with hundreds of relevant chunks per query, recall@k is not
+the measure here and `hit@k` (any relevant chunk in the top k) is: hit@40 is
+what reaches the reranker (measuring.md §5).
+
+`embed --from-collection C --stored-vectors` scores the vectors C already
+holds for the pool (RULE 1: bytes that exist are not recomputed) and embeds
+only the queries, with C's served encoder and instruction — the row is what
+C's vector leg serves. It first re-embeds `--check` pool chunks with that
+encoder and refuses the stored vectors if any falls below cosine 0.99 to its
+stored twin: a stored vector of another input or run is not this row.
+`--query-like C` gives another model C's query instruction, so a second
+quantization of C's encoder is asked exactly as C asks it.
+
+WHAT LOUISE SERVES IS THE HYBRID (2026-10-28). A search is never the vector
+leg alone: the word leg (tantivy, BM25, the language's stemmer) and the
+vector leg are fused by RRF (05 §5.1), then reranked. On German case law
+BM25 alone beats every dense model (GerDaLIRSmall nDCG@10 59.4 against at
+most 54.7, MTEB's results), so an encoder is chosen on what it ADDS to the
+word leg. `lexical` ranks the set with app/fts.py itself — a fresh index
+built by `fts.index_books`, each question through `fts.search`, the
+analyzer, stemmer and query parsing Louise serves, not a BM25 library — and
+`score` then fuses each encoder's ranking with it through
+`retrieval._merge_rrf`, the search's own fusion (RRF_K, its depth, its tie
+rule). The report gives three rows per encoder set: BM25, the encoder, and
+the two fused. Both legs read the same truncated text per document.
+
+THE WHOLE SEARCH (`rerank`, 2026-11-02, the operator: "evaluate the effects
+with a reranker", then "Add BM25 fusion and translations too, make separated
+scores"): each row, BM25 alone, each encoder fused with BM25, and each of
+these after the collection's reranker over the top 10, 40, 50 and 100, with
+the search's own plan, fusion and reranking steps —
+tools/measure/pipeline_eval.py, which says what is and is not reproduced.
 """
 
 from __future__ import annotations
@@ -81,7 +140,7 @@ import pyarrow.parquet as pq
 
 # `app` is imported lazily, inside the functions that embed. Everything else
 # here — load, the metrics, score, report — depends only on pyarrow and
-# numpy, so a sibling embedder that needs torch (tools/bakeoff_local.py, in
+# numpy, so a sibling embedder that needs torch (tools/bakeoff_local.py@c572c3b, in
 # an image the app's stack is not in) can import this module for the corpus,
 # the truncation and the slug and be scored by exactly the same code.
 
@@ -91,6 +150,126 @@ FILES = {"corpus.parquet": "corpus/corpus/0000.parquet",
          "questions-validation.parquet": "questions/validation/0000.parquet"}
 LICENCE = "CC-BY-NC-SA-4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/"
 
+_MTEB = {"corpus": "corpus/test-00000-of-00001.parquet",
+         "queries": "queries/test-00000-of-00001.parquet",
+         "qrels": "qrels/test-00000-of-00001.parquet"}
+_BEIR = {"corpus": "corpus.jsonl", "queries": "queries.jsonl", "qrels": "qrels/test.jsonl"}
+
+#: The sets this reads. Licences as their cards state them (2026-10-28); an
+#: "unknown" one is resolved before use like any other (invariant 9).
+#: `green`: a permissive licence (CC BY, MIT, Apache-2.0), which invariant 9
+#: does not gate; every other set is gated until acknowledged.
+#: docs/notes/legal-embedders-fr-de-eu.md says which collection each serves.
+SUITES: dict[str, dict] = {
+    "jurifindit": {"repo": "jurifindit/JuriFindIT", "layout": "jurifindit",
+                   "licence": LICENCE, "about": "it; Italian national and EU acts; 179 expert questions"},
+    "bsard": {"repo": "mteb/BSARDRetrieval.v2", "layout": "beir", "files": _MTEB,
+              "licence": "CC-BY-NC-SA-4.0",
+              "about": "fr; Belgian statutes; 222 citizens' questions labelled by jurists"},
+    "syntec": {"repo": "mteb/SyntecRetrieval", "layout": "beir", "files": _MTEB,
+               "licence": "unknown (the card says so)",
+               "about": "fr; a collective agreement; 100 hand-written questions"},
+    "legalquad": {"repo": "mteb/LegalQuAD", "layout": "beir", "files": _BEIR,
+                  "licence": "CC-BY-4.0", "green": True,
+                  "about": "de; court decisions; 200 questions"},
+    "gerdalir-small": {"repo": "mteb/GerDaLIRSmall", "layout": "beir", "files": _BEIR,
+                       "licence": "MIT", "green": True,
+                       "about": "de; case law; queries derived from citations"},
+    "gdpr-holdings": {"repo": "isaacus/gdpr-holdings-retrieval", "layout": "beir",
+                      "files": {**_BEIR, "qrels": "default.jsonl"},
+                      "licence": "CC-BY-NC-SA-4.0",
+                      "about": "en; GDPR decisions (MLEB); facts to holdings"},
+}
+
+# SETS PUBLISHED IN ANOTHER SHAPE, MADE BEIR AT FETCH by their papers' own
+# method, one suite per language: the raw files land in raw/, the adapter
+# writes corpus/queries/qrels.jsonl beside them, and `load` reads those like
+# any BEIR set. Both cover every EU language — the compromise encoder's
+# evidence for the collections beyond the four (legal-embedders-fr-de-eu.md).
+_LOCAL = {"corpus": "corpus.jsonl", "queries": "queries.jsonl", "qrels": "qrels.jsonl"}
+#: EUR-Lex-Sum (Aumiller et al., EMNLP 2022): the EU's own summaries of its
+#: acts; a test summary is the query and its act the gold, among every
+#: split's acts — summary-to-act retrieval, as MLEB uses its Irish and UK
+#: summaries. Its card says CC BY 4.0 and its loader CC BY-NC-SA 4.0: the
+#: stricter is recorded, so it passes the gate as a gated set.
+_EURLEX_SUM = {"bg": "bulgarian", "cs": "czech", "da": "danish", "de": "german",
+               "el": "greek", "en": "english", "es": "spanish", "et": "estonian",
+               "fi": "finnish", "fr": "french", "ga": "irish", "hr": "croatian",
+               "hu": "hungarian", "it": "italian", "lt": "lithuanian", "lv": "latvian",
+               "mt": "maltese", "nl": "dutch", "pl": "polish", "pt": "portuguese",
+               "ro": "romanian", "sk": "slovak", "sl": "slovenian", "sv": "swedish"}
+for _code, _name in _EURLEX_SUM.items():
+    SUITES[f"eurlex-sum-{_code}"] = {
+        "repo": "dennlinger/eur-lex-sum", "layout": "beir", "adapter": "eurlex_sum",
+        "remote": {f"{split}.json": f"data/{_name}/{split}.json"
+                   for split in ("train", "validation", "test")},
+        "files": _LOCAL,
+        "licence": "CC-BY-NC-SA-4.0 (its loader; the card says CC BY 4.0 — the stricter is taken)",
+        "about": f"{_code}; EU acts; the EU's own summaries as queries (test split)"}
+#: LEMUR (Baba Ahmadi et al., EACL 2026 SRW): EU environmental acts; the
+#: act's metadata header is the query and its text the gold, over the test
+#: split. A law's first row is taken (the card describes rows as pages and
+#: as conversions; `fetch` prints how many rows a law has).
+_LEMUR = ("bg", "cs", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr", "hu", "it",
+          "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv")
+for _code in _LEMUR:
+    SUITES[f"lemur-{_code}"] = {
+        "repo": "G4KMU/LEMUR", "layout": "beir", "adapter": "lemur",
+        "remote": {"test.jsonl": f"languages/{_code}/test.jsonl"}, "files": _LOCAL,
+        "licence": "Apache-2.0", "green": True,
+        "about": f"{_code}; EU environmental acts; the act's metadata as the query (test split)"}
+
+
+def _write_beir(out: Path, docs: dict[str, str], queries: dict[str, str]) -> None:
+    """`docs` id -> text, `queries` the gold document's id -> query text, in
+    the BEIR layout `load` reads: one relevant document per query."""
+    def lines(path: Path, rows) -> None:
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                        encoding="utf-8")
+    lines(out / _LOCAL["corpus"], ({"_id": i, "title": "", "text": t} for i, t in docs.items()))
+    lines(out / _LOCAL["queries"], ({"_id": f"q:{i}", "text": t} for i, t in queries.items()))
+    lines(out / _LOCAL["qrels"], ({"query-id": f"q:{i}", "corpus-id": i, "score": 1}
+                                   for i in queries))
+
+
+def _adapt_eurlex_sum(raw: Path, out: Path) -> str:
+    docs: dict[str, str] = {}
+    queries: dict[str, str] = {}
+    for split in ("train", "validation", "test"):
+        for row in _rows(raw / f"{split}.json"):
+            docs.setdefault(row["celex_id"], row["reference"] or "")
+            if split == "test" and (row.get("summary") or "").strip():
+                queries[row["celex_id"]] = row["summary"]
+    _write_beir(out, docs, queries)
+    return f"{len(docs)} acts, {len(queries)} test summaries"
+
+
+def _adapt_lemur(raw: Path, out: Path) -> str:
+    docs: dict[str, str] = {}
+    queries: dict[str, str] = {}
+    rows_of: dict[str, int] = {}
+    for row in _rows(raw / "test.jsonl"):
+        law = row["law_id"]
+        rows_of[law] = rows_of.get(law, 0) + 1
+        if law in docs:
+            continue
+        docs[law] = row.get("text") or ""
+        if (row.get("metadata") or "").strip():
+            queries[law] = row["metadata"]
+    _write_beir(out, docs, queries)
+    return (f"{len(docs)} acts, {len(queries)} metadata queries; "
+            f"rows per act up to {max(rows_of.values(), default=0)}")
+
+
+_ADAPTERS = {"eurlex_sum": _adapt_eurlex_sum, "lemur": _adapt_lemur}
+
+#: a set `pool` makes from a held collection: nothing to download
+POOL = "pool"
+SUITES[POOL] = {"repo": "(made by `pool` from a held collection)", "layout": "beir",
+                "files": _LOCAL, "made": True,
+                "licence": "the collection's own; its gate is checked when the pool is made",
+                "about": "a held collection's chunks, judged queries over named works"}
+
 # Every model in this bake-off declares ctx 8192, and llama.cpp REFUSES an
 # input past its context rather than truncating it, so the cut is ours to
 # make and must be identical for every model or the comparison is void.
@@ -98,7 +277,9 @@ LICENCE = "CC-BY-NC-SA-4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0
 # conservative floor, which keeps the worst-tokenising text inside 8192.
 DEFAULT_MAX_CHARS = 20_000
 SHARD = 512
-KS = (1, 3, 5, 10, 20, 40, 60, 80, 100)
+#: 50 joins 2026-11-02 (the operator: "a simple benchmark comparison like @10
+#: @40 @50 @100"): the depths a reranker reads, the encoder alone
+KS = (1, 3, 5, 10, 20, 40, 50, 60, 80, 100)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,32 +302,88 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def fetch(out: Path) -> int:
+def _download(url: str, target: Path) -> None:
+    """Whole or not at all: a file cut mid-stream would be taken as fetched
+    by the next run, and a truncated JSON-lines set loses queries silently."""
     import httpx
+    tmp = target.with_name(target.name + ".part")
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=300) as r:
+            r.raise_for_status()
+            with tmp.open("wb") as fh:
+                for block in r.iter_bytes():
+                    fh.write(block)
+        tmp.replace(target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def suite_of(out: Path) -> str:
+    """The set a directory holds. A SOURCE.json from before suites existed
+    names JuriFindIT's dataset and no suite."""
+    try:
+        meta = json.loads((out / "SOURCE.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "jurifindit"
+    return meta.get("suite", "jurifindit")
+
+
+def _local(kind: str, remote: str) -> str:
+    return f"{kind}{''.join(Path(remote).suffixes)}"
+
+
+def fetch(out: Path, suite: str = "jurifindit") -> int:
+    if suite not in SUITES:
+        raise SystemExit(f"unknown suite {suite!r}; one of {', '.join(SUITES)}")
+    if (out / "SOURCE.json").exists() and suite_of(out) != suite:
+        raise SystemExit(f"{out} holds suite {suite_of(out)!r}: one directory, one set "
+                         f"(the runs in it are scored against it)")
+    spec = SUITES[suite]
+    if spec.get("made"):
+        raise SystemExit(f"suite {suite!r} is made from a held collection by `pool`, not fetched")
     out.mkdir(parents=True, exist_ok=True)
+    adapter = spec.get("adapter")
+    if spec["layout"] == "jurifindit":
+        files = {name: f"{BASE}/{suffix}" for name, suffix in FILES.items()}
+        base = BASE
+    elif adapter:
+        base = f"https://huggingface.co/datasets/{spec['repo']}/resolve/main"
+        (out / "raw").mkdir(exist_ok=True)
+        files = {f"raw/{name}": f"{base}/{remote}" for name, remote in spec["remote"].items()}
+    else:
+        base = f"https://huggingface.co/datasets/{spec['repo']}/resolve/main"
+        files = {_local(kind, remote): f"{base}/{remote}"
+                 for kind, remote in spec["files"].items()}
     digests = {}
-    for name, suffix in FILES.items():
+    for name, url in files.items():
         target = out / name
         if not target.exists():
-            with httpx.stream("GET", f"{BASE}/{suffix}", follow_redirects=True,
-                              timeout=300) as r:
-                r.raise_for_status()
-                with target.open("wb") as fh:
-                    for block in r.iter_bytes():
-                        fh.write(block)
+            _download(url, target)
         digests[name] = _sha256(target)
         print(f"{name}  {target.stat().st_size:,} bytes  sha256:{digests[name]}")
-    (out / "LICENCE.txt").write_text(LICENCE + "\n", encoding="utf-8")
+    if adapter:
+        said = _ADAPTERS[adapter](out / "raw", out)
+        for name in _LOCAL.values():
+            digests[name] = _sha256(out / name)
+        print(f"made BEIR by its paper's method: {said}")
+    licence = spec["licence"]
+    (out / "LICENCE.txt").write_text(licence + "\n", encoding="utf-8")
     (out / "SOURCE.json").write_text(
-        json.dumps({"dataset": "jurifindit/JuriFindIT", "licence": LICENCE,
-                    "base": BASE, "sha256": digests}, indent=2) + "\n",
-        encoding="utf-8")
-    print(f"\nLicence is {LICENCE}.\nInvariant 9: record an acknowledgement "
-          f"against these digests before the data is used.")
+        json.dumps({"suite": suite, "dataset": spec["repo"], "licence": licence,
+                    "about": spec["about"], "base": base, "sha256": digests},
+                   indent=2) + "\n", encoding="utf-8")
+    if spec.get("green"):
+        print(f"\nLicence is {licence}: green, no acknowledgement needed (invariant 9 "
+              f"gates the yellow and red classes).")
+    else:
+        print(f"\nLicence is {licence}.\nInvariant 9: record an acknowledgement "
+              f"against these digests before the data is used.")
     return 0
 
 
 def load(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
+    if SUITES[suite_of(out)]["layout"] == "beir":
+        return _load_beir(out, max_chars)
     c = pq.read_table(out / "corpus.parquet").to_pylist()
     q = pq.read_table(out / "questions-validation.parquet").to_pylist()
     corpus = Corpus(ids=[r["id"] for r in c],
@@ -160,11 +397,308 @@ def load(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
     return corpus, queries
 
 
-def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int):
+def _rows(path: Path) -> list[dict]:
+    if path.suffix == ".parquet":
+        return pq.read_table(path).to_pylist()
+    with path.open(encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+def _id(row: dict) -> str:
+    # MTEB's newer parquet says `id`, BEIR and the older parquet `_id`
+    return str(row["_id"] if "_id" in row else row["id"])
+
+
+def _load_beir(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
+    """A BEIR-layout set as this module's Corpus and Queries. Its string ids
+    become row positions, which is what `score_run` ranks by."""
+    files = SUITES[suite_of(out)]["files"]
+    at: dict[str, int] = {}
+    texts: list[str] = []
+    for r in _rows(out / _local("corpus", files["corpus"])):
+        title, body = (r.get("title") or "").strip(), r.get("text") or ""
+        at[_id(r)] = len(texts)
+        texts.append((f"{title} {body}" if title else body)[:max_chars])
+    relevant: dict[str, set[int]] = {}
+    missing: set[str] = set()
+    for r in _rows(out / _local("qrels", files["qrels"])):
+        if float(r["score"]) <= 0:
+            continue
+        cid = str(r["corpus-id"])
+        if cid not in at:
+            missing.add(cid)
+            continue
+        relevant.setdefault(str(r["query-id"]), set()).add(at[cid])
+    if missing:
+        raise SystemExit(f"{len(missing)} relevant ids are not in the corpus — "
+                         f"recall@k is undefined against it")
+    rows = {_id(r): r["text"] for r in _rows(out / _local("queries", files["queries"]))}
+    absent = set(relevant) - set(rows)
+    if absent:
+        raise SystemExit(f"{len(absent)} judged queries are not in the queries file")
+    keep = [qid for qid in rows if qid in relevant]
+    return (Corpus(ids=list(range(len(texts))), texts=texts),
+            Queries(texts=[rows[qid] for qid in keep],
+                    relevant=[sorted(relevant[qid]) for qid in keep]))
+
+
+# ---------------------------------------------------------------- the pool
+
+#: works whose books overlap in content, so a query for one is answered by the
+#: other (tools/measure/one_language_score.py's, kept identical here)
+ALSO = {"WQ4509219": {"WQ40185"}, "WQ40185": {"WQ4509219"}, "WQ58190302": {"WQ8258"}}
+#: the pool's stored-vector check: a stored vector below this cosine to its
+#: re-embedded twin was made from another input or by another function
+STORED_MIN_COSINE = 0.99
+
+
+def _book_number(book) -> int:
+    """works.json names a book `gutenberg:1342`; the vector table's
+    `book_id` is the number."""
+    return int(str(book).rsplit(":", 1)[-1])
+
+
+def read_works(path: Path) -> dict[str, list[int]]:
+    """work -> its books, from one_language_works.py's works.json (a list of
+    {"work", "books"}) or a plain {work: [books]}."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows = raw.items() if isinstance(raw, dict) else ((w["work"], w["books"]) for w in raw)
+    return {str(w): [_book_number(b) for b in books] for w, books in rows}
+
+
+def read_queries(paths: list[Path]) -> list[tuple[str, str, str]]:
+    """(query id, work, text) from one_language's TSVs: `work<TAB>lang<TAB>text`,
+    a title query's work written `WQ480#T`. The id is `<work field>-<lang>`,
+    as one_language_score.py keys them."""
+    out = []
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            work, lang, text = line.split("\t")
+            out.append((f"{work}-{lang}", work.split("#")[0], text))
+    return out
+
+
+def spread(n: int, keep: int, head: int) -> list[int]:
+    """Which of a book's `n` chunks (by seq order) enter the pool: the first
+    `head` (title page, preface, opening) and an even spread of the rest up
+    to `keep` in all; every chunk when the book has no more than `keep`."""
+    if n <= keep:
+        return list(range(n))
+    first = list(range(min(head, keep)))
+    rest = keep - len(first)
+    if rest <= 0:
+        return first
+    span = n - len(first)
+    picks = sorted({len(first) + (i * span) // rest for i in range(rest)})
+    return first + picks
+
+
+def _book_rows(table, book: int) -> list[dict]:
+    rows = (table.search().where(f"book_id = {int(book)}", prefilter=True)
+            .select(["id", "book_id", "lang", "seq", "text"]).limit(10_000_000).to_list())
+    return sorted(rows, key=lambda r: (int(r["seq"]), str(r["id"])))
+
+
+def pool(out: Path, collection: str, query_files: list[Path], works_file: Path, *,
+         per_book: int = 40, head: int = 4, random_n: int = 20_000, seed: int = 0,
+         negative_books: Path | None = None) -> int:
+    """A BEIR set over a pool of `collection`'s chunks, judged by work (the
+    module docstring, "A SET FROM A HELD COLLECTION"). Read-only on the
+    collection; writes corpus/queries/qrels.jsonl and SOURCE.json in `out`."""
+    from app import collections as collections_mod, embeddings, licensing, vector_parts
+    if (out / "SOURCE.json").exists():
+        raise SystemExit(f"{out} already holds a set; one directory, one set "
+                         f"(delete it to make another pool)")
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    if licensing.state_for(c) == licensing.MISSING:
+        # invariant 9: a measurement USES the corpus too
+        raise SystemExit(f"{collection}: its licence is not acknowledged here (invariant 9)")
+    if vector_parts.is_split(c):
+        raise SystemExit(f"{collection}: its vectors are split into parts; `pool` reads one table")
+    works = read_works(works_file)
+    asked = read_queries(query_files)
+    judged = [(qid, w, t) for qid, w, t in asked if w in works]
+    if len(judged) < len(asked):
+        print(f"{len(asked) - len(judged)} of {len(asked)} queries name a work not in "
+              f"{works_file.name}: left out")
+    relevant_books = {qid: {b for x in {w} | ALSO.get(w, set()) for b in works.get(x, [])}
+                      for qid, w, _ in judged}
+    targets = sorted({b for books in relevant_books.values() for b in books})
+    table = embeddings.table_of_book(c, targets[0]) if targets else None
+    if table is None:
+        raise SystemExit(f"{collection}: no vector table")
+    picked: dict[str, dict] = {}
+    absent = []
+
+    def take_book(book: int) -> int:
+        rows = _book_rows(table, book)
+        if not rows:
+            absent.append(book)
+        for i in spread(len(rows), per_book, head):
+            picked[rows[i]["id"]] = rows[i]
+        return len(rows)
+    for b in targets:
+        take_book(b)
+    n_target = len(picked)
+    negatives = []
+    if negative_books:
+        negatives = sorted({_book_number(x) for x in negative_books.read_text(encoding="utf-8").split()
+                            if x.strip()} - set(targets))
+        for b in negatives:
+            take_book(b)
+    n_negative = len(picked) - n_target
+    # random chunks of OTHER books: seeded positions in the table, the
+    # target books' rows skipped, until `random_n` are drawn
+    ds = table.to_lance()
+    total = ds.count_rows()
+    rng = np.random.default_rng(seed)
+    forbidden = set(targets)
+    drawn = 0
+    tries = 0
+    while drawn < random_n and tries < 20:
+        tries += 1
+        want = min(total, int((random_n - drawn) * 1.2) + 16)
+        at = np.unique(rng.integers(0, total, size=want))
+        got = ds.take(at.tolist(), columns=["id", "book_id", "lang", "seq", "text"]).to_pylist()
+        for r in got:
+            if drawn >= random_n:
+                break
+            if int(r["book_id"]) in forbidden or r["id"] in picked:
+                continue
+            picked[r["id"]] = r
+            drawn += 1
+    out.mkdir(parents=True, exist_ok=True)
+    ids = list(picked)
+    book_of = {i: int(picked[i]["book_id"]) for i in ids}
+    with (out / "corpus.jsonl").open("w", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"_id": i, "title": "", "text": picked[i]["text"] or ""},
+                                ensure_ascii=False) + "\n")
+    with (out / "queries.jsonl").open("w", encoding="utf-8") as fh:
+        for qid, _, text in judged:
+            fh.write(json.dumps({"_id": qid, "text": text}, ensure_ascii=False) + "\n")
+    ids_of_book: dict[int, list[str]] = {}
+    for i in ids:
+        ids_of_book.setdefault(book_of[i], []).append(i)
+    unanswerable = []
+    with (out / "qrels.jsonl").open("w", encoding="utf-8") as fh:
+        for qid, _, _ in judged:
+            hits = [i for b in sorted(relevant_books[qid]) for i in ids_of_book.get(b, ())]
+            if not hits:
+                unanswerable.append(qid)
+            for i in hits:
+                fh.write(json.dumps({"query-id": qid, "corpus-id": i, "score": 1}) + "\n")
+    digests = {name: _sha256(out / name) for name in _LOCAL.values()}
+    settings = {"collection": collection, "table_version": int(table.version),
+                "table_rows": int(total), "per_book": per_book, "head": head,
+                "random": random_n, "seed": seed,
+                "queries": [str(p) for p in query_files], "works": str(works_file),
+                "negative_books": str(negative_books) if negative_books else None}
+    counts = {"chunks": len(ids), "target_chunks": n_target, "negative_chunks": n_negative,
+              "random_chunks": drawn, "target_books": len(targets),
+              "target_books_without_rows": len(absent), "negative_books": len(negatives),
+              "queries": len(judged), "queries_without_a_relevant_chunk": len(unanswerable)}
+    (out / "LICENCE.txt").write_text(SUITES[POOL]["licence"] + "\n", encoding="utf-8")
+    (out / "SOURCE.json").write_text(json.dumps(
+        {"suite": POOL, "dataset": f"collection {collection}", "licence": SUITES[POOL]["licence"],
+         "about": SUITES[POOL]["about"], "pool": settings, "counts": counts,
+         "sha256": digests}, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(counts, indent=2))
+    if absent:
+        print(f"target books with no rows in the table: {absent[:20]}"
+              + (" …" if len(absent) > 20 else ""))
+    if unanswerable:
+        # a query no pool chunk answers scores 0 for every encoder: `load`
+        # leaves it out (no relevant document), so the counts above say it
+        print(f"{len(unanswerable)} queries have no relevant chunk in the pool and are not scored")
+    return 0
+
+
+def stored_vectors(out: Path, collection: str) -> np.ndarray:
+    """The vectors `collection` holds for the pool's chunks, in corpus order;
+    every chunk must have one."""
+    from app import collections as collections_mod, embeddings
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    ids = [_id(r) for r in _rows(out / "corpus.jsonl")]
+    got: dict = {}
+    for i in range(0, len(ids), 5000):
+        got.update(embeddings.vectors_by_chunk_id(ids[i:i + 5000], c))
+    missing = [i for i in ids if i not in got]
+    if missing:
+        raise SystemExit(f"{len(missing)} pool chunks have no stored vector in {collection} "
+                         f"(first: {missing[:3]}); the row would not be the collection's")
+    return np.asarray([got[i] for i in ids], dtype=np.float32)
+
+
+def check_stored(stored: np.ndarray, fresh: np.ndarray) -> tuple[float, float]:
+    """(worst, median) cosine of stored vectors to their re-embedded twins;
+    refused below STORED_MIN_COSINE."""
+    a = stored / np.linalg.norm(stored, axis=1, keepdims=True)
+    b = fresh / np.linalg.norm(fresh, axis=1, keepdims=True)
+    cos = (a * b).sum(axis=1)
+    worst, median = float(cos.min()), float(np.median(cos))
+    if worst < STORED_MIN_COSINE:
+        raise SystemExit(f"stored vectors are not this encoder's on this input: worst cosine "
+                         f"{worst:.6f} to the re-embedded twin (median {median:.6f}), below "
+                         f"{STORED_MIN_COSINE}")
+    return worst, median
+
+
+def api_for(model: str, api: str | None = None) -> str:
+    """The client the endpoint needs. A VeGa-wrapped model (the node serves
+    every GPU encoder as `vega-<name>`) refuses an untagged input, so it is
+    asked through the app's `api = "vega"` client: tagged inputs, receipts
+    from VEGA_URL verified against the bytes (docs/notes/vega.md). Until
+    2026-10-29 this tool sent every model untagged, and on the node every
+    GPU run was refused at its first request. `--api` overrides."""
+    if api:
+        return api
+    return "vega" if model.startswith("vega-") else "openai"
+
+
+def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int,
+            api: str = "openai"):
     from app import collections as collections_mod
-    return collections_mod.EmbedRecipe(url=url, api="openai", model=model,
+    return collections_mod.EmbedRecipe(url=url, api=api, model=model,
                                        dtype="f16", ctx=ctx, dim=dim,
                                        concurrency=concurrency)
+
+
+def served_recipe(name: str):
+    """A held collection's encoder exactly as its searches use it —
+    `collections.recipe_for`, the worker's own resolution: url, model, api,
+    ctx, dim and the space's query `instruction`, which the app prefixes to
+    every query it embeds (app/embeddings.py). Normattiva's is "query: ";
+    measured bare, its row was not what the node serves (München,
+    2026-10-29)."""
+    from app import collections as collections_mod
+    for c in collections_mod.load_all():
+        if c.name == name:
+            return collections_mod.recipe_for(c)
+    raise SystemExit(f"no collection {name!r} is held here")
+
+
+def _same_settings(run: Path, settings: dict) -> None:
+    """A run's shards are reusable only under the settings that made them —
+    the corpus shards most of all, which every query variant shares. Under
+    others the run would be one row from two encodings: plausible,
+    internally consistent and wrong (as `bakeoff_local` refuses it)."""
+    path = run / "settings.json"
+    if path.exists():
+        before = json.loads(path.read_text(encoding="utf-8"))
+        if before != settings:
+            changed = sorted(k for k in set(before) | set(settings) if before.get(k) != settings.get(k))
+            raise SystemExit(f"{run.name}: embedded before with different settings "
+                             f"({', '.join(changed)}); use another --name, or delete {run}")
+    else:
+        run.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _embed_sharded(texts: list[str], where: Path, recipe, *,
@@ -198,7 +732,9 @@ def slug_of(query_prefix: str) -> str:
 
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
-          query_prefix: str = "", limit: int | None = None) -> int:
+          query_prefix: str = "", limit: int | None = None, api: str | None = None,
+          from_collection: str | None = None, stored: bool = False, check: int = 32,
+          query_like: str | None = None, doc_prefix: str = "") -> int:
     from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
@@ -213,21 +749,84 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         # in two minutes rather than finding out 47 minutes into the real
         # one. It is NOT scoreable — see `score`.
         corpus = Corpus(ids=corpus.ids[:limit], texts=corpus.texts[:limit])
-    recipe = _recipe(url, model, dim, ctx, concurrency)
+        # and the questions too: GerDaLIRSmall's 12,234 made a "smoke" that
+        # embedded every one of them (München, 2026-10-29)
+        queries = Queries(texts=queries.texts[:limit], relevant=queries.relevant[:limit])
+    if stored and not from_collection:
+        raise SystemExit("--stored-vectors reads a collection's vectors: it needs --from-collection")
+    if stored and limit:
+        raise SystemExit("--stored-vectors embeds no corpus: --limit has nothing to shorten")
+    if doc_prefix and (stored or from_collection):
+        # a model whose card asks a document prefix (Nemotron-3-Embed's
+        # "passage: ", 2026-11-02); a collection's own documents were
+        # embedded as its recipe says, and that is what --from-collection reads
+        raise SystemExit("--doc-prefix is a candidate's document side; not with "
+                         "--from-collection or --stored-vectors")
+    if query_like:
+        if from_collection or query_prefix:
+            raise SystemExit("--query-like gives ANOTHER model a collection's instruction; "
+                             "not with --from-collection or --query-prefix")
+        query_prefix = served_recipe(query_like).query_instruction or ""
+    if from_collection:
+        if query_prefix:
+            raise SystemExit("--from-collection serves the collection's own query instruction; "
+                             "a --query-prefix would add a second one")
+        recipe = served_recipe(from_collection)
+        url, model, api, ctx, dim = recipe.url, recipe.model, recipe.api, recipe.ctx, recipe.dim
+        # the app prefixes it, as a search does; it names the query side
+        query_side = recipe.query_instruction or ""
+    else:
+        api = api_for(model, api)
+        recipe = _recipe(url, model, dim, ctx, concurrency, api)
+        query_side = query_prefix
+    if api == "vega" and not config.VEGA_URL:
+        raise SystemExit(f"{model} is a VeGa model and VEGA_URL is unset: its receipts "
+                         f"cannot be read (docs/notes/vega.md); run in the worker's env")
     run = out / name
-    slug = slug_of(query_prefix)
+    # a smoke run's shards are not the real run's (its first shard is short)
+    # the document prefix keys the corpus shards (every query variant shares
+    # them); a run without one keeps the settings it always had
+    _same_settings(run, {"url": url, "model": model, "api": api, "ctx": ctx, "dim": dim,
+                         "max_chars": max_chars, "limit": limit,
+                         **({"stored_vectors": from_collection} if stored else {}),
+                         **({"doc_prefix": doc_prefix} if doc_prefix else {})})
+    slug = slug_of(query_side)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
     # The corpus side never carries the prefix, so every variant of a model
     # shares these vectors and only the cheap side is re-embedded.
-    doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
-    qry = _embed_sharded([query_prefix + t for t in queries.texts],
-                         run / f"queries-{slug}", recipe, query=True)
+    # Each side LEASED while it embeds (2026-11-02): each beat, the worker
+    # unloads every vega- model no held collection names unless a process
+    # leases it (app/encoder_use.py) — a candidate is named by none.
+    from app import encoder_use
+    holder = encoder_use.holder("encoder_bakeoff embed")
+    checked = None
+    with encoder_use.held(recipe, holder=holder):
+        if stored:
+            doc = stored_vectors(out, from_collection)
+            n = min(check, len(corpus.texts))
+            at = np.random.default_rng(0).choice(len(corpus.texts), size=n, replace=False) if n else []
+            if n:
+                from app import embeddings
+                fresh = np.asarray(embeddings.embed_calibration(
+                    recipe, [corpus.texts[i] for i in at], query=False), dtype=np.float32)
+                worst, median = check_stored(doc[np.asarray(at)], fresh)
+                checked = {"n": n, "worst": round(worst, 6), "median": round(median, 6)}
+                print(f"  stored vectors checked: {n} re-embedded, worst cosine {worst:.6f}, "
+                      f"median {median:.6f}")
+        else:
+            doc = _embed_sharded([doc_prefix + t for t in corpus.texts], run / "corpus",
+                                 recipe, query=False)
+    with encoder_use.held(recipe, holder=holder, query=True):
+        qry = _embed_sharded([query_prefix + t for t in queries.texts],
+                             run / f"queries-{slug}", recipe, query=True)
     np.save(run / "corpus.npy", doc)
     np.save(run / f"queries-{slug}.npy", qry)
     (run / f"run-{slug}.json").write_text(json.dumps(
-        {"name": name, "slug": slug, "url": url, "model": model, "ctx": ctx,
-         "max_chars": max_chars, "query_prefix": query_prefix,
+        {"name": name, "slug": slug, "url": url, "model": model, "api": api, "ctx": ctx,
+         "max_chars": max_chars, "query_prefix": query_side, "doc_prefix": doc_prefix,
+         "from_collection": from_collection, "query_like": query_like,
+         "stored_vectors": bool(stored), "stored_check": checked,
          "limit": limit, "dim": int(doc.shape[1]),
          "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
@@ -251,6 +850,10 @@ def metrics_for(ranking: list[int], relevant: set[int], ks) -> dict[str, float]:
         hits = [d in relevant for d in top]
         found = sum(hits)
         out[f"recall@{k}"] = found / len(relevant) if relevant else 0.0
+        # success@k: any relevant document in the top k — the measure where a
+        # query has hundreds of relevant chunks (a `pool` set: every chunk of
+        # the named work), and what reaches a reranker at its depth
+        out[f"hit@{k}"] = 1.0 if found else 0.0
         out[f"ndcg@{k}"] = (
             _dcg([1.0 if h else 0.0 for h in hits], k)
             / _dcg([1.0] * len(relevant), k)) if relevant else 0.0
@@ -270,21 +873,284 @@ def metrics_for(ranking: list[int], relevant: set[int], ks) -> dict[str, float]:
     return out
 
 
-def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
-              queries: Queries, ks=KS) -> dict[str, float]:
+def rank_dense(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
+               top: int = max(KS)) -> list[list[int]]:
+    """Each query's top documents by cosine, as corpus ids, best first."""
     d = doc / np.linalg.norm(doc, axis=1, keepdims=True)
     q = qry / np.linalg.norm(qry, axis=1, keepdims=True)
     ids = np.asarray(corpus.ids)
-    top = max(ks)
-    totals: dict[str, float] = {}
+    out = []
     for i in range(q.shape[0]):
         sims = d @ q[i]
         best = np.argpartition(-sims, min(top, len(sims) - 1))[:top]
         best = best[np.argsort(-sims[best])]
-        row = metrics_for([int(x) for x in ids[best]], set(queries.relevant[i]), ks)
-        for key, value in row.items():
+        out.append([int(x) for x in ids[best]])
+    return out
+
+
+def metrics_of(rankings: list[list[int]], queries: Queries, ks=KS) -> dict[str, float]:
+    """The metrics averaged over the queries — one ranking each, any leg."""
+    totals: dict[str, float] = {}
+    for ranking, relevant in zip(rankings, queries.relevant):
+        for key, value in metrics_for(ranking, set(relevant), ks).items():
             totals[key] = totals.get(key, 0.0) + value
-    return {key: value / q.shape[0] for key, value in totals.items()}
+    return {key: value / len(rankings) for key, value in totals.items()}
+
+
+#: the per-query metrics kept beside each row, for the paired test
+PAIRED = ("mrr@10", "ndcg@10", "hit@40", "mrr@5", "hit@5")
+
+
+def per_query(rankings: list[list[int]], queries: Queries,
+              keys=PAIRED) -> dict[str, list[float]]:
+    """Each query's metrics, in query order: what a paired test compares."""
+    ks = sorted({int(k.split("@")[1]) for k in keys})
+    rows = [metrics_for(r, set(rel), ks) for r, rel in zip(rankings, queries.relevant)]
+    return {k: [row[k] for row in rows] for k in keys}
+
+
+def paired(a: list[float], b: list[float], *, trials: int = 10_000,
+           seed: int = 0, chunk: int = 500) -> tuple[float, float, float, float]:
+    """(mean of a − b, its 95% bootstrap interval, the two-sided p of Fisher's
+    randomization test) over the same queries.
+
+    THE STANDARD, NOT OURS: Smucker, Allan & Carterette (CIKM 2007) compared
+    the significance tests used in IR and recommend the randomization test
+    (each query's pair of scores swapped at random = its difference's sign
+    flipped); the interval is the percentile bootstrap of the mean
+    difference. WHY IT IS NEEDED: LegalQuAD has 200 questions, and its first
+    rows differed by 1–2 points of MRR@10 — a size the per-query spread
+    (~0.4) puts within noise. A fixed seed: the same scores give the same
+    report. Trials in chunks, so 12k queries stay a few MB."""
+    d = np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
+    n = len(d)
+    if n == 0:
+        return 0.0, 0.0, 0.0, 1.0
+    delta = float(d.mean())
+    rng = np.random.default_rng(seed)
+    boots, extreme = [], 0
+    for start in range(0, trials, chunk):
+        m = min(chunk, trials - start)
+        boots.append(d[rng.integers(0, n, size=(m, n))].mean(axis=1))
+        flips = (rng.integers(0, 2, size=(m, n)) * 2 - 1) * d
+        extreme += int((np.abs(flips.mean(axis=1)) >= abs(delta) - 1e-12).sum())
+    lo, hi = np.percentile(np.concatenate(boots), [2.5, 97.5])
+    return delta, float(lo), float(hi), (extreme + 1) / (trials + 1)
+
+
+def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
+              queries: Queries, ks=KS) -> dict[str, float]:
+    return metrics_of(rank_dense(doc, qry, corpus, max(ks)), queries, ks)
+
+
+#: the lexical run's directory; its label in the report
+LEXICAL, LEXICAL_LABEL = "bm25", "BM25 (Louise)"
+#: the record prefix of the chunk ids the index and the fusion see:
+#: `<prefix>:<corpus id>:<seq>:<version>`, so `retrieval.record_of` reads the
+#: corpus id back as the record
+_RECORD = "bakeoff"
+
+
+def _chunk_id(cid: int) -> str:
+    return f"{_RECORD}:{cid}:0:1"
+
+
+def _record_id(record: str) -> int:
+    return int(record.split(":", 1)[1])
+
+
+def lexical(out: Path, lang: str, max_chars: int, batch: int = 5000) -> int:
+    """The word leg as Louise serves it, over this set: a fresh tantivy index
+    built by app/fts.py (the language group's analyzer and stemmer), each
+    question through `fts.search`. One chunk per document, the same
+    truncated text the encoders read."""
+    import shutil
+    from app import collections as collections_mod, fts
+    corpus, queries = load(out, max_chars)
+    run = out / LEXICAL
+    index_dir = run / "index"
+    shutil.rmtree(index_dir, ignore_errors=True)
+    run.mkdir(parents=True, exist_ok=True)
+    # an ad-hoc collection, as tests/test_fts_batching.py builds one: a plugin
+    # with no validity columns and no name index gives the plain schema; the
+    # text fields, analyzer and query are the same for every plugin
+    c = collections_mod.Collection(
+        name="bakeoff", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=out, manifest_path=run / "unused.sqlite", fts_dir=index_dir,
+        lance_dir=run / "unused-lance")
+    entries = [(lang, i, [{"id": _chunk_id(cid), "chapter": "", "text": text}])
+               for i, (cid, text) in enumerate(zip(corpus.ids, corpus.texts))]
+    for k in range(0, len(entries), batch):
+        fts.index_books(entries[k:k + batch], c)
+    group = fts.group_for(lang)
+    from app import retrieval
+    rankings, empty = [], 0
+    for text in queries.texts:
+        hits = fts.search(group, text, limit=max(KS), collection=c)
+        empty += not hits
+        rankings.append([_record_id(retrieval.record_of(h)) for h in hits])
+    fts.close_all()
+    (run / "ranking-bare.json").write_text(json.dumps(rankings) + "\n", encoding="utf-8")
+    (run / "run-bare.json").write_text(json.dumps(
+        {"name": LEXICAL_LABEL, "slug": "bare", "kind": "lexical", "lang": lang,
+         "group": group, "max_chars": max_chars, "documents": len(corpus.ids),
+         "queries": len(rankings), "empty": empty}, indent=2) + "\n", encoding="utf-8")
+    print(f"{LEXICAL_LABEL}: {len(corpus.ids)} documents in group {group!r}, "
+          f"{len(rankings)} queries, {empty} with no hit")
+    return 0
+
+
+def fuse(text: list[int], vector: list[int], depth: int = max(KS)) -> list[int]:
+    """The two legs' rankings fused as a search fuses them:
+    `retrieval._merge_rrf` itself, at `depth`, its tie rule included."""
+    from app import retrieval
+    lists = [[{"chunk_id": _chunk_id(cid), "source": source, "lang": ""} for cid in ids]
+             for ids, source in ((text, f"fts:{_RECORD}"), (vector, "dense"))]
+    merged = retrieval._merge_rrf(lists, depth)
+    return [_record_id(retrieval.record_of(m)) for m in merged][:depth]
+
+
+def _lexical_rankings(out: Path, max_chars: int, n_queries: int) -> list[list[int]] | None:
+    meta_path = out / LEXICAL / "run-bare.json"
+    if not meta_path.exists():
+        return None
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("max_chars") != max_chars or meta.get("queries") != n_queries:
+        raise SystemExit(f"the BM25 run was built with max_chars {meta.get('max_chars')} and "
+                         f"{meta.get('queries')} queries, this score with {max_chars} and "
+                         f"{n_queries}: run `lexical` again")
+    return json.loads((out / LEXICAL / "ranking-bare.json").read_text(encoding="utf-8"))
+
+
+#: where `rerank` keeps its measurement, beside the runs
+RERANKED = "pipeline"
+#: chunks each encoder ranks per question: deep enough that the vector leg's
+#: top 100 records each find their matched chunks
+CHUNK_DEPTH = 2_000
+
+
+def _pool_chunk_ids(out: Path) -> list[str]:
+    """The set's chunk ids in corpus order, `load`'s row positions."""
+    files = SUITES[suite_of(out)]["files"]
+    return [_id(r) for r in _rows(out / _local("corpus", files["corpus"]))]
+
+
+def _record(chunk_id: str) -> str:
+    return chunk_id.rsplit(":", 2)[0]              # retrieval.record_of's split
+
+
+def _row_query_encoder(meta: dict):
+    """Texts through a row's own query side, as `embed` asked its questions:
+    a collection's served recipe (its instruction prefixed by the app), or
+    the row's url/model with its recorded prefix; the encoder leased."""
+    def encode(texts: list[str]) -> list[list[float]]:
+        from app import embeddings, encoder_use
+        if meta.get("from_collection"):
+            recipe, prefix = served_recipe(meta["from_collection"]), ""
+        else:
+            recipe = _recipe(meta["url"], meta["model"], meta.get("dim"), int(meta["ctx"]), 1,
+                             meta.get("api") or "openai")
+            prefix = meta.get("query_prefix") or ""
+        with encoder_use.held(recipe, holder=encoder_use.holder("pipeline row"), query=True):
+            return embeddings.embed_calibration(recipe, [prefix + t for t in texts], query=True)
+    return encode
+
+
+def rerank(out: Path, max_chars: int, collection, recipe, heads, *, plans, typed=None,
+           depths=None, only: list[str] | None = None, call=None, encode=None) -> int:
+    """The whole search on the pool, stage by stage
+    (tools/measure/pipeline_eval.py): BM25 with the plan's translations, each
+    encoder, each fused with BM25, and each after `recipe`'s reranker at
+    every depth. `heads(records)` gives each record `{"head", "lang"}`."""
+    from tools.measure import pipeline_eval as pe
+    if suite_of(out) != POOL:
+        raise SystemExit("`rerank` reads records from chunk ids: a `pool` set only")
+    corpus, queries = load(out, max_chars)
+    chunk_ids = _pool_chunk_ids(out)
+    # the pool's records, each with its chunks in corpus order
+    at: dict[str, int] = {}
+    where: list[tuple[int, int]] = []
+    members: list[list[int]] = []
+    for pos, cid in enumerate(chunk_ids):
+        rec = _record(cid)
+        if rec not in at:
+            at[rec] = len(members)
+            members.append([])
+        where.append((at[rec], len(members[at[rec]])))
+        members[at[rec]].append(pos)
+    records = sorted(at, key=at.get)
+    head = heads(records)
+    docs = [pe.Doc(lang=(head.get(rec) or {}).get("lang") or "und",
+                   title=(head.get(rec) or {}).get("head") or "",
+                   chunks=[corpus.texts[p] for p in members[at[rec]]]) for rec in records]
+    questions = [pe.Question(text=t, relevant=frozenset(where[p][0] for p in rel))
+                 for t, rel in zip(queries.texts, queries.relevant)]
+    rankings, rankers = {}, {}
+    for run, meta in runs_in(out):
+        if meta.get("kind") == "lexical" or meta.get("limit"):
+            continue
+        if only and not any(o in label_of(meta) for o in only):
+            continue
+        doc = np.load(run / "corpus.npy")
+        qry = np.load(run / f"queries-{meta['slug']}.npy")
+        rankings[label_of(meta)] = [[where[p] for p in r]
+                                    for r in rank_dense(doc, qry, corpus, CHUNK_DEPTH)]
+        # the per-language vector leg: translations through this row's own
+        # query side (its recipe and its instruction), checked against its
+        # own question vectors before anything is measured with it
+        unit = doc / np.linalg.norm(doc, axis=1, keepdims=True)
+        rankers[label_of(meta)] = pe.QueryRanker(
+            out / RERANKED / f"qvec-{meta['slug']}-{run.name}.jsonl",
+            (encode or _row_query_encoder)(meta), unit, where, depth=CHUNK_DEPTH,
+            check=(queries.texts, qry))
+    if not rankings:
+        print(f"{out}: no embedded row to measure")
+        return 0
+    pe.evaluate(out / RERANKED, collection, docs, questions, rankings, recipe=recipe,
+                plans=plans, typed=typed, query_rankers=rankers,
+                depths=depths or pe.DEPTHS, call=call)
+    return 0
+
+
+def manifest_heads(collection: str):
+    """`heads` for `rerank`: the collection's own `_attach_heads`, read-only."""
+    from app import collections as collections_mod
+    from app import db, retrieval
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+
+    def heads(records: list[str]) -> dict[str, dict]:
+        con = db.read_only_connect(c)
+        hits = [{"book_id": rec.split(":", 1)[1], "_rec": rec} for rec in records]
+        langs: dict[str, str] = {}
+        for k in range(0, len(hits), 500):
+            part = hits[k:k + 500]
+            retrieval._attach_heads(con, c, part)
+            if con is not None:
+                marks = ",".join("?" for _ in part)
+                for native, lang in con.execute(
+                        f"SELECT native_id, lang FROM documents WHERE source=? AND native_id IN ({marks})",
+                        [c.plugin] + [h["book_id"] for h in part]):
+                    langs[str(native)] = lang or ""
+        if con is not None:
+            con.close()
+        return {h["_rec"]: {"head": h.get(retrieval.HEAD, ""), "lang": langs.get(h["book_id"])}
+                for h in hits}
+    return c, heads
+
+
+def pe_reranker(collection: str):
+    """`collection`'s own reranker (`reranker_for`), or a refusal that says so."""
+    from app import collections as collections_mod
+    c = next((x for x in collections_mod.load_all() if x.name == collection), None)
+    if c is None:
+        raise SystemExit(f"no collection {collection!r} is held here")
+    recipe = collections_mod.reranker_for(c)
+    if recipe is None:
+        raise SystemExit(f"{collection} names no reranker and RERANK_URL is unset: "
+                         f"give --reranker-from <a collection that names one>")
+    return recipe
 
 
 def runs_in(out: Path) -> list[tuple[Path, dict]]:
@@ -303,8 +1169,18 @@ def label_of(meta: dict) -> str:
 
 def score(out: Path, max_chars: int) -> int:
     corpus, queries = load(out, max_chars)
+    lexical_rankings = _lexical_rankings(out, max_chars, len(queries.texts))
     for run, meta in runs_in(out):
         slug = meta["slug"]
+        if meta.get("kind") == "lexical":
+            result = metrics_of(lexical_rankings, queries)
+            (run / f"scores-{slug}.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            (run / f"perquery-{slug}.json").write_text(
+                json.dumps(per_query(lexical_rankings, queries)) + "\n", encoding="utf-8")
+            print(f"{label_of(meta)}: mrr@10 {result['mrr@10']:.4f}  "
+                  f"ndcg@10 {result['ndcg@10']:.4f}")
+            continue
         if meta.get("limit"):
             # Recall@k against a truncated corpus is not a smaller version of
             # the real number, it is a larger one: every document removed is a
@@ -316,11 +1192,23 @@ def score(out: Path, max_chars: int) -> int:
             continue
         doc = np.load(run / "corpus.npy")
         qry = np.load(run / f"queries-{slug}.npy")
-        result = score_run(doc, qry, corpus, queries)
+        dense = rank_dense(doc, qry, corpus)
+        result = metrics_of(dense, queries)
         (run / f"scores-{slug}.json").write_text(
             json.dumps(result, indent=2) + "\n", encoding="utf-8")
-        print(f"{label_of(meta)}: mrr@100 {result['mrr@100']:.4f}  "
-              f"recall@10 {result['recall@10']:.4f}")
+        (run / f"perquery-{slug}.json").write_text(
+            json.dumps(per_query(dense, queries)) + "\n", encoding="utf-8")
+        print(f"{label_of(meta)}: mrr@10 {result['mrr@10']:.4f}  mrr@100 {result['mrr@100']:.4f}  "
+              f"recall@10 {result['recall@10']:.4f}  hit@40 {result['hit@40']:.4f}")
+        if lexical_rankings is not None:
+            fused_rankings = [fuse(t, v) for t, v in zip(lexical_rankings, dense)]
+            fused = metrics_of(fused_rankings, queries)
+            (run / f"fused-{slug}.json").write_text(
+                json.dumps(fused, indent=2) + "\n", encoding="utf-8")
+            (run / f"perquery-fused-{slug}.json").write_text(
+                json.dumps(per_query(fused_rankings, queries)) + "\n", encoding="utf-8")
+            print(f"{label_of(meta)} + BM25 (RRF): mrr@10 {fused['mrr@10']:.4f}  "
+                  f"ndcg@10 {fused['ndcg@10']:.4f}")
     return 0
 
 
@@ -332,18 +1220,59 @@ PUBLISHED = {"DAR-legal-it (published)": {
     "map@5": 0.6985, "map@100": 0.7015}}
 
 
+def _print_paired(queried: dict[str, dict[str, list[float]]], metric: str = "mrr@10") -> None:
+    """Every row against BM25 (Louise), and the leader against every other
+    row: the difference in `metric`, its 95% interval, the randomization p.
+    Uncorrected per comparison: with several rows, read p < 0.01 as the bar."""
+    have = {k: v[metric] for k, v in queried.items() if metric in v}
+    if len(have) < 2:
+        return
+    n = {len(v) for v in have.values()}
+    if len(n) != 1:
+        print(f"\n(paired test skipped: the rows were scored on different query counts {sorted(n)})")
+        return
+    leader = max(have, key=lambda k: float(np.mean(have[k])))
+    print(f"\nPaired, {metric}, {n.pop()} queries (Fisher's randomization test, 10,000 trials; "
+          f"95% bootstrap interval; uncorrected):")
+    pairs = ([(k, LEXICAL_LABEL) for k in have if k != LEXICAL_LABEL] if LEXICAL_LABEL in have else []) \
+        + [(leader, k) for k in have if k != leader]
+    seen = set()
+    for a, b in pairs:
+        if (a, b) in seen or (b, a) in seen:
+            continue
+        seen.add((a, b))
+        delta, lo, hi, p = paired(have[a], have[b])
+        print(f"  {a}  vs  {b}: {delta:+.4f} [{lo:+.4f}, {hi:+.4f}]  p = {p:.4f}")
+
+
 def report(out: Path) -> int:
-    rows = dict(PUBLISHED)
+    # the published row is DAR-legal-it's on JuriFindIT, and on no other set
+    rows = dict(PUBLISHED) if suite_of(out) == "jurifindit" else {}
+    queried: dict[str, dict[str, list[float]]] = {}      # label -> per-query metrics
     prefixes: dict[str, str] = {}
+
+    def keep(label: str, path: Path) -> None:
+        if path.exists():
+            queried[label] = json.loads(path.read_text(encoding="utf-8"))
     for run, meta in runs_in(out):
         scores = run / f"scores-{meta['slug']}.json"
-        if not scores.exists():
-            continue
-        rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
+        if scores.exists():
+            rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
+            keep(label_of(meta), run / f"perquery-{meta['slug']}.json")
+        fused = run / f"fused-{meta['slug']}.json"
+        if fused.exists():
+            rows[f"{label_of(meta)} + BM25 (RRF)"] = json.loads(fused.read_text(encoding="utf-8"))
+            keep(f"{label_of(meta)} + BM25 (RRF)", run / f"perquery-fused-{meta['slug']}.json")
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
-    shown = ["recall@3", "recall@5", "recall@10", "recall@100",
-             "ndcg@5", "ndcg@100", "mrr@5", "mrr@100", "map@100"]
+    if not rows:
+        print(f"{out}: no scored run yet (`embed`, then `score`)")
+        return 0
+    # nDCG@10 and MRR@10: what MTEB, MLEB and the legal papers report
+    shown = (["hit@1", "hit@5", "mrr@5", "hit@10", "mrr@10", "hit@40", "hit@50", "hit@100"]
+             if suite_of(out) == POOL else
+             ["recall@3", "recall@5", "recall@10", "recall@100",
+              "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"])
     width = max(len(name) for name in rows)
     print("| " + "model".ljust(width) + " | "
           + " | ".join(m.rjust(10) for m in shown) + " |")
@@ -355,10 +1284,13 @@ def report(out: Path) -> int:
         print("| " + name.ljust(width) + " | " + " | ".join(cells) + " |")
     for slug, text in sorted(prefixes.items()):
         print(f"\n[{slug}] query prefix: {text!r}")
-    print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
-          "its truncation and corpus handling are unrecorded. The other rows "
-          "are comparable to each other exactly. A row with no [slug] embedded "
-          "queries bare, which is what this node serves today.")
+    _print_paired(queried)
+    if suite_of(out) == "jurifindit":
+        print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
+              "its truncation and corpus handling are unrecorded.")
+    print("\nThe rows are comparable to each other exactly. A row with no [slug] embedded "
+          "its queries bare; a space that declares a query instruction serves its "
+          "queries WITH it — `embed --from-collection <name>` measures that served form.")
     return 0
 
 
@@ -367,23 +1299,67 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("fetch", "embed", "score", "report"):
+    for cmd in ("fetch", "pool", "embed", "lexical", "score", "rerank", "report"):
         p = sub.add_parser(cmd)
         p.add_argument("--out", type=Path, required=True)
-        if cmd in ("embed", "score"):
+        if cmd == "pool":
+            p.add_argument("--collection", required=True)
+            p.add_argument("--queries", type=Path, action="append", required=True,
+                           help="a TSV of work<TAB>lang<TAB>text; repeat for several")
+            p.add_argument("--works", type=Path, required=True,
+                           help="works.json: each work's books (one_language_works.py)")
+            p.add_argument("--per-book", type=int, default=40)
+            p.add_argument("--head", type=int, default=4)
+            p.add_argument("--random", type=int, default=20_000)
+            p.add_argument("--seed", type=int, default=0)
+            p.add_argument("--negative-books", type=Path, default=None,
+                           help="book ids, whitespace-separated, to add as distractors")
+        if cmd == "fetch":
+            p.add_argument("--suite", default="jurifindit", choices=sorted(SUITES),
+                           help="the set; one directory holds one")
+        if cmd == "lexical":
+            p.add_argument("--lang", required=True,
+                           help="the set's language (ISO 639-1): it picks the "
+                                "index's analyzer and stemmer, as a record's does")
+        if cmd == "rerank":
+            p.add_argument("--from-collection", required=True,
+                           help="the collection whose search plan, titles and languages are used")
+            p.add_argument("--reranker-from", default=None,
+                           help="another collection's reranker, where this one names none")
+            p.add_argument("--depth", type=int, action="append", default=None,
+                           help="records reranked, repeatable (10, 40, 50 and 100 by default)")
+            p.add_argument("--only", action="append", default=None,
+                           help="measure only rows whose label contains this; repeatable")
+        if cmd in ("embed", "lexical", "score", "rerank"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
             p.add_argument("--name", required=True)
-            p.add_argument("--url", required=True)
-            p.add_argument("--model", required=True)
+            p.add_argument("--url", default=None)
+            p.add_argument("--model", default=None)
+            p.add_argument("--from-collection", default=None,
+                           help="a held collection's encoder as its searches use it: url, "
+                                "model, api, ctx and its query instruction (`recipe_for`)")
             p.add_argument("--dim", type=int, default=None)
             p.add_argument("--ctx", type=int, default=8192)
             p.add_argument("--concurrency", type=int, default=1)
+            p.add_argument("--api", choices=("openai", "vega"), default=None,
+                           help="the endpoint's client; by default `vega` for a "
+                                "`vega-…` model (tagged inputs, receipts), else openai")
+            p.add_argument("--doc-prefix", default="",
+                           help="put before every document (a card's document prompt, "
+                                "Nemotron-3-Embed's \"passage: \"); keys the corpus shards")
             p.add_argument("--query-prefix", default="",
                            help="prepended to QUERIES only, never to "
                                 "documents; recorded in the run's JSON. "
                                 "Qwen3-Embedding documents "
                                 "'Instruct: <task>\\nQuery: '")
+            p.add_argument("--stored-vectors", action="store_true",
+                           help="with --from-collection: score the vectors the collection "
+                                "holds for the pool; only the queries are embedded")
+            p.add_argument("--check", type=int, default=32,
+                           help="pool chunks re-embedded to check the stored vectors")
+            p.add_argument("--query-like", default=None,
+                           help="this collection's query instruction for another model")
             p.add_argument("--limit", type=int, default=None,
                            help="embed only the first N documents, to prove "
                                 "the endpoint in minutes. Marks the run "
@@ -391,12 +1367,29 @@ def main(argv=None) -> int:
                                 "every metric")
     a = ap.parse_args(argv)
     if a.cmd == "fetch":
-        return fetch(a.out)
+        return fetch(a.out, a.suite)
+    if a.cmd == "pool":
+        return pool(a.out, a.collection, a.queries, a.works, per_book=a.per_book, head=a.head,
+                    random_n=a.random, seed=a.seed, negative_books=a.negative_books)
     if a.cmd == "embed":
+        if not a.from_collection and not (a.url and a.model):
+            ap.error("embed needs --url and --model, or --from-collection")
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
-                     a.concurrency, a.max_chars, a.query_prefix, a.limit)
+                     a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api,
+                     a.from_collection, a.stored_vectors, a.check, a.query_like,
+                     a.doc_prefix)
+    if a.cmd == "lexical":
+        return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":
         return score(a.out, a.max_chars)
+    if a.cmd == "rerank":
+        from tools.measure import pipeline_eval as pe
+        c, heads = manifest_heads(a.from_collection)
+        recipe = pe_reranker(a.reranker_from or a.from_collection)
+        plans = pe.PlanStore(a.out / RERANKED / "plans.jsonl", pe.search_plans(c, translate=True))
+        typed = pe.PlanStore(a.out / RERANKED / "plans-typed.jsonl", pe.search_plans(c, translate=False))
+        return rerank(a.out, a.max_chars, c, recipe, heads, plans=plans, typed=typed,
+                      depths=a.depth, only=a.only)
     return report(a.out)
 
 

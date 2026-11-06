@@ -6,7 +6,7 @@ applied to the same list afterwards.
 What runs is `retrieval.search` as the Ask page calls it (query_service.run_search
 -> retrieval.search, translate=True, mode hybrid, rerank_depth 50): the language
 plan (restriction + MADLAD query translation), catalog, the text legs in every
-main language, the vector leg (gutenberg's query encoder on RAGE), RRF, the
+main language, the vector leg (gutenberg's query encoder on the model pool), RRF, the
 reranker. EVERY MOUNT IS READ-ONLY, so this process cannot write on the node;
 what that needs is changed in THIS process only:
 

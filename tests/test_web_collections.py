@@ -393,12 +393,13 @@ def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(cl
 
 def test_the_add_panel_offers_the_annotations_type_with_the_held_targets(client):
     """Operator, 2026-10-19: "Add a collection does not show the annotations
-    type". The type is offered beside the plugins, and its target list is
-    the served collections with the snapshot each holds now."""
+    type". The type is offered beside the plugins. RULE 2 (2026-10-25): its
+    targets are not chosen there — the node reads them from the claims and
+    holds them from each one's newest snapshot."""
     r = client.get("/admin/library")
     html = r.text
     assert '<option value="annotations">' in html
-    assert 'id="na_target"' in html and '<option value="gutenberg" data-snapshot=' in html
+    assert 'id="na_target"' not in html and 'id="na_claims"' in html
     assert "/api/hold/collection/create-annotations" in html
 
 
@@ -438,3 +439,23 @@ def test_an_annotations_card_names_a_records_twin_of_its_target(client, monkeypa
     (state / carry.MARKER).write_text(json.dumps(
         {"done": True, "mode": "move", "from": target.collection_id, "to": twin.codex.collection_id}))
     assert web._annotations_shelf(old, [twin])["targets"][0]["target"] == "pubmed-v2"
+
+
+def test_the_share_box_is_on_every_servable_collection_and_reads_share():
+    """Operator, 2026-11-01: "Collection share check box is not aligned with
+    "SHARED" label. Some collections are missing it. The check should be
+    "SHARE"". It was drawn only where the p2p line was cached — a cold cache
+    hid it. Now: every public Codex collection, the box and its word on one
+    line (label.check)."""
+    from pathlib import Path
+    from types import SimpleNamespace
+    page = (Path(web.__file__).parent / "templates" / "library.html").read_text(encoding="utf-8")
+    card = page[page.index("{% if c.shareable %}"):]
+    card = card[:card.index("{% endif %}")]
+    assert '<label class="check"' in card and ">share</label>" in card and "c.p2p" not in card
+    assert "> shared</label>" not in page
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text(encoding="utf-8")
+    assert "label.check{display:inline-flex;align-items:center" in css
+    assert web._shareable(SimpleNamespace(codex=SimpleNamespace(privacy="public")))
+    assert not web._shareable(SimpleNamespace(codex=SimpleNamespace(privacy="private")))
+    assert not web._shareable(SimpleNamespace(codex=None))

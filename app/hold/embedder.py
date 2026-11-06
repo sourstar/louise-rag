@@ -21,11 +21,13 @@ disagreeing about what was measured.
 """
 from __future__ import annotations
 
+import math
 import os
+import re
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from . import calibration as cal, envelope as env
 from .codex import (BACKEND_PLACEHOLDER, ENGINE_VERSION, Codex, CodexError,
@@ -59,6 +61,120 @@ class StatedRun:
     driver: str
 
 
+#: THE CROSS-DEVICE BAR (approved-encoders.md, operator 2026-10-18): a run
+#: whose answer to any calibration item is below this cosine to the stored
+#: CPU reference fails — "sends that engine to further review"
+CPU_REVIEW_LINE = 0.995
+#: THE REVIEW LINE PER QUANTIZATION LEVEL (operator, 2026-11-01: "calculate a
+#: reasonable threshold per quantization level, do not just assume it is the
+#: same as the full precision"). Why a level moves the card from its CPU twin:
+#: for every QUANTISED weight type llama.cpp's CPU path rounds the activations
+#: to 8 bits before the dot product (Q8_K for the k-quants, Q8_0/Q8_1 for the
+#: others — `vec_dot_type`), where the card's path does not round them the
+#: same way. So Q8_0 is no closer to "full precision" here than Q4_K_M is: each
+#: level is measured, card against its CPU twin over the calibration set
+#: (`tools/cross_vendor_check measure --twin`), and its line computed by ONE
+#: rule fixed before the data — `cpu_line_from`: 50 % headroom over the worst
+#: cosine measured, rounded down to 0.001, never stricter than the operator's
+#: 0.995. A broken engine stays far below any of them (NaN, 0.0865, 0.126).
+CPU_LINE_MARGIN = 1.5
+#: the worst card-vs-CPU-twin cosine measured per level, over the calibration
+#: set's texts (the lowest across the model families measured). A level not
+#: here has NO line: a run of it is not judged against a CPU reference until
+#: it is measured (its statement says so), never lent another level's line.
+MEASURED_CPU_WORST: dict[str, float] = {
+    # gutenberg, Qwen3-Embedding-4B Q4_K_M, run 0a80405f against our CPU
+    # engine's twin, 512 texts one a request: worst 0.989292 (a 39-token
+    # text), p1 0.996898, median 0.998358 (München, m6, 2026-11-01)
+    "Q4_K_M": 0.989292,
+    # 16-bit (operator, 2026-11-02: "Lift the cap for 16-bit as recommended"):
+    # the worst across EVERY vendor measured, so a peer's card is judged by
+    # what cards of its kind were seen to do. bge-m3 F16 on AMD ROCm 7.2,
+    # RX 9060 XT (Perugia, 2026-10-18) against its CPU twin, 512 texts:
+    # 0.998362. On the node's Arc B70: 0.999930 (wikipedia's gate, 11-01);
+    # pubmed's MedCPT-Query f16: 0.999951. Line 0.997
+    "F16": 0.998362,
+}
+#: weights with no rounding of their own. Their line is the operator's 0.995
+#: (2026-10-18) as a FLOOR since 2026-11-02: as strict as the level's
+#: cross-vendor measurement allows, never looser than 0.995
+FULL_PRECISION = frozenset({"F32", "FP32", "F16", "FP16", "BF16"})
+#: the spellings of one 16- or 32-bit level, as MEASURED_CPU_WORST keys them
+_FULL_LEVEL = {"F32": "F32", "FP32": "F32", "F16": "F16", "FP16": "F16", "BF16": "BF16"}
+#: llama.cpp's GGUF type tags, as a weights file is named after them
+_LEVEL = re.compile(
+    r"(?i)(?:^|[-_.])((?:I?Q[1-8](?:_[A-Z0-9]+)*)|MXFP4|BF16|FP?16|FP?32)(?=[-_.]|$)")
+#: what a NEAR-EXACT run must reach against it (operator, 2026-10-31)
+CPU_NEAR_LINE = 0.999
+
+
+def quant_level(engine: Any) -> str | None:
+    """The weights' quantization level, upper-case (`Q4_K_M`, `Q8_0`, `F16`
+    …): the type tag of the weights FILE LocalAI loaded, as its load options
+    name it (`options.Model`, kept by app/vega/loadopts.py, in the stated run
+    and so in its statement). None when no file is named or it carries no tag
+    (a Python backend's weights: full precision).
+
+    A name, not the file's own header: VeGa states the weights by digest, and
+    the wrapper — whose code is part of every run — would have to read GGUF's
+    `general.file_type` and state it, a new run for every model. That is the
+    standard way, written down to be taken at the wrapper's next change; a
+    file renamed against its type would get the wrong line until then."""
+    options = (engine or {}).get("options") if isinstance(engine, dict) else None
+    model = (options or {}).get("Model") if isinstance(options, dict) else None
+    if not isinstance(model, str) or not model:
+        return None
+    stem = os.path.basename(model)
+    for ext in (".gguf", ".bin"):
+        if stem.lower().endswith(ext):
+            stem = stem[: -len(ext)]
+    found = _LEVEL.findall(stem)
+    return found[-1].upper() if found else None
+
+
+def cpu_line_from(worst: float, *, full_precision: bool = False) -> float:
+    """THE RULE: a level's review line from the worst card-vs-CPU-twin
+    cosine measured for it — CPU_LINE_MARGIN times its distance from 1 below
+    1, rounded DOWN to 0.001. A quantised level's is never above
+    CPU_REVIEW_LINE; a 16- or 32-bit level's never below it (operator,
+    2026-11-02: the cap lifted for 16-bit, whose rounding gap is small)."""
+    line = 1.0 - CPU_LINE_MARGIN * (1.0 - float(worst))
+    # rounded first to 1e-9: 1 - 1.5 x 0.05 is 0.92499999… in binary floating point
+    line = math.floor(round(line, 9) * 1000) / 1000
+    return max(CPU_REVIEW_LINE, line) if full_precision else min(CPU_REVIEW_LINE, line)
+
+
+def cpu_review_line(engine: Any) -> float | None:
+    """The CPU review line a run is held to: CPU_REVIEW_LINE for full
+    precision (no tag, or F16/BF16/F32); for a quantised level, the line
+    computed from its measurement (`MEASURED_CPU_WORST`, `cpu_line_from`);
+    None for a quantised level not yet measured."""
+    level = quant_level(engine)
+    if level is None:
+        return CPU_REVIEW_LINE
+    if level in FULL_PRECISION:
+        worst = MEASURED_CPU_WORST.get(_FULL_LEVEL[level])
+        return CPU_REVIEW_LINE if worst is None else cpu_line_from(worst, full_precision=True)
+    worst = MEASURED_CPU_WORST.get(level)
+    return None if worst is None else cpu_line_from(worst)
+
+
+EXACT, NEAR = "exact", "near"
+#: THE MULTI-LOAD GATE (operator, 2026-10-31: "the gate may include multiple
+#: runs to ensure that the tolerance is not just a lucky run"): fresh loads
+#: measured, and the prefixes of the set's longest item added to the sixteen
+#: so every length band is asked (a shape-dependent kernel is found only by an
+#: input of that shape, 2026-10-30)
+NEAR_LOADS = 3
+SWEEP = 32
+#: the set's longest texts the batch check sends besides the sixteen
+#: (2026-11-02, gutenberg): a batch of window-long texts is where batching
+#: went wrong, and the sixteen fingerprint texts are short
+LONG_PROBE = 16
+#: how far apart a near-exact run's answers to one text may be
+NEAR_VARIATION = 0.99999
+
+
 @dataclass(frozen=True)
 class Run:
     """What one pass of the gate found. `passed`, `worst` and `median` are
@@ -84,6 +200,35 @@ class Run:
     fingerprint: str | None = None
     batch_invariant: bool | None = None
     role: str = "document"            # "document" | "query"
+    # CLAUDE.md invariant 12 (operator, 2026-10-18; measured by the gate since
+    # 2026-10-25, the operator's choice A): the sixteen embedded one at a
+    # time a second time, in reverse order, came back byte for byte. False
+    # fails the run whatever its cosines: a vector its own run cannot
+    # reproduce cannot be checked by anyone. None where no single-text pass
+    # was asked for.
+    reproducible: bool | None = None
+    # THE STORED CPU REFERENCE (operator, 2026-10-31; docs/notes/near-exact-
+    # runs.md §2): the CPU twin's run that made it, and every one of the 512
+    # answers' cosine to it. None where none is stored for the run's weights.
+    cpu_run: str | None = None
+    cpu_cosines: tuple[float, ...] | None = None
+    # how exact the run is (§3): "exact", one load, until the multi-load gate
+    exactness: str = EXACT
+    loads: int = 1
+    load_variation: float = 1.0
+    #: the CPU review line this run is held to (`cpu_review_line`); None for
+    #: a quantization level not yet measured
+    cpu_line: float | None = CPU_REVIEW_LINE
+    #: its level, for the reason given (`quant_level`)
+    quant: str | None = None
+
+    @property
+    def cpu_worst(self) -> float | None:
+        return min(self.cpu_cosines) if self.cpu_cosines else None
+
+    @property
+    def cpu_median(self) -> float | None:
+        return statistics.median(self.cpu_cosines) if self.cpu_cosines else None
 
     @property
     def passed(self) -> int:
@@ -101,8 +246,17 @@ class Run:
     def ok(self) -> bool:
         """03 §3.3, both conjuncts, both over the drawn n: "at least
         `min_pass` reach cosine >= `tolerance` … and the median of those n
-        does too"."""
-        return self.passed >= self.min_pass and self.median >= self.tolerance
+        does too"; and how exact the run is (`runs.passing` reads the same
+        from the statement)."""
+        if not (self.passed >= self.min_pass and self.median >= self.tolerance):
+            return False
+        if self.cpu_worst is not None and (self.cpu_line is None
+                                           or self.cpu_worst < self.cpu_line):
+            return False
+        if self.exactness == EXACT:
+            return self.reproducible is not False and self.load_variation >= 1.0
+        return (self.loads >= NEAR_LOADS and self.load_variation >= NEAR_VARIATION
+                and self.cpu_worst is not None and self.cpu_worst >= CPU_NEAR_LINE)
 
     def why(self) -> str:
         if self.ok:
@@ -114,6 +268,39 @@ class Run:
                          f"{self.tolerance} (needs {self.min_pass})")
         if self.median < self.tolerance:
             parts.append(f"median {self.median:.4f} is below {self.tolerance}")
+        if self.exactness == NEAR:
+            if self.loads < NEAR_LOADS or self.load_variation < NEAR_VARIATION:
+                parts.append(f"near-exact: over {self.loads} fresh load(s) its answers to one "
+                             f"text came within {self.load_variation:.7f}, and a near-exact run "
+                             f"needs {NEAR_LOADS} loads within {NEAR_VARIATION}")
+            if self.cpu_worst is None or self.cpu_worst < CPU_NEAR_LINE:
+                parts.append(f"near-exact: needs a stored CPU reference reached at "
+                             f"{CPU_NEAR_LINE} ({'none is stored' if self.cpu_worst is None else f'worst {self.cpu_worst:.6f}'}; "
+                             f"`louise hold embedder cpu-reference`)")
+        elif self.load_variation < 1.0 and self.reproducible is not False:
+            parts.append(f"the run did not give back its own bytes across {self.loads} fresh "
+                         f"loads (closest {self.load_variation:.7f}), and its collection asks "
+                         f"`exactness = \"exact\"`: bytes or nothing. Without that key a run "
+                         f"is held to the near-exact bound (CLAUDE.md invariant 12, operator "
+                         f"2026-11-01; docs/notes/near-exact-runs.md)")
+        if self.reproducible is False and self.exactness == EXACT:
+            parts.append("the run did not give back its own bytes: the sixteen fingerprint texts, "
+                         "embedded one at a time again in reverse order, came back different, "
+                         "and its collection asks `exactness = \"exact\"` (CLAUDE.md invariant "
+                         "12; set the vendor's reproducibility mode and one request at a time, "
+                         "docs/notes/approved-encoders.md)")
+        if self.cpu_worst is not None and self.cpu_line is None:
+            parts.append(f"its weights are quantised at {self.quant}, a level whose card-vs-CPU "
+                         f"line is not measured yet (MEASURED_CPU_WORST): it is not judged "
+                         f"against the CPU reference on another level's line — measure it "
+                         f"with `tools/cross_vendor_check measure --twin` "
+                         f"(docs/notes/near-exact-runs.md §2)")
+        elif self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
+            parts.append(f"against the stored CPU reference the worst of the 512 is "
+                         f"{self.cpu_worst:.6f}, below the review line {self.cpu_line} "
+                         f"({'full precision: 0.995, the operator (2026-10-18)' if self.quant is None else (f'{self.quant}: its cross-vendor measurement, never looser than 0.995 (operator 2026-11-02)' if self.quant in FULL_PRECISION else f'{self.quant}, computed from its measurement')}): "
+                         f"nothing is written from this run until a person has reviewed "
+                         f"it (docs/notes/near-exact-runs.md)")
         return "; ".join(parts)
 
 
@@ -135,26 +322,112 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 COSINE_ROUNDING = 1e-6
 
 
-def within_band(single: Sequence[Sequence[float]], batched: Sequence[Sequence[float]],
-                again) -> bool:
-    """03 §3.3's batch check (amended 2026-10-12, operator: amendment b).
-    Equal bytes pass at once. Otherwise the batched answers are judged
-    against the run's OWN run-to-run variation: `again()` embeds the same
-    texts one at a time a second time, and every batched vector must be as
-    close to its single-text answer as the closest-to-worst single-text
-    repeat is — the lowest cosine between the two single-text passes,
-    less f32 rounding. A batching fault like 2026-07's (a vector for
-    another text) is far outside any such band; last-bit noise is not."""
-    from . import fingerprint
-    if fingerprint.of(batched) == fingerprint.of(single):
-        return True
+def batch_invariant(single: Sequence[Sequence[float]], batched: Sequence[Sequence[float]]) -> bool:
+    """03 §3.3's batch check (*amended 2026-10-25*, operator's choice A,
+    CLAUDE.md invariant 12): the batched answers are the single-text ones
+    byte for byte, or the run is validated for one-at-a-time work only. The
+    band of 2026-10-12 (batched answers within the single-text passes'
+    own variation) is gone: under invariant 12 a run's single-text passes
+    are equal, so the only band left was f32 rounding, and a batched vector
+    that a checker embedding one text cannot reproduce is not admitted."""
+    # the fingerprint's own bytes (each vector little-endian f32, 09 §9.12),
+    # compared directly: the check carries the set's longest texts besides
+    # the sixteen (LONG_PROBE), and a fingerprint is over sixteen alone
+    import numpy as np
     if len(batched) != len(single):
         return False
-    repeat = again()
-    if len(repeat) != len(single):
-        return False
-    band = min(cosine(a, b) for a, b in zip(single, repeat))
-    return min(cosine(a, b) for a, b in zip(single, batched)) >= band - COSINE_ROUNDING
+    a, b = np.asarray(single, dtype="<f4"), np.asarray(batched, dtype="<f4")
+    return a.shape == b.shape and a.tobytes() == b.tobytes()
+
+
+def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float]]) -> bool:
+    """Invariant 12 measured: the same texts one at a time, a second pass
+    (the caller sends it in reverse order), give the same bytes."""
+    from . import fingerprint
+    return len(again) == len(single) and fingerprint.of(again) == fingerprint.of(single)
+
+
+def longest(texts: Sequence, count: int) -> list:
+    """The `count` longest items of the set (a pair by its two segments),
+    longest first; ties in set order. What the batch check sends together."""
+    if count <= 0:
+        return []
+    size = [(len(t[0]) + len(t[1])) if isinstance(t, tuple) else len(t) for t in texts]
+    order = sorted(range(len(texts)), key=lambda i: (-size[i], i))
+    return [texts[i] for i in order[:count]]
+
+
+def sweep(texts: Sequence, count: int, window: int | None) -> list:
+    """`count` prefixes of the longest item (a pair's second segment, its
+    first kept whole), from one word up to `window` words, spread evenly:
+    every length band, as tools/vega_repro_check's `--sweep` asks."""
+    if count <= 0 or not texts:
+        return []
+    longest = max(texts, key=lambda t: len(t[1]) if isinstance(t, tuple) else len(t))
+    first, body = longest if isinstance(longest, tuple) else (None, longest)
+    words = body.split()
+    top = min(len(words), window) if window else len(words)
+    if top <= 0:
+        return []
+    n = min(count, top)
+    sizes = sorted({1 + (k * (top - 1)) // max(1, n - 1) for k in range(n)})
+    return [(first, " ".join(words[:m])) if first is not None else " ".join(words[:m])
+            for m in sizes]
+
+
+def fresh_loads(texts: Sequence, embed_one, reload: Callable[[], None],
+                seed: bytes, loads: int = NEAR_LOADS) -> tuple[int, float]:
+    """(loads, the closest two answers of any one text — 1.0 when every text
+    came back as one byte string). Each load is fresh (`reload`) and asks the
+    texts one at a time in its own order."""
+    import random
+    import numpy as np
+    answers: list[dict[bytes, list[float]]] = [{} for _ in texts]
+    rng = random.Random(seed)
+    for _ in range(loads):
+        reload()
+        order = list(range(len(texts)))
+        rng.shuffle(order)
+        got = embed_one([texts[k] for k in order])
+        for k, v in zip(order, got):
+            arr = np.asarray(v, dtype="<f4")
+            if not np.all(np.isfinite(arr)):
+                # A NaN is a wrong answer, not a variation: the run cannot be
+                # exact or near, however often it comes back the same (P5 with
+                # FA on gave one, 2026-10-31)
+                return loads, 0.0
+            answers[k].setdefault(arr.tobytes(), list(v))
+    closest = 1.0
+    for seen in answers:
+        vs = list(seen.values())
+        for i in range(len(vs)):
+            for j in range(i + 1, len(vs)):
+                closest = min(closest, min(cosine(vs[i], vs[j]), 1.0 - 1e-12))
+    return loads, closest
+
+
+def gate_texts(codex: Codex, role: str, items: Sequence | None = None) -> list:
+    """The 512 items as the gate sends them for `role`: the space's set (a
+    pair space's from its member, `items`); on the query side each as one
+    text, with the space's instruction before it. One definition, so the
+    stored CPU reference is made of exactly what the gate compares."""
+    if role not in ("document", "query"):
+        raise GateError(f"role is document or query, got {role!r}")
+    if items is None:
+        if cal.form(codex) != "text":
+            raise GateError("a pair space's calibration set travels in its member "
+                            "(09 §9.12); the gate is given it, and was not")
+        items = cal.verify(codex.modality, codex.space.calibration.set)
+    texts = list(items)
+    if role == "query":
+        if codex.space.query.encoder is None:
+            raise GateError("this space is symmetric: it has no query run to gate — "
+                            "queries and documents come from one run (03 §3.3)")
+        texts = [cal.query_text(t) for t in texts]
+        instruction = codex.space.query.instruction
+        if instruction:
+            texts = [f"{instruction}{t}" for t in texts]
+    return texts
 
 
 def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
@@ -163,8 +436,22 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              role: str = "document",
              stated: StatedRun | None = None,
              embed_one=None, contribute=None,
-             items: Sequence[cal.Item] | None = None) -> Run:
+             items: Sequence[cal.Item] | None = None,
+             cpu_reference: tuple[str, Sequence[Sequence[float]]] | None = None,
+             reload: Callable[[], None] | None = None,
+             exactness: str = EXACT) -> Run:
     """One pass: embed all 512, draw the quorum, compare.
+
+    `cpu_reference`: (the CPU twin's run, its 512 vectors) — the stored CPU
+    reference (docs/notes/near-exact-runs.md §2): every answer's cosine to it
+    is kept, and a worst below CPU_REVIEW_LINE fails the run.
+
+    `reload`: loads the model afresh. Given it, the fresh-load half of
+    invariant 12 is measured here (§3): NEAR_LOADS loads, each asking the
+    sixteen and SWEEP prefixes of the longest item one at a time in its own
+    order. Every text one byte string: exact. Otherwise the closest two
+    answers of a text are `load_variation`, and the run is near-exact only
+    where `exactness` is NEAR — never downgraded unasked.
 
     `embed(texts) -> list[list[float]]` is injected rather than imported so
     the gate stays a pure function of what the endpoint returned — the
@@ -195,22 +482,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     pass, the fingerprint and the batches alike — and the query side gets
     each item as one text (`calibration.query_text`).
     """
-    if role not in ("document", "query"):
-        raise GateError(f"role is document or query, got {role!r}")
-    if items is None:
-        if cal.form(codex) != "text":
-            raise GateError("a pair space's calibration set travels in its member "
-                            "(09 §9.12); the gate is given it, and was not")
-        items = cal.verify(codex.modality, codex.space.calibration.set)
-    texts = list(items)
-    if role == "query":
-        if codex.space.query.encoder is None:
-            raise GateError("this space is symmetric: it has no query run to gate — "
-                            "queries and documents come from one run (03 §3.3)")
-        texts = [cal.query_text(t) for t in texts]
-        instruction = codex.space.query.instruction
-        if instruction:
-            texts = [f"{instruction}{t}" for t in texts]
+    texts = gate_texts(codex, role, items)
     if len(reference) != cal.SIZE:
         raise GateError(f"the calibration member carries {len(reference)} "
                         f"reference vectors, the set has {cal.SIZE}")
@@ -228,6 +500,13 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
                             f"dimensions, the space is {codex.space.dim}")
 
     all_cos = tuple(cosine(got[i], reference[i]) for i in range(cal.SIZE))
+    cpu_run = cpu_cos = None
+    if cpu_reference is not None:
+        cpu_run, cpu_vectors = cpu_reference
+        if len(cpu_vectors) != cal.SIZE:
+            raise GateError(f"the stored CPU reference holds {len(cpu_vectors)} vectors, "
+                            f"the set has {cal.SIZE}")
+        cpu_cos = tuple(cosine(got[i], cpu_vectors[i]) for i in range(cal.SIZE))
 
     seed = seed if seed is not None else os.urandom(32)
     universe = [str(i) for i in range(cal.SIZE)]
@@ -240,14 +519,52 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     # LOWER bound on throughput rather than an invented number.
     tokens = sum(max(1, cal.item_chars(t) // 4) for t in texts)
 
-    taken = invariant = None
+    taken = invariant = reproducible = None
+    variation = 1.0
+    loads = 1
     if embed_one is not None:
         from . import fingerprint
         sixteen = [texts[i] for i in fingerprint.indices(texts)]
         single = embed_one(sixteen)
         taken = fingerprint.of(single)
+        # invariant 12, in another order (the fresh-load half stays the
+        # measurement harness's: llama-intel-arc-b70 capture.py)
+        again = list(reversed(embed_one(list(reversed(sixteen)))))
+        reproducible = reproduces(single, again)
+        # how far apart the two passes are: 1 when byte-equal; carried in the
+        # statement, which is what a write is admitted by (`runs.passing`)
+        variation = 1.0 if reproducible else min(
+            (cosine(a, b) for a, b in zip(single, again)), default=0.0)
         if contribute is not None:
-            invariant = within_band(single, contribute(sixteen), lambda: embed_one(sixteen))
+            # THE LONG TEXTS TOO (2026-11-02, München's gut-diag): gutenberg's
+            # batch 16 answered the five longest texts of the set wrong (cosine
+            # 0.91–0.99 to the member) while each alone was right, and this
+            # check — the sixteen fingerprint texts, all short — said "as one
+            # text at a time". So the batches also carry the set's longest
+            # texts, cut where the space cuts them, together in one request.
+            # The fault was the old engine's (c0fd786 + P5): on 16acc89 the
+            # 16 longest in one request are byte-equal to one at a time
+            # (approved-encoders.md); the check stays, per run.
+            long = longest(texts, LONG_PROBE)
+            single = single + (embed_one(long) if long else [])
+            batched = contribute(sixteen + long)
+            invariant = batch_invariant(single, batched)
+            if not invariant and exactness == NEAR and len(batched) == len(single):
+                # BATCHES HELD TO THE RUN'S OWN BOUND (operator, 2026-11-01,
+                # choice B): a near-exact run's batched answers may differ in
+                # their last bits from its single-text ones, as its loads may;
+                # within NEAR_VARIATION they are the same run's answers, and
+                # the difference counts toward the run's variation. Further
+                # apart, the batching is refused as before — and the run stays
+                # what its single-text answers make it, for one text a request
+                apart = min((cosine(a, b) for a, b in zip(single, batched)), default=0.0)
+                invariant = apart >= NEAR_VARIATION
+                if invariant:
+                    variation = min(variation, apart)
+        if reload is not None:
+            loads, across = fresh_loads(sixteen + sweep(texts, SWEEP, codex.space.ctx),
+                                        embed_one, reload, seed or b"")
+            variation = min(variation, across)
 
     return Run(
         space_id=codex.space_id,
@@ -261,6 +578,11 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         max_input_tokens=codex.space.ctx,
         tokens_per_s=int(tokens / elapsed),
         stated=stated, fingerprint=taken, batch_invariant=invariant, role=role,
+        reproducible=reproducible, cpu_run=cpu_run, cpu_cosines=cpu_cos,
+        load_variation=variation, loads=loads,
+        exactness=NEAR if (exactness == NEAR and variation < 1.0) else EXACT,
+        cpu_line=cpu_review_line(stated.engine if stated is not None else None),
+        quant=quant_level(stated.engine if stated is not None else None),
     )
 
 
@@ -303,15 +625,22 @@ STATEMENT_VERSION = 3
 #: a backend engine is told by `${BACKEND}/` in its program (09 §9.3), and
 #: a reader of version 3 would take its tree digest for an image.
 BACKEND_STATEMENT_VERSION = 4
-STATEMENT_VERSIONS = (1, 2, 3, 4)
+#: Version 5 (2026-10-31, operator's choice C; docs/notes/near-exact-runs.md
+#: §4): every run's statement — a backend engine's or not, told as before by
+#: `${BACKEND}/` in its program — with `exactness`, `loads`, `load_variation`
+#: and `cpu_reference`. Versions 3 and 4 stay read: "exact, one load, no CPU
+#: reference".
+NEAR_EXACT_VERSION = 5
+NEAR_EXACT_KEYS = ("exactness", "loads", "load_variation", "cpu_reference")
+STATEMENT_VERSIONS = (1, 2, 3, 4, 5)
 
 
 def statement_version(engine: Any) -> int:
-    """The version a statement of a run with this engine is written at: 4
-    for a backend engine's run and only for it, 3 for every other — so no
-    statement, `engine_id` or run already stated moves (09 §9.12)."""
-    args = engine.get("args") if isinstance(engine, dict) else None
-    return BACKEND_STATEMENT_VERSION if is_backend_args(args) else STATEMENT_VERSION
+    """The version a statement is written at: 5 for every run since
+    2026-10-31 (NEAR_EXACT_VERSION: how exact it is and how it stands against
+    the stored CPU reference are part of every verdict). Before it, 4 for a
+    backend engine's run and 3 for every other; those stay read as written."""
+    return NEAR_EXACT_VERSION
 
 
 def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
@@ -373,7 +702,26 @@ def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
         "key": env.key_text(key.verify_key),
         "time": now,
     }
+    if body["version"] >= 5:
+        # how exact the run is, and how it stands against the stored CPU
+        # reference (docs/notes/near-exact-runs.md §4)
+        body["exactness"] = run.exactness
+        body["loads"] = run.loads
+        body["load_variation"] = _decimal(run.load_variation)
+        body["cpu_reference"] = (None if run.cpu_run is None else
+                                 {"run": run.cpu_run, "worst": f"{run.cpu_worst:.6f}",
+                                  "median": f"{run.cpu_median:.6f}"})
     return env.sign(env.CALIBRATION, body, key)
+
+
+def _decimal(x: float) -> str:
+    """A load variation as 09 §9.1's decimal string: "1" when the answers
+    were byte-equal, and never a string that reads as 1 when they were not
+    (0.99999999 is not exact, and rounded to six places it would say so)."""
+    if x >= 1.0:
+        return "1"
+    out = f"{x:.9f}"
+    return "0.999999999" if out.startswith("1") else out
 
 
 def _validate_stated_engine(engine: Any) -> None:
@@ -409,12 +757,18 @@ def read_statement(envelope_: dict[str, Any]) -> dict[str, Any]:
             raise GateError(
                 f"a version-{version} calibration statement names an engine carrying "
                 f"{BACKEND_PLACEHOLDER}; a backend engine's run is stated at version "
-                f"{BACKEND_STATEMENT_VERSION} (09 §9.3, §9.12)")
+                f"{BACKEND_STATEMENT_VERSION} or later (09 §9.3, §9.12)")
         if version == BACKEND_STATEMENT_VERSION and not backend:
             raise GateError(
                 f"a version {version} calibration statement is written for a backend "
                 f"engine's run alone ({BACKEND_PLACEHOLDER}/ in its program); every "
                 f"other run is stated at {STATEMENT_VERSION} (09 §9.12, §9.18)")
+        missing = [k for k in NEAR_EXACT_KEYS if k not in body]
+        if version >= 5 and missing:
+            raise GateError(f"a version-5 calibration statement carries "
+                            f"{', '.join(NEAR_EXACT_KEYS)}; this one lacks {', '.join(missing)}")
+        if version >= 5 and body.get("exactness") not in (EXACT, NEAR):
+            raise GateError(f"exactness is {EXACT!r} or {NEAR!r}, got {body.get('exactness')!r}")
     return body
 
 

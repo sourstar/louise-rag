@@ -99,6 +99,36 @@ def path_for(root: Path, name: str, run_id: str, role: str = "document") -> Path
     return directory(root, name) / f"{role}-{run_id.split(':', 1)[-1][:16]}.json"
 
 
+def _batching_file(root: Path, name: str) -> Path:
+    return directory(root, name).parent / "gate-batching.json"
+
+
+def record_batching(root: Path, name: str, role: str, run_id: str, measured: dict[str, int]) -> None:
+    """The batching the gate's `contribute` pass measured `run_id` at — the
+    node's EMBED_BATCH, EMBED_CONCURRENCY and the recipe's lanes. LOCAL, not
+    in the statement (no wire change): a statement's `batch_invariant` says
+    only "as this peer contributed then", and on a node at EMBED_BATCH=1 that
+    was one text a request — no evidence for a batch (2026-10-30)."""
+    p = _batching_file(root, name)
+    try:
+        got = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        got = {}
+    got[f"{role}:{run_id}"] = {k: int(v) for k, v in measured.items()}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(got, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def batching_measured(root: Path, name: str, role: str, run_id: str) -> dict[str, int] | None:
+    try:
+        got = json.loads(_batching_file(root, name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return got.get(f"{role}:{run_id}")
+
+
 def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
     """Write a statement, pass or fail, where its run and role put it."""
     body = statement["body"]
@@ -113,13 +143,50 @@ def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
     return out
 
 
+def requires_exact(codex) -> bool:
+    """Does the collection's Codex require bit-exact runs (09 §9.3
+    `space.exactness`, EXACTNESS_VERSION)? Absent: the near-exact rule
+    (CLAUDE.md invariant 12)."""
+    from .codex import EXACT_REQUIRED
+    space = getattr(codex, "space", None)
+    return getattr(space, "exactness", None) == EXACT_REQUIRED
+
+
 def passing(body: dict[str, Any], codex: Codex) -> bool:
     """03 §3.3, both conjuncts, from the numbers the statement carries — so
-    anyone holding it can recheck the verdict."""
+    anyone holding it can recheck the verdict.
+
+    FROM VERSION 5, HOW EXACT THE RUN IS AND HOW IT STANDS AGAINST THE STORED
+    CPU REFERENCE ARE PART OF THE VERDICT (docs/notes/near-exact-runs.md):
+    an exact run's two single-text passes are byte-equal (`load_variation`
+    "1"); a near-exact one measured several loads, varies by no more than
+    NEAR_VARIATION, and reaches CPU_NEAR_LINE against a stored CPU reference;
+    any run falls below its review line against one and fails
+    (`embedder.cpu_review_line`: 0.995 for full precision, each quantization
+    level its measured line, an unmeasured level none). Before version
+    5 the gate's own-bytes verdict was never in the statement, so a run that
+    did not give back its own bytes was admitted to write anyway (found
+    2026-10-31 building this)."""
     try:
-        return (int(body["passed"]) >= codex.space.calibration.min_pass
-                and Decimal(body["median"]) >= Decimal(codex.space.tolerance))
-    except (KeyError, ValueError, InvalidOperation):
+        ok = (int(body["passed"]) >= codex.space.calibration.min_pass
+              and Decimal(body["median"]) >= Decimal(codex.space.tolerance))
+        if not ok or int(body.get("version", 1)) < 5:
+            return ok
+        cpu = body["cpu_reference"]
+        line = emb.cpu_review_line(body.get("engine"))      # the weights' level's own line
+        if cpu is not None and (line is None or Decimal(cpu["worst"]) < Decimal(str(line))):
+            return False
+        variation = Decimal(body["load_variation"])
+        if body["exactness"] == emb.EXACT:
+            return variation == 1
+        if requires_exact(codex):
+            # the space requires bit-exact runs (09 §9.3, EXACTNESS_VERSION):
+            # a near-exact run, however close, contributes nothing to it
+            return False
+        return (body["exactness"] == emb.NEAR and int(body["loads"]) >= emb.NEAR_LOADS
+                and variation >= Decimal(str(emb.NEAR_VARIATION)) and cpu is not None
+                and Decimal(cpu["worst"]) >= Decimal(str(emb.CPU_NEAR_LINE)))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
         return False
 
 
@@ -344,7 +411,8 @@ def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
 # ---- the check before a write ------------------------------------------------------
 
 def check(root: Path, name: str, codex: Codex, answered: set, *,
-          signer: str | None, role: str = "document", batched: bool = True) -> None:
+          signer: str | None, role: str = "document", batched: bool = True,
+          contributes: dict[str, int] | None = None) -> None:
     """May vectors from answers naming `answered` be written? Silent when
     they may. `answered` is the set of `Louise-Run` values seen on the
     answers that carried them — or, for an `api = "vega"` encoder, the runs
@@ -388,9 +456,22 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
             raise RunUnvalidated(
                 f"{name}: run {run_id[:23]}… is validated for single-text work only — "
                 f"its gate found that a batch does not answer as one text at a time "
-                f"does. Embed one text a request (EMBED_BATCH=1, concurrency 1), or "
+                f"does. Embed one text a request (batch 1, concurrency 1), or "
                 f"fix the engine's batching and let the gate run again", run_id,
                 failed=True)
+        if batched and contributes is not None:
+            # INVARIANT AT THE BATCHING THIS PEER USES NOW: a verdict measured
+            # one text a request (EMBED_BATCH=1, as the node ran until
+            # 2026-10-30) is no evidence for a batch. Not a failure: the gate
+            # runs again at this setting (`run_check._look`), and only then
+            # is a batched answer written
+            measured = batching_measured(root, name, role, run_id)
+            if measured is None or any(int(measured.get(k, 0)) < int(v) for k, v in contributes.items()):
+                raise RunUnvalidated(
+                    f"{name}: run {run_id[:23]}… was gated at "
+                    f"{measured or 'an unrecorded batching (one text a request)'}; this peer now "
+                    f"contributes at {contributes}: nothing batched is written from it until the "
+                    f"gate has run at this setting (03 §3.3)", run_id)
 
 
 class Answers:
@@ -413,7 +494,8 @@ class Answers:
 def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
              embed, embed_one, contribute, stated: emb.StatedRun, key,
              now: str, items=None,
-             on_run: Callable[[emb.Run], None] | None = None) -> dict[str, Any]:
+             on_run: Callable[[emb.Run], None] | None = None,
+             cpu_reference=None, reload=None, exactness: str = emb.EXACT) -> dict[str, Any]:
     """Run the gate against one stated run and KEEP the statement — pass or
     fail: "a failure is kept too, so the run is not retried against the same
     set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
@@ -425,7 +507,8 @@ def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
     operator's cross-vendor reference reads them, approved-encoders.md)."""
     run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
                        stated=stated, embed_one=embed_one, contribute=contribute,
-                       items=items)
+                       items=items, cpu_reference=cpu_reference, reload=reload,
+                       exactness=exactness)
     # THE PASS IS ABOUT ONE RUN. If the model was relaunched while the 512
     # texts were going through — another flag, another image — some answers
     # came from another run, and the numbers describe neither. 03 §3.3: "An

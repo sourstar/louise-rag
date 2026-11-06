@@ -18,9 +18,9 @@ The dev PC's RX 9060 XT (gfx1200), 2026-10-18. The Louise node itself is
    sh deploy/vega/stage/stage_src.sh /tmp/vega-src.tgz HEAD     # unpack as src/
    docker run --rm -v <cache>:/cache -v <src>:/src:ro python@sha256:54c85f3c… \
      sh /src/deploy/vega/stage/fetch.sh
-   docker run --rm -v localai_backends:/backends busybox mkdir -p /backends/vega-llama-cpp
-   docker run --rm -e PKG=vega-llama-cpp -e BACKEND=rocm-llama-cpp \
-     -e SOCKET=/backends/vega-llama-cpp/run/receipts.sock \
+   docker run --rm -v localai_backends:/backends busybox mkdir -p /backends/vega-louise-llama-cpp
+   docker run --rm -e PKG=vega-louise-llama-cpp -e BACKEND=rocm-llama-cpp \
+     -e SOCKET=/backends/vega-louise-llama-cpp/run/receipts.sock \
      -e CARDS='{"0000:03:00.0": "AMD Radeon RX 9060 XT"}' \
      -e RUNTIME_PACKAGES='["hip-runtime-amd", "hsa-rocr", "rocm-core", "rocdxg-roct"]' \
      -e AMD_SMI=/opt/rocm-wsl/bin/amd-smi -e OWNER=0:0 \

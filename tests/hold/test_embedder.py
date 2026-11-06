@@ -211,10 +211,12 @@ def test_the_statement_is_09_9_12s_body_signed_under_its_domain():
         "kind", "version", "space_id", "collection_id", "set", "role",
         "run", "engine", "encoder_weights", "driver", "fingerprint",
         "batch_invariant", "seed", "sampled", "passed",
-        "worst", "median", "max_input_tokens", "tokens_per_s", "key", "time"}
-    # "this RUN, on this peer, is compliant with this space"; version 3 since
-    # the options amendment, whose engine may carry `options` (09 §9.12)
-    assert body["kind"] == "louise-calibration-run" and body["version"] == 3
+        "worst", "median", "max_input_tokens", "tokens_per_s", "key", "time",
+        "exactness", "loads", "load_variation", "cpu_reference"}
+    # "this RUN, on this peer, is compliant with this space"; version 5 since
+    # the operator's choice C (2026-10-31): how exact the run is, and how it
+    # stands against the stored CPU reference (near-exact-runs.md §4)
+    assert body["kind"] == "louise-calibration-run" and body["version"] == 5
     stated = a_stated_run(codex)
     assert body["run"] == stated.run_id and body["engine"] == stated.engine
     assert body["driver"] == stated.driver and body["role"] == "document"
@@ -333,6 +335,32 @@ def test_a_run_that_batches_differently_is_validated_for_single_texts_only():
     assert body["batch_invariant"] is False
 
 
+def test_a_batch_that_answers_only_the_long_texts_wrong_is_found():
+    """2026-11-02, gutenberg (München's gut-diag): batch 16 answered the five
+    longest texts of the set wrong — cosine 0.91–0.99 to the member — while
+    each alone was right, and the check, the sixteen short fingerprint texts,
+    said "as one text at a time". The batches now carry the set's longest
+    texts too, together in one request."""
+    codex = codex_768()
+    ref = reference()
+    texts = emb.gate_texts(codex, "document", None)
+    long = set(emb.longest(texts, emb.LONG_PROBE))
+    assert len(long) == emb.LONG_PROBE
+    assert min(map(len, long)) >= max(len(t) for t in texts if t not in long)
+
+    def together(batch):
+        """Right for short texts, wrong for a long text in a batch."""
+        return [fake_embed([t], tag=b"wrong" if len(batch) > 1 and t in long else b"")[0]
+                for t in batch]
+    run = emb.run_gate(codex, reference=ref, embed=lambda t: ref, seed=b"\x09" * 32,
+                       stated=a_stated_run(codex), embed_one=fake_embed, contribute=together)
+    assert run.batch_invariant is False, "the long texts' batch is compared too"
+    right = emb.run_gate(codex, reference=ref, embed=lambda t: ref, seed=b"\x09" * 32,
+                         stated=a_stated_run(codex), embed_one=fake_embed,
+                         contribute=fake_embed)
+    assert right.batch_invariant is True
+
+
 def test_an_asymmetric_spaces_query_run_is_gated_against_its_own_reference():
     codex = codex_768()
     seen = {}
@@ -389,23 +417,22 @@ def _jitter(vectors, eps, seed):
     return out
 
 
-def test_batched_answers_within_the_single_text_repeat_band_are_batch_invariant():
-    """An engine whose single-text answers move run to run by last-bit noise,
-    and whose batched answers move no more: invariant at those settings."""
+def test_batched_answers_are_batch_invariant_only_when_the_bytes_are_equal():
+    """03 §3.3, amended 2026-10-25 (operator's choice A, invariant 12): the
+    2026-10-12 band is gone. Last-bit noise between the batched and the
+    single-text answers is a run validated for one-at-a-time work only, and
+    2026-07's fault (a vector for another text) is as before."""
     base = fake_embed([f"text {i}" for i in range(16)])
-    single, repeat = _jitter(base, 1e-4, 1), _jitter(base, 1e-4, 2)
-    batched = _jitter(base, 1e-5, 3)
-    assert emb.within_band(single, batched, lambda: repeat) is True
+    assert emb.batch_invariant(base, [list(v) for v in base]) is True
+    assert emb.batch_invariant(base, _jitter(base, 1e-5, 3)) is False, "noise is not equal bytes"
+    assert emb.batch_invariant(base, [base[1], base[0]] + base[2:]) is False
+    assert emb.batch_invariant(base, base[:15]) is False
 
 
-def test_batched_answers_outside_the_band_are_not():
-    """A deterministic single-text engine (repeats equal) leaves no band:
-    batched answers that differ beyond f32 rounding fail, and a vector for
-    another text — 2026-07's fault — fails whatever the band."""
+def test_a_run_that_does_not_give_back_its_own_bytes_fails_the_gate():
+    """Invariant 12, measured by the gate: the sixteen one at a time again,
+    in reverse order, must come back byte for byte, or the run fails
+    whatever its cosines."""
     base = fake_embed([f"text {i}" for i in range(16)])
-    assert emb.within_band(base, _jitter(base, 1e-3, 4), lambda: base) is False
-    swapped = [base[1], base[0]] + base[2:]
-    noisy = _jitter(base, 1e-4, 5)
-    assert emb.within_band(base, swapped, lambda: noisy) is False
-    assert emb.within_band(base, list(base), lambda: (_ for _ in ()).throw(AssertionError("asked"))) \
-        is True, "equal bytes: no second pass"
+    assert emb.reproduces(base, [list(v) for v in base]) is True
+    assert emb.reproduces(base, _jitter(base, 1e-7, 6)) is False

@@ -8,7 +8,7 @@
 #     lang, date, OtherAbstract, ids, publication types, qualifiers, ... —
 #     and today's facets and slicing defaults;
 #   - it is a version-3 Codex: `space.encoder` names the ENGINE the reference
-#     vectors are computed with, written out whole as RAGE states the run
+#     vectors are computed with, written out whole as the model pool states the run
 #     (GET /louise/runs/<run id>, 2026-09-21), and `weights` is the file that
 #     engine loads through ${WEIGHTS} — the GGUF f16 of MedCPT, as in 02
 #     §2.3's own worked example. The engine is outside space_id (02 §2.4);

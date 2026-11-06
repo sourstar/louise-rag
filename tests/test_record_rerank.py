@@ -188,6 +188,26 @@ def test_the_catalogues_first_record_keeps_the_first_place_after_the_reranker(mo
     assert ok and [r["book_id"] for r in ranked] == [2701, 78016]
     assert ranked[1]["rerank_score"] > ranked[0]["rerank_score"], "the reranker preferred the biography"
     assert retrieval.CATALOG_FIRST is True
+    # CLAUDE.md invariant 4, rule 2 (2026-10-31): the record a weight moved
+    # says what moved it and how far; nothing else carries the mark
+    assert ranked[0]["moved_by"] == [{"weight": "catalog_first", "from": 2, "to": 1}]
+    assert "moved_by" not in ranked[1]
+
+
+def test_a_catalogue_first_record_the_reranker_already_put_first_is_not_marked(monkeypatch):
+    novel = h("gutenberg:2701", 1, "dense", "Call me Ishmael.")
+    novel[retrieval.MATCHED] = [dict(novel)]
+    novel["leg_ranks"] = {"catalog": 1}
+    other = h("gutenberg:78016", 9, "dense", "a biography")
+    other[retrieval.MATCHED] = [dict(other)]
+    def prefers_the_novel(url, json=None, timeout=None, headers=None, **_kw):   # noqa: A002
+        rows = [{"index": i, "relevance_score": 0.9 if "Ishmael" in d else 0.1}
+                for i, d in enumerate(json["documents"])]
+        return httpx.Response(200, request=httpx.Request("POST", url), json={"results": rows})
+    monkeypatch.setattr(retrieval.httpc, "post", prefers_the_novel)
+    ranked, ok = retrieval._rerank_list("Moby Dick", [other, novel], RECIPE, 8.0, 50)
+    assert ok and [r["book_id"] for r in ranked] == [2701, 78016]
+    assert not any("moved_by" in r for r in ranked), "nothing moved it"
 
 
 def test_without_a_catalogue_first_record_the_reranker_order_stands():

@@ -282,6 +282,21 @@ def delete_rows(collection, rowids) -> int:
     return len(rowids)
 
 
+def rows_held(collection, rowids) -> int:
+    """How many of these documents the catalog holds — a READ, through a
+    reader's handle: whether removing them needs the writer, which a
+    running worker keeps (tools/wikipedia_drop_twins.py). 0 with no index."""
+    ids = sorted({int(r) for r in rowids})
+    if not ids:
+        return 0
+    idx = _reader_index(collection, read_state(collection).get("generation"))
+    if idx is None:
+        return 0
+    idx.reload()
+    query = tantivy.Query.term_set_query(idx.schema, "rowid", ids)
+    return int(idx.searcher().search(query, limit=1, count=True).count)
+
+
 _WINDOW_SQL = ("SELECT rowid, title, authors, subjects, lang FROM documents "
                "WHERE rowid > ? AND rowid <= ? AND rdf_done = 1")
 

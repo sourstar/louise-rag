@@ -27,23 +27,31 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Semantic and exact-term search over the collections this peer holds: one "
                     "fused list per space (05 §5.1), each result naming its collection, snapshot, "
                     "record, chunk, trust level and producer (05 §5.3); facts from reference "
-                    "sources beside the lists, never in them.",
+                    "sources beside the lists, never in them. Search the reader's own words first; when "
+                    "what is asked for is not in the results, search again with the work's title and "
+                    "author, a name, or other key terms.",
      "inputSchema": {"type": "object", "required": ["query"], "properties": {
          "query": {"type": "string"},
          "collections": {"type": "array", "items": {"type": "string"},
                          "description": "collection ids, id prefixes or local names; default: every "
                                         "collection held and usable"},
-         "space": {"type": "string", "description": "a space_id: only the collections in it"},
+         "space": {"type": "string", "description": "a space_id (sha256:…): only the collections "
+                                                    "embedded in that space. Not a collection's name: "
+                                                    "name collections in `collections`"},
          "annotations": {"type": "array", "items": {"type": "string"},
                          "description": "the annotations collections consulted, by local name: their work "
                                         "claims group a work's editions into one hit and their claims come "
                                         "beside the hits (05 §5.3); default: every one held, [] none"},
-         "filters": {"type": "object", "description": "{facet field: value | {not: value}}"},
+         "filters": {"type": "object", "description": "{facet field: value | {not: value}}; a range "
+                                                      "facet's value is FROM..TO, either end omitted "
+                                                      "for open (2000.., ..1999)"},
          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
          "rerank_depth": {"type": "integer", "minimum": 1, "maximum": 300, "default": 50},
          "as_of": {"type": "string", "description": "YYYY-MM-DD: the snapshot current at that date"},
          "freshness": {"type": "boolean", "default": False},
-         "translate": {"type": "boolean", "default": False},
+         "translate": {"type": "boolean", "default": False,
+                       "description": "true: the query's translations into the languages held are "
+                                      "searched too, as the Ask page searches"},
          "all_languages": {"type": "boolean", "default": False}}}},
     {"name": "louise_lookup",
      "description": "A fact by key from a reference source: one canonical id "
@@ -94,11 +102,12 @@ def handle(message: dict[str, Any], *, call: Callable[[str, dict[str, Any]], Any
     if rid is None and method.startswith("notifications/"):
         return None
     if method == "initialize":
+        from app.ask import skill
         return _result(rid, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {"listChanged": False}},
                              "serverInfo": SERVER,
-                             "instructions": "Three tools: search (ranked lists per space), lookup (a fact "
-                                             "by key), traverse (declared relations). Facts are placed "
-                                             "beside lists, never ranked (05 §5.1)."})
+                             # the skill's own text (app/ask/skill.py): a client that
+                             # installs no skill still gets how to use the tools
+                             "instructions": skill.body()})
     if method == "ping":
         return _result(rid, {})
     if method == "tools/list":

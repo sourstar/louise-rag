@@ -35,10 +35,13 @@ from typing import Callable
 
 import httpx
 
-from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, model_pins, node_state, plugin_io, refs,
-                sched, sizing, spaces, stats)
-from .dispatch import Level
+from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
+               discovery, embed_select, layers as layers_mod, parallel, embeddings,
+               encoder_timeouts, entities,
+               fts, issues as issues_mod, model_load, model_pins, origin_missing, node_state,
+               plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
+from .rage import card_record, dispatch
+from .rage.dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -76,9 +79,73 @@ def _handle_sigterm(signum, frame):
     except Exception:
         pass
 
+#: `louise node stop` (07 §7.3) reaches the worker through node_state; a
+#: stop asked for is exit 0, a signal 130 (§7.7). Polled by its own thread,
+#: never by a stage: a round does not grow a read of the node's state.
+_stop_requested = threading.Event()
+STOP_POLL_S = 2.0
+
+
+def _watch_stop_request(poll_s: float = STOP_POLL_S, end: threading.Event | None = None) -> None:
+    from . import node_state
+    while not _stop.wait(poll_s):
+        if end is not None and end.is_set():
+            return
+        if node_state.take_stop_request():
+            _stop_requested.set()
+            _handle_sigterm(None, None)
+            return
+
+
+#: the running watch and its own end: `run_forever` ends it on the way out
+#: (`_ends_stop_watch`, an exception included), so a
+#: watch never outlives its run (2026-10-27: one left polling by a test whose
+#: `_stop` was cleared before it woke read the default node store for the
+#: rest of the suite)
+_stop_watch: tuple[threading.Thread, threading.Event] | None = None
+
+
+def _start_stop_watch() -> threading.Thread:
+    """A request left from before this start is not this run's: cleared
+    first, so `node stop` on a stopped node does not stop the next start."""
+    global _stop_watch
+    from . import node_state
+    node_state.take_stop_request()
+    end = threading.Event()
+    t = threading.Thread(target=_watch_stop_request, kwargs={"end": end}, name="stop-watch", daemon=True)
+    t.start()
+    _stop_watch = (t, end)
+    return t
+
+
+def _end_stop_watch() -> None:
+    global _stop_watch
+    if _stop_watch is None:
+        return
+    t, end = _stop_watch
+    _stop_watch = None
+    end.set()
+    t.join(timeout=2 * STOP_POLL_S)
+
+
+def _ends_stop_watch(fn):
+    """The run's watch ends however the run does — a return or an exception."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _end_stop_watch()
+    return run
+
+
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
-    chapters = plugin_io.sections(plugin, row)
+    # ONE PARSE (docs/notes/one-parse.md): the fresh record where there is one
+    from . import record_source
+    chapters = record_source.sections(collection, row, lambda: plugin_io.sections(plugin, row))
     # the document's LAYER decides the chunker (amendment 41); one layer =
     # the plugin's chunker, exactly as before
     return layers_mod.chunks_for_document(collection, row, chapters)
@@ -90,14 +157,35 @@ _RDF_BATCH_PEERS = (
 # One event line per batch would be ~86k rows/day at full speed — log spam
 # that buries real events. At most one line per collection+stage per 30s;
 # the counters on the Library/Stats pages are the real progress signal.
+# The line carries the batches it stood for: without that, the log read as a
+# time series (CLAUDE.md: the first benchmark) dropped most batches — on
+# 2026-10-30 its lines summed to 604 of the 2,000 books a measured fts run
+# indexed, and read as a 30 s pacing that was only the log's.
 _batch_log_ts: dict[tuple[str, str], float] = {}
+#: per collection+stage, since its last line: [batches, documents, chunks, stage seconds]
+_batch_since: dict[tuple[str, str], list] = {}
 
 
-def _batch_log(con, stage: str, collection, msg: str) -> None:
+def _batch_log(con, stage: str, collection, msg: str, *, docs: int = 0, chunks: int = 0,
+               secs: float = 0.0, emit: bool = True) -> None:
+    """`emit=False`: counted into the next line, never a line of its own — a
+    one-document batch, which wrote nothing before the counts were carried
+    (and a line it wrote went to the stdout of a command whose answer is JSON:
+    `hold source list --json` after an in-process round, 2026-10-30)."""
     key = (collection.name, stage)
     now = time.time()
-    if now - _batch_log_ts.get(key, 0.0) >= 30:
+    if docs:
+        acc = _batch_since.setdefault(key, [0, 0, 0, 0.0])
+        acc[0] += 1
+        acc[1] += docs
+        acc[2] += chunks
+        acc[3] += secs
+    if emit and now - _batch_log_ts.get(key, 0.0) >= 30:
         _batch_log_ts[key] = now
+        acc = _batch_since.pop(key, None)
+        if acc is not None and acc[0] > 1:
+            msg += (f"; since the last line: {acc[0]} batches, {acc[1]} documents"
+                    + (f", {acc[2]} chunks" if acc[2] else "") + f" in {acc[3]:.1f}s of stage time")
         db.log_event(con, "info", stage, msg)
 
 
@@ -215,6 +303,10 @@ def stage_rdf(con, row, collection) -> None:
     if not con.in_transaction:               # direct callers wrap the stage
         con.execute("BEGIN IMMEDIATE")
     entries = [_rdf_one(con, row, collection, plugin, now, meta=first)]
+    # the origin's inconsistencies each read met (06 §6.1, amended
+    # 2026-10-25), recorded in this same transaction for the codes the read
+    # checks — `None` when a plugin's lazy read says nothing about them
+    found = [(row["uid"], first["issues"])] if first.get("issues") is not None else []
     n = 1
     for peer, (ok, meta) in zip(peers, metas[1:]):
         if not ok:
@@ -224,16 +316,20 @@ def stage_rdf(con, row, collection) -> None:
             n += 1
         except Exception:   # noqa: BLE001
             continue
+        if meta.get("issues") is not None:
+            found.append((peer["uid"], meta["issues"]))
+    if found:
+        issues_mod.record_many(con, found, codes=issues_mod.declared(plugin),
+                               checked=plugin_io.metadata_checks(plugin), now=now)
     # The catalog index is committed HERE, before the caller commits the
     # marks (invariant 2). A failure is CatalogUnavailable: the transaction
     # rolls back and the batch is deferred, never recorded as an error.
     catalog.write(collection, entries)
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "rdf"), n, took)
-    if n > 1:
-        _batch_log(con, "rdf", collection,
-                   f"extracted {n} documents in one transaction "
-                   f"({took:.1f}s)")
+    _batch_log(con, "rdf", collection,
+               f"extracted {n} documents in one transaction ({took:.1f}s)",
+               docs=n, secs=took, emit=n > 1)
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -318,7 +414,7 @@ def _prefetch_ahead(con, collection, stage: str, row) -> None:
     # probes at all. Four of five plugins have no derived cache, and a
     # serial node has no background — running the lookahead for them would
     # be pure cost on the hot path.
-    if parallel.pool() is None:
+    if not parallel.prefetch_allowed():          # serial, or under a profile's limit
         return
     try:
         if not hasattr(collection.plugin_instance(), "prepare"):
@@ -387,18 +483,32 @@ def stage_fts(con, row, collection) -> None:
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
     # round's, a peer's failure drops the peer
-    results = parallel.chunks_for_rows(collection, [row, *peers])
+    # a collection whose records are also found by NAME (wikidata, operator
+    # 2026-10-24): the same parse gives each record's names (fts.search_names)
+    with_names = fts.names_capable(collection)
+    # the children read refs.db to tag each document (refs.read_store): its
+    # schema is made here, by the worker, before they open it
+    refs.get_store()
+    results = parallel.fts_for_rows(collection, [row, *peers], names=with_names)
+    names_of: dict[str, tuple | None] = {}
+    entities_of: dict[str, list[str]] = {}
+
+    def _unpack(r, value):
+        names_of[r["uid"]] = value.get("names")
+        entities_of[r["uid"]] = value["entities"]
+        return value["chunks"]
     ok, first = results[0]
     if not ok:
         parallel.raise_for(first)
-    chunks = first
+    chunks = _unpack(row, first)
     batch = [(row, chunks)]
     n_chunks = len(chunks)
-    for peer, (ok, peer_chunks) in zip(peers, results[1:]):
+    for peer, (ok, peer_value) in zip(peers, results[1:]):
         if n_chunks >= config.FTS_BATCH_CHUNKS:
             break
         if not ok:
             continue            # a peer never fails the round
+        peer_chunks = _unpack(peer, peer_value)
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
 
@@ -406,7 +516,8 @@ def stage_fts(con, row, collection) -> None:
     # before the lock like every other load; `{}` for every other collection
     from app import validity
     cols = validity.columns_for(con, collection, [int(r["native_id"]) for r, _ in batch])
-    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])))
+    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])),
+                      names_of.get(r["uid"]))
                      for r, ch in batch), collection)
 
     # the tantivy commit landed; only the tags and marks remain — SQLite
@@ -415,20 +526,21 @@ def stage_fts(con, row, collection) -> None:
     # legacy paths wrap the whole stage; their commit covers these writes).
     if not con.in_transaction:
         con.execute("BEGIN IMMEDIATE")
-    ref_store = refs.get_store()
     now = int(time.time())
-    # the selected document first and unguarded: its failure IS the round's
-    entities.tag_document(con, row["uid"], row["title"], [c["text"] for c in chunks],
-                           refs.RESOLVER, ref_store)
+    # the selected document first and unguarded: its failure IS the round's.
+    # Its tags were computed by the child that cut it (parallel kind `fts`).
+    entities.write_tags(con, row["uid"], entities_of[row["uid"]])
     _mark_indexed(con, row, chunks, now)
     for peer, peer_chunks in batch[1:]:
         try:
-            entities.tag_document(con, peer["uid"], peer["title"],
-                                   [c["text"] for c in peer_chunks],
-                                   refs.RESOLVER, ref_store)
+            entities.write_tags(con, peer["uid"], entities_of[peer["uid"]])
             _mark_indexed(con, peer, peer_chunks, now)
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
+    # these documents are embed candidates once the marks commit: a LOCAL
+    # archive's demand learns them here instead of re-walking the manifest
+    # (genesis._candidate_shards; "Demand is announced, not polled")
+    bundle_genesis.announce(collection, [r["uid"] for r, _ in batch])
     # A document that clears fts inside a FINAL shard's id range is a
     # document the archive holds a published vector for and can no longer
     # deliver — `final` is decided from documents still UPSTREAM of fts, so
@@ -447,10 +559,9 @@ def stage_fts(con, row, collection) -> None:
                      f"their published vectors are imported rather than recomputed")
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
-    if len(batch) > 1:
-        _batch_log(con, "fts", collection,
-                   f"indexed {len(batch)} documents / {n_chunks} chunks "
-                   f"in one commit ({took:.1f}s)")
+    _batch_log(con, "fts", collection,
+               f"indexed {len(batch)} documents / {n_chunks} chunks in one commit ({took:.1f}s)",
+               docs=len(batch), chunks=n_chunks, secs=took, emit=len(batch) > 1)
 
 #: how long a collection's embed stage stays idle before its encoder's pin
 #: is restored (app/model_pins.py): the idle boundary of the stage, as long
@@ -518,18 +629,38 @@ def _possessed_vectors(con, collection, row, chunks) -> dict:
     try:
         from app.share import possession
         root = collections_mod.louise_root() / "collections"
+        # FIRST whether any accepted bundle holds the record: most records of
+        # most collections are held by none, and then nothing is looked up
+        held = possession.index(root, collection.name, codex, con)
+        if row["uid"] not in held:
+            return {}
         keys = row.keys() if hasattr(row, "keys") else ()
         # the record's hash in the current snapshot, as possession judges it:
         # the manifest's column is NULL on a peer that never filled it
-        # (Perugia: all 79,659 rows)
+        # (Perugia: all 79,659 rows) — then read from the part the holding
+        # bundle names, never from the whole collection (pubmed: 40 M hashes
+        # per embed thread, the worker OOM-killed at 46 GB, 2026-10-30)
         content_hash = (row["content_hash"] if "content_hash" in keys else None) \
-            or possession.record_hashes(root, collection.name).get(row["uid"])
+            or possession.record_hash_of(root, collection.name, held, row["uid"])
         if not content_hash:
             return {}
         return possession.held_vectors(root, collection.name, codex, con, row["uid"], content_hash,
                                        [c["id"] for c in chunks])
     except Exception:   # noqa: BLE001 — any doubt embeds
         return {}
+
+
+def _holds_all(held, book_id: int, chunks) -> bool:
+    """The vector table already holds every one of these chunks, text for
+    text (`held`: the group's one read, `embeddings.held_chunks`): a reused
+    document asks no bundle for anything — and so builds no possession index
+    (pubmed's re-embedding by reuse, 2026-10-30)."""
+    if held is None or not chunks:
+        return False
+    have = held.of(book_id)
+    if len(have) < len(chunks):
+        return False                    # never written, or written in part
+    return all((have.get(c.get("id")) or {}).get("text") == c.get("text") for c in chunks)
 
 
 def _given(con, collection, row, chunks) -> dict:
@@ -609,7 +740,7 @@ def _record_embedded(collection, started: float, counts) -> None:
 _QUEUE_ELIGIBLE = """
     SELECT d.* FROM embed_queue q CROSS JOIN documents d ON d.uid=q.uid
     WHERE d.in_scope=1 AND d.rdf_done=1 AND d.error IS NULL AND d.retries<?
-      AND (d.embed_done=0 OR d.embed_version < ?)
+      AND (d.embed_done=0 OR (d.embed_done=1 AND d.embed_version < ?))
     ORDER BY q.priority DESC, q.ts LIMIT ?"""
 
 # NOT EXISTS, never `uid NOT IN (SELECT ...)`: the IN form materialises EVERY
@@ -817,7 +948,7 @@ def _archive_yields(con, collection) -> bool:
 # per-collection CURSOR kept in memory, keyed on the manifest PATH, so a
 # round never re-walks the covered prefix (8M rows on pubmed). The cursor
 # expires after a short TTL (one index pass) and resets when a shard goes
-# final (genesis.coverage_epoch): the documents in that range the archive
+# final (the covered ranges change): the documents in that range the archive
 # did not cover sit BELOW the cursor and are now the encoder's. Without an
 # archive the NEW walk has no cursor — a document that clears fts must be
 # embeddable in the same round, and its index prefix ends on the candidates
@@ -837,9 +968,17 @@ _REEMBED_SQL = (
 # `+` keeps the planner on the rowid range instead of the scope index: the
 # window is what bounds the call, and a scope-index walk from the cursor has
 # no end short of the table's (the `_FTS_REINDEX_WINDOWED` rule).
+#: THE NEW WALK'S WINDOW READS THE CANDIDATES, not the rows (2026-10-30). All
+#: four scope columns are equalities here, so SQLite seeks the scope index on
+#: (1,1,1,0) AND the rowid range (its implicit tail): a window costs what it
+#: holds of candidates. Forced onto the primary key like the version walk
+#: below (whose prefix is every embedded document), each window read all its
+#: rows: wikipedia's first sweep after a restart crossed 34 M rowids of its
+#: covered, embedded layer 1 at ~33 k rowids/s — ~17 minutes before the
+#: encoder saw one of the 18.8 M dump-layer documents behind them (München).
 _BACKFILL_WINDOWED = (
     "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
-    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=0 "
+    "AND in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
     "AND error IS NULL AND retries<? {covered} ORDER BY rowid LIMIT ?")
 _REEMBED_WINDOWED = (
     "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
@@ -1034,11 +1173,12 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
     # ONE budget for the whole call, both walks: a call that finds nothing
     # must cost a bounded slice of the encoder's turn, never a sweep
     deadline = time.monotonic() + config.BACKFILL_WALK_BUDGET_S
+    coverage = tuple(tuple(r) for r in ranges)
     rows = _cursor_page(
         con, key, "new",
         lambda start, end, n: _window_page(con, new_sql, start, end,
                                            (config.MAX_RETRIES, *params), n, keep),
-        limit, deadline)
+        limit, deadline, coverage)
     if len(rows) < limit:
         archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
         if archive is not None and archive.local:
@@ -1050,7 +1190,7 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
             con, key, "ver",
             lambda start, end, n: _window_page(
                 con, ver_sql, start, end, (config.EMBED_VERSION, config.MAX_RETRIES), n, keep),
-            limit - len(rows), deadline)
+            limit - len(rows), deadline, coverage)
     if not rows and keep is not None:
         leading.widen(collection)             # as above, the archive-bounded walk
     return rows
@@ -1077,16 +1217,23 @@ def _residual_rows(con, collection, limit: int, seen: set) -> list:
     local encoder may embed (amendment 11)."""
     uids = [u for u in bundle_genesis.residual_uids(collection) if u not in seen]
     out: list = []
+    stale: list[str] = []
     for i in range(0, len(uids), 500):
         part = uids[i:i + 500]
-        out += con.execute(_RESIDUAL_SQL.format(marks=",".join("?" * len(part))),
-                           (*part, config.MAX_RETRIES)).fetchall()
+        got = con.execute(_RESIDUAL_SQL.format(marks=",".join("?" * len(part))),
+                          (*part, config.MAX_RETRIES)).fetchall()
+        eligible = {r["uid"] for r in got}
+        stale += [u for u in part if u not in eligible]
+        out += got
         if len(out) >= limit:
             break
+    # a residual no longer eligible is asked for no more
+    bundle_genesis.forget_residuals(collection, stale)
     return out[:limit]
 
 
-def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -> list:
+def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float,
+                 coverage: tuple = ()) -> list:
     """One bounded step of the backfill walk: rowid windows from the
     cursor, until a window holds candidates, the sweep reaches the rowid it
     started at the top of, or `deadline` passes — whichever is first.
@@ -1105,10 +1252,20 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
     before the next one starts, since nothing below it can have become
     eligible faster than that matters. A sweep that found rows restarts at
     once, because documents below the cursor may have become eligible while
-    it walked. Resetting on a new coverage epoch is unchanged: a shard going
-    final releases documents below the cursor.
+    it walked.
+
+    THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES, not when the process-wide
+    coverage epoch moves (`coverage`: the archive's covered ranges the walk
+    filters by). A shard going final releases documents below the cursor,
+    and only that is a reason to start over. The epoch moved at every
+    shard of every archive going final or applied, about once a minute while
+    wikipedia's layer 1 imported, and each time the sweep began again at
+    rowid 0, among 22 M rows its own local archive covers (whose declared
+    spans never change) — so it never reached the dump layer behind them:
+    18.8 M documents ready for the encoder, the producer asleep (München,
+    2026-10-30).
     """
-    epoch = bundle_genesis.coverage_epoch()
+    epoch = coverage
     with _backfill_cursor_lock:
         cur = _backfill_cursor.get((key, kind))
 
@@ -1131,6 +1288,9 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
     restarted = False
     while True:
         if pos >= top:
+            if rows:
+                cur = (epoch, int(rows[-1]["rid"]), top, True, None)
+                break
             if found and not restarted:
                 # this sweep found work: start the next one now, from the
                 # beginning, for what became eligible below the cursor
@@ -1143,20 +1303,25 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
                                       lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
         end = min(pos + width, top)
         probe = time.monotonic()
-        rows = query(pos, end, limit)
+        got = query(pos, end, limit - len(rows))
         sizing.sizer().note_window(
             wkey, seconds=time.monotonic() - probe,
             target_s=config.REINDEX_PROBE_TARGET_S, default=_BACKFILL_WINDOW,
             lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
-        if rows:
-            # resume FROM the first returned row: if it is deferred rather
-            # than embedded it is selected again; everything before it was
-            # covered
-            cur = (epoch, int(rows[0]["rid"]) - 1, top, True, None)
+        # THE CALL FILLS ITS LIMIT ACROSS WINDOWS, within its budget. It
+        # stopped at the first window holding a candidate: where candidates
+        # are sparse (wikipedia's archive layer) each call brought ONE
+        # document, and the 18.8 M of the dump layer behind them waited —
+        # one embed batch of one document every few minutes (München,
+        # 2026-10-30). The next call resumes AFTER the last row returned; a
+        # document deferred meanwhile comes back with the next sweep.
+        rows += got
+        if got and len(rows) >= limit:
+            cur = (epoch, int(rows[-1]["rid"]), top, True, None)
             break
-        pos = end
+        pos = end                       # the window gave all it had: fewer than asked
         if time.monotonic() >= deadline and pos < top:
-            cur = (epoch, pos, top, found, None)
+            cur = (epoch, int(rows[-1]["rid"]), top, True, None) if rows else (epoch, pos, top, found, None)
             break
     with _backfill_cursor_lock:
         _backfill_cursor[(key, kind)] = cur
@@ -1318,6 +1483,15 @@ def _embed_candidates(con, scope, limit: int, collection=None):
     return rows[:limit]
 
 
+#: the embed stage cuts a candidate in the parse pool when the manifest says
+#: it has at most this many chunks (`_embed_parallel`'s `prepared`)
+EMBED_PREPARE_MAX_CHUNKS = 64
+#: documents a producer keeps submitted at once when its requests are filled
+#: across documents (`embeddings.Coalescer`): enough for `slots` requests of
+#: the gated batch at one chunk a document (wikidata: 4 × 16), no more
+EMBED_COALESCE_DOCS = 64
+
+
 def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                     keep_going=None) -> bool:
     """CPU-encoder collections (recipe.concurrency > 1) embed several WHOLE
@@ -1339,6 +1513,13 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     gate guards. Without `slots` (the rollback), `recipe.concurrency`
     documents run at once, as before.
 
+    REQUESTS FILLED ACROSS DOCUMENTS (gpu-saturation-plan.md, step 1 lever
+    2): with `slots` and a gated batch above one, the documents' texts go
+    through one `embeddings.Coalescer` — requests of up to the batch, `slots`
+    of them at once — and up to EMBED_COALESCE_DOCS documents are submitted,
+    so that requests fill when documents are short (wikidata: 1.04 chunks a
+    document, ~1 text a request before). A batch of one changes nothing.
+
     `keep_going()` is asked before each refill: False stops taking new
     documents (a pause), and what is in flight finishes and is committed.
 
@@ -1356,18 +1537,59 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     ends, SIGTERM included. A longer document still writes its own slices.
     """
     scope = db.get_scope(con)
-    window = recipe.concurrency if slots is None else slots + 1
-    submitted = None if slots is None else threading.Semaphore(slots)
+    size = embeddings.batch_size(recipe)
+    coalesce = slots is not None and size > 1
+    docs = (min(slots * size, EMBED_COALESCE_DOCS) if coalesce else slots)
+    window = recipe.concurrency if slots is None else docs + 1
+    submitted = None if slots is None else threading.Semaphore(docs)
     group = max(window * 2, config.EMBED_BATCH_DOCS)
     rows = _embed_candidates(con, scope, group, collection)
+    # whether this collection has work it could send now (the card
+    # recorder's gaps, app/rage/card_record.py): yes while candidates remain, no
+    # once the selection runs dry or the encoder defers
+    stats.recorder().set_backlog(collection.name, bool(rows))
     if not rows:
         return False
     sink = embeddings.PendingWrites()
+    co = None                       # the stream's Coalescer, made with the pool below
     # chunks embedded vs kept, for the call's log line (RULE 1's numbers)
     tally = embeddings.EmbedCounts()
     tally_lock = threading.Lock()
 
-    def work(row, held):
+    # connections LENT to the documents in turn, one per document in flight,
+    # opened once per call: `db.connect` runs the manifest's ALTERs and its
+    # schema script, and per document that was paid ~75.9 M times on wikidata
+    lent: list = []
+    lent_lock = threading.Lock()
+
+    def borrow():
+        with lent_lock:
+            if lent:
+                return lent.pop()
+        return db.connect(collection, shared=True)
+
+    def give_back(c) -> None:
+        with lent_lock:
+            lent.append(c)
+
+    def prepared(group_rows) -> dict:
+        """Each SHORT candidate's chunks, cut by the parse pool's children for
+        the whole group at once — the threads below cut them one by one under
+        the GIL, which bound short documents: pubmed ran 31 documents/s while
+        the encoder answered in 5–36 ms (STATUS.md). A long document is cut
+        by its own thread as before (the encoder is its cost, and a group of
+        books would sit in memory), and so is one the pool could not cut,
+        whose failure stays the document's own."""
+        short = [r for r in group_rows if 0 < (r["chunks"] or 0) <= EMBED_PREPARE_MAX_CHUNKS]
+        if not short:
+            return {}
+        try:
+            got = parallel.chunks_for_rows(collection, short)
+        except Exception:   # noqa: BLE001 — each thread cuts its own, as before
+            return {}
+        return {r["uid"]: v for r, (ok, v) in zip(short, got) if ok}
+
+    def work(row, held, cut=None):
         if _stop.is_set():
             return (row, None, "stopped", False)
         counts = None
@@ -1375,9 +1597,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             # a pool thread starts with an empty context: its requests
             # declare themselves here, or they would reach the gate at the
             # process default
-            with dispatch.working_as(Level.CORPUS, collection.name):
-                chunks = _load_chunks(row, collection)      # PREPARED
-                tcon = db.connect(collection)
+            with dispatch.working_as(Level.CORPUS, collection.name), \
+                    embeddings.coalescing(co):
+                chunks = cut if cut is not None else _load_chunks(row, collection)   # PREPARED
+                tcon = borrow()
                 try:
                     if submitted is not None:
                         # SUBMITTED: wait for one of the plugin's slots
@@ -1397,12 +1620,14 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                         # `stop` bounds SIGTERM to one slice of a long
                         # document (stage_embed's reason: gutenberg 4656 is
                         # 5,335 chunks); the rest resumes from what is written
+                        reuse = embeddings.may_reuse(row)
                         n = embeddings.upsert_book(nid, row["lang"],
                                                     chunks, collection, lock_con=tcon,
                                                     stop=_embed_stop, held=held, sink=sink,
-                                                    reuse=embeddings.may_reuse(row),
+                                                    reuse=reuse,
                                                     counts=counts, columns=cols,
-                                                    **_given(tcon, collection, row, chunks))
+                                                    **({} if reuse and _holds_all(held, nid, chunks)
+                                                       else _given(tcon, collection, row, chunks)))
                         if cols and not counts.embedded and counts.reused:
                             # every vector kept, no row rewritten: the columns
                             # follow the version table in place (app/validity.py)
@@ -1411,7 +1636,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                         if submitted is not None:
                             submitted.release()
                 finally:
-                    tcon.close()
+                    give_back(tcon)
             # Measured HERE as well as in stage_embed, because every CPU
             # encoder in the deployment takes this path and only the GPU one
             # takes the other. Recording in stage_embed alone left the Stats
@@ -1489,7 +1714,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     in_flight: dict = {}          # future -> uid
     seen: set[str] = {r["uid"] for r in rows}
     first_held = read_held(rows)
-    queue: list = [(r, first_held) for r in rows]
+    first_cut = prepared(rows)
+    queue: list = [(r, first_held, first_cut.get(r["uid"])) for r in rows]
     awaiting: dict[int, str] = {}   # book_id -> uid: embedded, its batch not yet committed
     waiting_since = 0.0
     done = deferred = 0
@@ -1509,9 +1735,13 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         embed_marks.mark_embedded(con, collection, uids, synced=versioned)
 
     def record_error(uid, err) -> None:
+        missing = origin_missing.path_of(err)
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
-            "WHERE uid=?", (f"embed: {err}"[:500], int(time.time()), uid))
+            "WHERE uid=?", (f"embed: {origin_missing.message(missing) if missing else err}"[:500],
+                            int(time.time()), uid))
+        if missing:
+            _say_origin_missing(con, collection, "embed", missing)
         db.log_event(con, "error", "embed", err, uid)
 
     def commit(row, n, err, buffered) -> None:
@@ -1566,6 +1796,42 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 else:
                     record_error(uid, f"{type(e).__name__}: {e}"[:400])
 
+    def settle_empty(group_rows, held) -> list:
+        """The candidates the CURRENT chunker cut to nothing (`chunks` = 0,
+        `tokens` = 0, written by this `FTS_VERSION`) and that hold no vector:
+        marked done here, in one transaction, without a slot, a cut or an
+        encoder call — what their trip through a stream ended in anyway
+        (`upsert_book` writes nothing, `mark_done`). wikipedia's dump layer:
+        15.76 M of the 18.8 M remaining are redirects, ~85 % of every
+        stream from rowid 35 M on, 12 ms of cutting each (München,
+        2026-10-30). A document that still holds vectors takes the normal
+        path, whose delete removes them. Returns the rest."""
+        nonlocal done
+        if held is None:
+            return list(group_rows)
+        empty = [r for r in group_rows
+                 if not (r["chunks"] or 0) and not (r["tokens"] or 0)
+                 and r["fts_version"] == config.FTS_VERSION and not held.of(r["native_id"])]
+        if not empty:
+            return list(group_rows)
+        uids = [r["uid"] for r in empty]
+        own = not con.in_transaction
+        try:
+            if own:
+                con.execute("BEGIN IMMEDIATE")
+            mark_done(uids)
+            if own:
+                con.execute("COMMIT")
+        except Exception as e:  # noqa: BLE001 — the manifest held: they take the normal path
+            if own and con.in_transaction:
+                con.execute("ROLLBACK")
+            if not transient_failure(e):
+                raise
+            return list(group_rows)
+        done += len(uids)
+        gone = set(uids)
+        return [r for r in group_rows if r["uid"] not in gone]
+
     def refill(pool) -> None:
         nonlocal queue
         while len(in_flight) < window and not _stop.is_set() \
@@ -1577,16 +1843,29 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 fresh = [r for r in _embed_candidates(con, scope, group, collection)
                          if r["uid"] not in seen]
                 if not fresh:
+                    stats.recorder().set_backlog(collection.name, False)
                     return
                 seen.update(r["uid"] for r in fresh)
                 held = read_held(fresh)
-                queue = [(r, held) for r in fresh]
-            row, held = queue.pop(0)
-            in_flight[pool.submit(work, row, held)] = row["uid"]
+                fresh = settle_empty(fresh, held)
+                if not fresh:
+                    # every one was cut to nothing and is marked: the next group
+                    # (wikipedia's redirects, ~85 % of a stream: the node,
+                    # 2026-11-01, raised `pop from empty list` every few seconds)
+                    continue
+                cut = prepared(fresh)
+                queue = [(r, held, cut.get(r["uid"])) for r in fresh]
+            row, held, cut = queue.pop(0)
+            in_flight[pool.submit(work, row, held, cut)] = row["uid"]
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
+    # the first group's empty documents, as every refill's (`settle_empty`)
+    left = {r["uid"] for r in settle_empty([q[0] for q in queue], first_held)}
+    queue = [q for q in queue if q[0]["uid"] in left]
     pin = _pin_begin(collection, recipe)
     try:
+        if coalesce:
+            co = embeddings.Coalescer(recipe, size=size, lanes=slots, name=collection.name)
         with ThreadPoolExecutor(max_workers=window) as pool:
             refill(pool)
             while in_flight:
@@ -1604,8 +1883,19 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 stats.recorder().set_in_flight(collection.name, len(in_flight))
         flush()         # what was embedded is written, SIGTERM included
     finally:
+        if co is not None:
+            co.close()
+            db.log_event(con, "info", "embed",
+                         f"requests filled across documents: {co.texts} texts in "
+                         f"{co.requests} request(s) of up to {size}")
         stats.recorder().set_in_flight(collection.name, 0)
+        if deferred or _stop.is_set() or (keep_going is not None and not keep_going()):
+            stats.recorder().set_backlog(collection.name, False)   # held back, not waiting
         _pin_end(pin)
+        with lent_lock:
+            for c in lent:
+                c.close()
+            lent.clear()
     if wrong_endpoint:
         _pause_embedding(con, collection, wrong_endpoint[-1])
     elif done:
@@ -1891,6 +2181,7 @@ def _remote_archive(collection) -> bool:
 
 
 _vindex_last: dict[str, float] = {}     # lance dir -> last maintenance attempt
+_vlight_last: dict[str, float] = {}     # lance dir -> last light-compaction check
 
 
 def _maintain_vector_index(con, collection) -> bool:
@@ -1908,10 +2199,11 @@ def _maintain_vector_index(con, collection) -> bool:
     key = str(collection.lance_dir)
     now = time.time()
     if now - _vindex_last.get(key, 0.0) < config.VECTOR_INDEX_REFRESH_S:
-        return False
+        return _light_compact(con, collection, now)
     if not _maintenance_allowed():
         return False        # not stamped: due again as soon as the pause lifts
     _vindex_last[key] = now
+    _vlight_last[key] = now  # the pass runs the light compaction first
     try:
         out = vector_index.ensure(collection, con, may_continue=_maintenance_allowed)
     except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
@@ -1919,6 +2211,27 @@ def _maintain_vector_index(con, collection) -> bool:
                      f"vector index maintenance deferred: {type(e).__name__}: {e}"[:300])
         return False
     return bool(out)
+
+
+def _light_compact(con, collection, now: float) -> bool:
+    """Between the index's passes, the light compaction on its own cadence
+    (`vector_index.light`, every VECTOR_INDEX_LIGHT_CHECK_S): the small
+    fragments come back at ~65 a minute on wikipedia and every read and
+    write pays for each. True when it compacted."""
+    from . import vector_index
+    key = str(collection.lance_dir)
+    if now - _vlight_last.get(key, 0.0) < config.VECTOR_INDEX_LIGHT_CHECK_S:
+        return False
+    if not _maintenance_allowed():
+        return False
+    _vlight_last[key] = now
+    try:
+        out = vector_index.light(collection, con)
+    except Exception as e:   # noqa: BLE001 — an optimisation, never a crash
+        db.log_event(con, "warn", "index",
+                     f"light compaction deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    return bool(out and out.get("compacted"))
 
 
 def _maintain_catalog(con, collection) -> bool:
@@ -2061,23 +2374,37 @@ def _fill_content_hashes(con, collection) -> int:
     snapshot that will carry them."""
     from app.share import possession
     root = collections_mod.louise_root() / "collections"
-    hashes = possession.record_hashes(root, collection.name)
-    if not hashes:
+    # the rows first: a manifest with no row missing its hash reads nothing
+    if con.execute("SELECT 1 FROM documents WHERE content_hash IS NULL LIMIT 1").fetchone() is None:
         return 0
-    missing = [u for (u,) in con.execute("SELECT uid FROM documents WHERE content_hash IS NULL")]
-    rows = [(hashes[u], u) for u in missing if u in hashes]
-    if not rows:
+    snap = possession.current_snapshot(root, collection.name)
+    if snap is None:
         return 0
-    con.execute("BEGIN IMMEDIATE")
-    try:
-        con.executemany("UPDATE documents SET content_hash=? WHERE uid=? AND content_hash IS NULL", rows)
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
-    db.log_event(con, "info", "ask", f"content_hash filled on {len(rows)} document(s) from the "
-                                     f"current snapshot's records ({len(missing) - len(rows)} not in it)")
-    return len(rows)
+    # PART BY PART: one part's (uid, hash) list at a time, one transaction
+    # each. The whole snapshot's hashes in one dict, with a list of every
+    # NULL uid beside it, is 40 M entries on pubmed and 75.9 M on wikidata
+    # (the same dict four embed threads built at once took the worker to
+    # 46 GB and the OOM killer, 2026-10-30)
+    filled = 0
+    for s_ in snap.shards:
+        pairs = [(h, u) for u, h in possession.part_records(root, collection.name, snap, s_) if h]
+        if not pairs:
+            continue
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            before = con.total_changes
+            con.executemany("UPDATE documents SET content_hash=? WHERE uid=? AND content_hash IS NULL", pairs)
+            filled += con.total_changes - before
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+    if not filled:
+        return 0
+    left = con.execute("SELECT COUNT(*) FROM documents WHERE content_hash IS NULL").fetchone()[0]
+    db.log_event(con, "info", "ask", f"content_hash filled on {filled} document(s) from the "
+                                     f"current snapshot's records ({left} not in it)")
+    return filled
 
 
 def _maintain_ask_indexes(con, collection) -> bool:
@@ -2099,22 +2426,33 @@ def _maintain_ask_indexes(con, collection) -> bool:
     key = (snap.snapshot_id, snap.hash)
     if _ask_indexed.get(collection.name) == key:
         return False
+    index_dir = root / collection.name / "index"
+    if ask_facets.read_marker(index_dir) == key:
+        # indexed whole by an earlier process for this very snapshot: a
+        # restart does not recount (the marker is written below only after a
+        # pass that raised nothing)
+        _ask_indexed[collection.name] = key
+        return False
+    t0 = time.monotonic()
     did = False
+    failed = False
     try:
         did = _fill_content_hashes(con, collection) or did
     except Exception as e:   # noqa: BLE001 — one fill, not the maintainer
+        failed = True
         db.log_event(con, "warn", "ask", f"content hashes: {type(e).__name__}: {e}"[:300])
     try:
         got = ask_traverse.index_edges(con, shard_tree, snap)
         did = did or bool(got["shards"])
     except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+        failed = True
         db.log_event(con, "warn", "ask", f"edges: {type(e).__name__}: {e}"[:300])
     try:
         # bounded whatever the collection's size (app/ask/facets.py): the
         # 2026-10-07 pass over pubmed reached 34 GB and the kernel killed the
         # worker; a field too wide to count says so, and stops with the node
-        built = ask_facets.build(con, codex, root / collection.name / "index", snapshot_id=snap.snapshot_id,
-                                 stop=_stop.is_set,
+        built = ask_facets.build(con, codex, index_dir, snapshot_id=snap.snapshot_id,
+                                 stop=_stop.is_set, shard_dir=shard_tree, snapshot=snap,
                                  log=lambda m: db.log_event(con, "warn", "ask", m[:400]))
         did = did or bool(built)
         try:
@@ -2124,12 +2462,20 @@ def _maintain_ask_indexes(con, collection) -> bool:
             synced = validity.sync_vectors(con, collection, lock_con=con)
             did = did or bool(synced)
         except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+            failed = True
             db.log_event(con, "warn", "ask", f"validity columns: {type(e).__name__}: {e}"[:300])
         if built:
-            db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)}")
+            db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)} "
+                                             f"({time.monotonic() - t0:.0f}s)")
     except Exception as e:   # noqa: BLE001
+        failed = True
         db.log_event(con, "warn", "ask", f"facets: {type(e).__name__}: {e}"[:300])
     _ask_indexed[collection.name] = key
+    if not failed and not _stop.is_set():
+        try:
+            ask_facets.write_marker(index_dir, snap.snapshot_id, snap.hash)
+        except OSError as e:
+            db.log_event(con, "warn", "ask", f"snapshot marker not written: {e}"[:300])
     return did
 
 
@@ -2293,6 +2639,7 @@ def _index_maintainer() -> None:
                 did = _maintain_ask_indexes(cons[key], c) or did
                 did = _verify_cited(cons[key], c) or did
                 did = _refresh_anchor(cons[key], c) or did
+                did = _heal_origin_missing(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work
@@ -2567,6 +2914,22 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
     held = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
     stats = discovery.sync_collection(con, collection, stop=held)
+    if not held.is_set():
+        # WHAT THE NODE HOLDS IS WHAT IT PROCESSES (app/slice_scope.py): a
+        # collection whose one origin holds every slice is narrowed to the
+        # slices its file names, before its stages select anything
+        out = slice_scope.apply(con, collection, stop=held,
+                                log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
+        if out.get("deferred"):
+            db.log_event(con, "info", "discover", f"slice scope waits: {out['deferred'][:400]}")
+        # WHICH DOCUMENTS THE ENCODER SPENDS ON (app/embed_select.py; operator,
+        # 2026-11-02: wikipedia's "smart" choice, its default), after the
+        # slices: computed for what the scan just made the manifest
+        if not held.is_set():
+            out = embed_select.apply(con, collection, stop=held,
+                                     log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
+            if out.get("deferred"):
+                db.log_event(con, "info", "discover", f"embed selection waits: {out['deferred'][:400]}")
     if held.fired is _parse_held:
         # the mode changed under a running scan: it ended at its next ref,
         # its progress committed and its cursor that far — and the rest is owed
@@ -2587,6 +2950,17 @@ _bad_toml_nagged: dict[str, str] = {}
 
 #: last "no profile declared" warning per collection — see _acquire
 _profile_nagged: dict[str, float] = {}
+
+#: (collection, what) -> when it was last said: a waiting thread says why
+#: once an hour, not every idle beat
+_said: dict[tuple[str, str], float] = {}
+
+
+def _say_once(con, name: str, what: str, message: str, every_s: float = 3600.0) -> None:
+    now = time.time()
+    if now - _said.get((name, what), 0.0) > every_s:
+        _said[(name, what)] = now
+        db.log_event(con, "info", "worker", message)
 
 
 #: the collection's manifest PATH -> (when it was last said, what was said).
@@ -3068,6 +3442,31 @@ def platform_missing(exc: BaseException) -> bool:
     return False
 
 
+def _say_origin_missing(con, collection, stage: str, path: str) -> None:
+    """Once per missing file per collection (app/origin_missing.py): the
+    documents that read it are set aside with an error naming it, and the
+    maintainer clears them by itself once the file is back."""
+    if origin_missing.note(collection, path):
+        db.log_event(con, "warn", stage,
+                     f"origin missing: {path} — the documents that read it are set aside (an error "
+                     f"naming this file) and cleared by themselves once it is back, checked every "
+                     f"{origin_missing.HEAL_EVERY_S / 60:.0f} min; a rename or a mount that is gone?")
+
+
+def _heal_origin_missing(con, collection) -> bool:
+    """The maintainer's turn: the errors of files that are back, cleared."""
+    if not origin_missing.due(collection):
+        return False
+    try:
+        healed = origin_missing.heal(con, collection)
+    except Exception as e:   # noqa: BLE001 — a manifest busy: the next turn
+        db.log_event(con, "warn", "worker", f"origin-missing heal deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    for path, n in healed.items():
+        db.log_event(con, "info", "worker", f"origin back: {path} — {n:,} document(s) cleared of its error")
+    return bool(healed)
+
+
 def _say_platform_missing(con, collection, stage: str, exc: BaseException) -> None:
     """Once per PLATFORM_SAY_EVERY_S per collection and stage: every document
     of the stage defers for the same reason, and one line says it."""
@@ -3262,9 +3661,13 @@ def _execute_step(con, collection, stage, row) -> bool:
             db.log_event(con, "info", stage,
                          f"not indexable: {e}", row["uid"])
             return True
+        missing = origin_missing.path_of(e)
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
-            (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
+            (f"{stage}: {origin_missing.message(missing) if missing else e}"[:500],
+             int(time.time()), row["uid"]))
+        if missing:
+            _say_origin_missing(con, collection, stage, missing)
         db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
         return True
     if stage == "embed":
@@ -3312,17 +3715,21 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # on THAT thread (_drain_remote_archive in the pipeline loop), never
     # here on the GPU-serial main loop; a local archive, or any archive of
     # a collection that runs its whole pipeline here, is drained here.
-    if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
+    # the node profile pauses the parse-pool work (an archive pass, rdf, fts)
+    # at this unit boundary; embedding goes on (app/cpu_limit.py)
+    cpu_paused = _cpu_paused(con, collection)
+    if collection.genesis_archive and not cpu_paused \
+            and not (pipeline_active and _remote_archive(collection)):
         # same phase rule as the pipeline thread (_archive_yields): a pass
         # that would starve the encoder waits for one fts batch first
         if not _archive_yields(con, collection) and \
                 _drain_remote_archive(con, collection, _stop):
             return True
     scope = db.get_scope(con)
-    if pipeline_active:
+    if pipeline_active or cpu_paused:
         stage, row = _next_embed(con, scope, collection)
         if stage == "embed" and not _embedding_allowed(con, collection):
-            return False        # rdf/fts continue on the pipeline thread
+            return False        # rdf/fts continue on the pipeline thread, or the profile's pause ends
     else:
         stage, row = _next_book(con, scope, collection=collection)
         if stage == "embed" and not _embedding_allowed(con, collection):
@@ -3339,7 +3746,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
         rows = _embed_candidates(con, scope, 1, collection)
         if rows:
             row = rows[0]
-        elif pipeline_active:
+        elif pipeline_active or cpu_paused:
             return False
         else:
             stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
@@ -3351,7 +3758,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
             return _embed_parallel(con, collection, recipe)
     if row is None:
         now = time.time()
-        if not pipeline_active and \
+        if not pipeline_active and not cpu_paused and \
                 now - last_idle_log.get(collection.name, 0.0) > 300:
             # "CAUGHT UP" IS A CLAIM, AND IT WAS FALSE. A stage that is
             # switched OFF selects no row, exactly like a stage with
@@ -3380,6 +3787,9 @@ def _run_one_step(con, collection, last_idle_log: dict,
 # the same manifest). The main loop keeps embed: GPU-serial ACROSS
 # collections is doctrine, and one owner enforces it.
 _pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
+# what each per-collection thread was started for (`_identity`), by thread
+# name: a name that now holds another collection gets a new thread
+_thread_identity: dict[str, str] = {}
 _paused = threading.Event()          # set = the mode fetches nothing: paused, seed-only
 # set = "download/seeding only": the bytes keep moving and NOTHING reads
 # them — no scan, no rdf, no fts, no index maintenance, no embedding
@@ -3406,12 +3816,35 @@ _parse_held = _ParseHeld()
 #: EMBEDDING STOPS WITH THE MODE TOO, at the same unit SIGTERM already has: a
 #: slice (invariant 2; EMBED_SLICE_CHUNKS). Seen live the evening this landed
 #: (2026-09-19): in "download/seeding only" the producers took no new document,
-#: and the two in flight went on — RAGE served 470 embedding requests in the
+#: and the two in flight went on — the model pool served 470 embedding requests in the
 #: next 100 s, and a large book is thousands of chunks (5.3 h for the largest).
 #: "Pause: nothing is running" cannot wait hours. `upsert_book` raises
 #: EmbedInterrupted between slices; what is written stays, the document is
 #: deferred untouched, and it resumes from there when everything runs again.
 _embed_stop = _AnyStop(_stop, _parse_held)
+#: THE NODE PROFILE'S CORES (app/cpu_limit.py; operator, 2026-10-27): one
+#: watch per collection, keyed on its manifest's path, so each collection's
+#: log says each change of the profile once ("profile quiet: paused until
+#: 08:00", "profile day: 8 cores")
+_cpu_watches: dict[str, cpu_limit.Watch] = {}
+
+
+def _cpu_paused(con, collection) -> bool:
+    """Whether the node's profile pauses this collection's parse-pool work
+    now (cpu_cores = 0): rdf, fts and the archive pass. Asked at the unit
+    boundary — the unit already running finishes and commits — and cheap
+    (a cached read, app/cpu_limit.py). Cores never pause embedding, bundles
+    or scans; the profile's `mode` does, through `node_state.runs` like the
+    node's own mode (decision 6, docs/notes/node-profiles-design.md: the quiet
+    windows suspend processing). The N-core limit itself is applied by the
+    pool (`parallel.compute`)."""
+    watch = _cpu_watches.setdefault(str(collection.manifest_path), cpu_limit.Watch())
+    lim, line = watch.see()
+    if line is not None:
+        db.log_event(con, "warn" if lim.error else "info", "worker", line)
+    return lim.cores == 0
+
+
 #: collections whose corpus may have changed, or whose scan was cut short,
 #: while the mode ran no parsing: scanned when everything runs again
 _scan_owed: set[str] = set()
@@ -3481,8 +3914,8 @@ def _live_collection(collection):
         fresh = _live_collections.get(collection.name)
     if fresh is None:
         return collection
-    if fresh.manifest_path != collection.manifest_path:
-        return collection
+    if fresh.manifest_path != collection.manifest_path or _identity(fresh) != _identity(collection):
+        return collection       # another collection under the name: this thread is stopped
     return fresh
 # When each collection was last scanned; module-level because both the
 # main loop (interval trigger) and the pipeline threads (completion) write
@@ -3556,7 +3989,7 @@ def embed_resource(collection) -> str:
 
 def query_waiting(con) -> bool:
     """Is a person waiting on a model right now (A5)? The node's
-    interactive claim (app/dispatch.py), memoised there. The rollback
+    interactive claim (app/rage/dispatch.py), memoised there. The rollback
     rotation (`_serve_turn`) reads it between documents; the producers do
     not need to, because their requests stand aside at the gate, per
     chunk. `con` is kept for the rollback's call shape."""
@@ -3709,6 +4142,24 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 if _acquire_only.is_set():
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
+                if not slice_scope.ready(con, collection):
+                    # the slices held are not applied to in_scope yet (the
+                    # scan thread does it): nothing outside them is processed
+                    _say_once(con, collection.name, "slice-scope",
+                              "waiting for the slice scope: only the slices the "
+                              "collection file holds are processed (app/slice_scope.py)")
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                if not embed_select.ready(con, collection):
+                    # the embed selection is not applied yet (the scan thread
+                    # does it): nothing is embedded that it would decline
+                    _say_once(con, collection.name, "embed-select",
+                              f"waiting for the embed selection ({embed_select.policy(collection)}): "
+                              f"it is computed after the next scan (app/embed_select.py)")
+                    if not scan_running(collection.name):
+                        _request_discovery(collection.name, "embed selection", acquire=False)
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
                 if not producers and owns_own_embed(collection):
                     # The full pipeline, embed and genesis included: this
                     # collection's encoder is its own container, so nothing
@@ -3721,6 +4172,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # import is CPU/IO work (reads, T3's sixteen, Lance writes),
                 # and on the thread that feeds an encoder it would idle it.
                 if producers and _drain_bundle_inbox(con, collection):
+                    continue
+                # THE NODE PROFILE (app/cpu_limit.py): cpu_cores = 0 pauses
+                # the parse-pool work below at this unit boundary — the last
+                # unit committed, nothing begun — in a bounded sleep that
+                # re-checks the stop. Bundles above go on under cores = 0;
+                # a profile's mode stops them with everything else (decision 6)
+                if _cpu_paused(con, collection):
+                    time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 # A REMOTE archive (amendment 38) is applied HERE, on the
                 # collection's own thread, never on the GPU-serial main
@@ -3786,8 +4245,8 @@ def _sync_pipeline_threads(all_collections) -> None:
     live = {c.name: c for c in all_collections}
     for name in list(_pipeline_threads):
         thread, gone = _pipeline_threads[name]
-        if name not in live:
-            gone.set()
+        if name not in live or _thread_identity.get(thread.name) != _identity(live[name]):
+            gone.set()                      # removed, or the name holds another collection
             del _pipeline_threads[name]
         elif not thread.is_alive():
             del _pipeline_threads[name]     # crashed/finished: restart below
@@ -3798,6 +4257,7 @@ def _sync_pipeline_threads(all_collections) -> None:
                                        args=(collection, gone),
                                        name=f"pipeline-{name}", daemon=True)
             _pipeline_threads[name] = (thread, gone)
+            _thread_identity[thread.name] = _identity(collection)
             thread.start()
 
 
@@ -3844,13 +4304,16 @@ def _embed_producer(collection, gone: threading.Event) -> None:
     try:
         while not _stop.is_set() and not gone.is_set():
             if _paused.is_set() or _acquire_only.is_set():
+                stats.recorder().set_backlog(collection.name, False)
                 time.sleep(2)
                 continue
             collection = _live_collection(collection)
             try:
                 if not _producer_step(con, collection):
+                    stats.recorder().set_backlog(collection.name, False)
                     time.sleep(config.WORKER_IDLE_SLEEP)
             except Exception as e:   # noqa: BLE001 — a producer must outlive any stream
+                stats.recorder().set_backlog(collection.name, False)
                 if manifest_contended(e):
                     db.log_event(con, "warn", "embed",
                                  f"stream deferred — manifest busy ({e})")
@@ -3875,8 +4338,8 @@ def _sync_embed_producers(collections) -> None:
     live = {c.name: c for c in collections}
     for name in list(_embed_producers):
         thread, gone = _embed_producers[name]
-        if name not in live:
-            gone.set()
+        if name not in live or _thread_identity.get(thread.name) != _identity(live[name]):
+            gone.set()                      # removed, or the name holds another collection
             del _embed_producers[name]
         elif not thread.is_alive():
             del _embed_producers[name]      # crashed: restarted below
@@ -3886,6 +4349,7 @@ def _sync_embed_producers(collections) -> None:
             thread = threading.Thread(target=_embed_producer, args=(collection, gone),
                                       name=f"embed-{name}", daemon=True)
             _embed_producers[name] = (thread, gone)
+            _thread_identity[thread.name] = _identity(collection)
             thread.start()
 
 
@@ -4120,6 +4584,15 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     known = {c.name for c in all_collections}
     now_names = {c.name for c in current}
     previous_by_name = {c.name: c for c in all_collections}
+    # A NAME THAT NOW HOLDS ANOTHER COLLECTION leaves and joins again, its
+    # handles closed first. 2026-10-27: `forget wikidata` then `rename
+    # wikidata-p2 wikidata` between two rounds; the name never went missing,
+    # so the worker kept seven connections and the lock of the deleted
+    # manifest, wrote the old rows into the new collection's catalog index
+    # and never discovered the new one (caches key on identity, not a name).
+    current_by_name = {c.name: c for c in current}
+    replaced = {n for n in known & now_names
+                if _identity(previous_by_name[n]) != _identity(current_by_name[n])}
     # BEFORE the change detection below, so the discovery it requests is
     # run by the pipeline thread against the NEW object and not the one
     # that thread was started with.
@@ -4131,7 +4604,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     # recorded via the UI would sit inert until the next interval scan.
     for kept in current:
         prev = previous_by_name.get(kept.name)
-        if prev is None or kept.name not in cons:
+        if prev is None or kept.name not in cons or kept.name in replaced:
             continue
         if prev.embed_mode_default != kept.embed_mode_default:
             _apply_tier2_embed_mode(cons[kept.name], kept, "TOML edit")
@@ -4149,6 +4622,10 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             else:
                 _discover(cons[kept.name], kept, "config-changed")
             last_discover[kept.name] = time.time()
+
+    for name in sorted(replaced):
+        _leave(name, cons, current, previous_by_name, last_discover, "replaced by another collection")
+    known -= replaced
 
     for added in [c for c in current if c.name not in known]:
         # A re-added collection must not inherit a set stop event, or its
@@ -4197,39 +4674,51 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         last_discover[added.name] = time.time()
 
     for gone in sorted(known - now_names):
-        db.log_event(cons[gone], "info", "worker",
-                     f"collection {gone!r} removed — ingestion stopped, data kept")
-        # its embedders leave the card when no held collection names them
-        _sweep_unheld_embedders(current, cons[gone])
-        # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
-        # that runs later in the round and not at all in non-pipeline mode or
-        # while the node is paused. Waking the transfer manager is required
-        # too — a thread parked in the token bucket or on an endpoint slot
-        # checks the predicate only after its wait returns, so setting the
-        # event without the wake is inert for the whole wait cap.
-        _gone_event(gone).set()
-        try:
-            get_manager().wake_all()
-        except Exception:   # noqa: BLE001 — never let telemetry stop a removal
-            pass
-        for table in (_acquire_threads, _acquire_done, _archive_threads,
-                      _archive_log_state, _archive_last_kick, _sizing_names,
-                      _license_nagged, _profile_nagged, _pipeline_idle_log):
-            table.pop(gone, None)
-        # its index and vector handles, keyed on paths a re-created collection
-        # of the same name reuses (normattiva, 2026-10-13: 244 fts errors)
-        left = previous_by_name.get(gone)
-        if left is not None:
-            from . import catalog as catalog_mod, embeddings as embeddings_mod, fts as fts_mod
-            fts_mod.forget(left.fts_dir)
-            catalog_mod.forget(left)
-            embeddings_mod.forget(left)
-        cons[gone].close()
-        del cons[gone]
-        last_discover.pop(gone, None)
-        _take_discovery_request(gone)   # never scan a removed collection
+        _leave(gone, cons, current, previous_by_name, last_discover,
+               "removed — ingestion stopped, data kept")
 
     return [c for c in current if c.name in cons]
+
+
+def _identity(c) -> str:
+    """What a name holds: its Codex's collection_id, else its manifest's path."""
+    codex = getattr(c, "codex", None)
+    return getattr(codex, "collection_id", None) or str(Path(c.manifest_path))
+
+
+def _leave(gone: str, cons, current, previous_by_name, last_discover, why: str) -> None:
+    """A collection the worker stops holding: its threads signalled, its
+    handles (manifest, text index, catalog, vectors) closed and forgotten."""
+    db.log_event(cons[gone], "info", "worker", f"collection {gone!r} {why}")
+    # its embedders leave the card when no held collection names them
+    _sweep_unheld_embedders(current, cons[gone])
+    # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
+    # that runs later in the round and not at all in non-pipeline mode or
+    # while the node is paused. Waking the transfer manager is required
+    # too — a thread parked in the token bucket or on an endpoint slot
+    # checks the predicate only after its wait returns, so setting the
+    # event without the wake is inert for the whole wait cap.
+    _gone_event(gone).set()
+    try:
+        get_manager().wake_all()
+    except Exception:   # noqa: BLE001 — never let telemetry stop a removal
+        pass
+    for table in (_acquire_threads, _acquire_done, _archive_threads,
+                  _archive_log_state, _archive_last_kick, _sizing_names,
+                  _license_nagged, _profile_nagged, _pipeline_idle_log):
+        table.pop(gone, None)
+    # its index and vector handles, keyed on paths a re-created collection
+    # of the same name reuses (normattiva, 2026-10-13: 244 fts errors)
+    left = previous_by_name.get(gone)
+    if left is not None:
+        from . import catalog as catalog_mod, embeddings as embeddings_mod, fts as fts_mod
+        fts_mod.forget(left.fts_dir)
+        catalog_mod.forget(left)
+        embeddings_mod.forget(left)
+    cons[gone].close()
+    del cons[gone]
+    last_discover.pop(gone, None)
+    _take_discovery_request(gone)   # never scan a removed collection
 
 
 # Telemetry must not be published by the thread whose work it describes. The
@@ -4296,7 +4785,9 @@ def _log_shares(con, live_paths=None) -> None:
             + ")"
             for n, e in sorted(busy.items())
         ]
-        db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
+        # CUMULATIVE since the worker start, not a round's figures: München
+        # read 36 turns / 1 unit / 1,067 s as "1,067 s a round" (2026-10-28)
+        db.log_event(con, "info", "sched", f"{resource} (since start) — " + "; ".join(parts))
     # THE PARSE POOL'S ADMISSION — the time average of tasks IN FLIGHT,
     # capped at the pool size. Everything else here measures how long
     # something took; this says whether the pool was ALLOWED work, and its
@@ -4407,6 +4898,24 @@ def _say_mode(state: str) -> None:
                           f"(read from {node_state.path()})")
 
 
+_profile_watch: list = []
+
+
+def _say_profile() -> None:
+    """ONE LINE when the node profile in force changes — above all when its
+    mode suspends processing and when it lets it run again (operator,
+    2026-11-02: "suspend processing during the quiet time frames"): "profile
+    quiet: processing suspended until 08:00 (downloads, seeding and searches
+    go on)". The gates themselves read it through `node_state.runs`."""
+    from . import cpu_limit
+    if not _profile_watch:
+        _profile_watch.append(cpu_limit.Watch(_node_line("control")))
+    try:
+        _profile_watch[0].limit()
+    except Exception:   # noqa: BLE001 — a log line never stops the round
+        pass
+
+
 def _note_pause_from_state(state: str) -> None:
     """Set `_paused` if the node's state says so, and NEVER clear it — see
     the comment at the call in `_stats_publisher`. Stopping late is the
@@ -4423,7 +4932,12 @@ SETTLE_BEAT_S = 60.0
 
 def holds_vectors(collection) -> bool:
     lance = getattr(collection, "lance_dir", None)
-    return bool(lance) and (Path(lance) / "chunks.lance").is_dir()
+    if not lance:
+        return False
+    if (Path(lance) / "chunks.lance").is_dir():
+        return True
+    from . import vector_parts         # a split store: any part with a table
+    return bool(vector_parts.is_split(collection) and vector_parts.values(collection))
 
 
 def _node_line(stage: str):
@@ -4527,7 +5041,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
     raises; a refusal or a deferral is said once per collection."""
     from contextlib import closing
     from .hold import embedder as emb
-    from .share import contribute
+    from .share import contribute, counting
     budget_s = config.PUBLISH_BUDGET_S if budget_s is None else budget_s
     done: dict[str, dict] = {}
     try:
@@ -4581,7 +5095,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
                     f"{len(out['awaiting'])} led part(s) await the embed stage, "
                     f"{len(out['left_to_fetch'])} left to the fetch"
                     + (" — interrupted at the budget, resumes next beat" if out.get("interrupted") else ""))
-        except (contribute.ContributeRefused, emb.GateDeferred) as e:
+        except (contribute.ContributeRefused, emb.GateDeferred, counting.CoverageUnknown) as e:
             if _publish_said.get(c.name) != str(e) and con is not None:
                 _publish_said[c.name] = str(e)
                 db.log_event(con, "info", "share", f"[{c.name}] publish: not this beat — {e}"[:500])
@@ -4661,9 +5175,12 @@ def _settle_runs_for_search() -> None:
         # for it (operator, 2026-10-23: the node suspended because the
         # operator needs the GPU). Nor for a collection the node has paused.
         # The vector leg of an unsettled collection waits; search answers
-        # from its other legs meanwhile.
+        # from its other legs meanwhile. The node's MODE alone, not the
+        # profile's: a settle serves searches, and a profile never limits a
+        # query (decision 6) — a worker restarted in a quiet window would
+        # otherwise answer without its vector leg until the window ended.
         try:
-            embeds = node_state.runs(node_state.worker_state(), node_state.EMBED)
+            embeds = node_state.mode_runs(node_state.worker_state(), node_state.EMBED)
             paused = node_state.paused_collections()
         except Exception:   # noqa: BLE001 — unreadable: runs nothing, as everywhere
             embeds, paused = False, set()
@@ -4797,6 +5314,13 @@ def _stats_publisher() -> None:
             # here, so this raised NameError every beat, the except below
             # swallowed it, and the fair-share lines never reached the log
             _log_shares(con, [c.manifest_path for c in collections])
+            # an idle parse pool gives its memory back (app/parallel.py
+            # release_idle; München 2026-10-28: 10.8 GiB held through a pause)
+            released = parallel.release_idle(config.PARSE_IDLE_RELEASE_S)
+            if released:
+                db.log_event(con, "info", "sched",
+                             f"parse pool released: {released} children idle "
+                             f"{config.PARSE_IDLE_RELEASE_S:.0f} s; the next parse starts a fresh pool")
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
     for c_con in seed_cons.values():
@@ -4866,6 +5390,9 @@ JOB_POLL_S = 2.0
 #: call cannot be cut, and one not done by then is queued again at the next
 #: start (app/jobs.py) — the pipeline joins keep the rest of the grace period
 JOB_STOP_WAIT_S = 20.0
+#: api_commands.KILL_AFTER_S and a margin: the command thread requeues its
+#: job after the child has gone, which this waits for.
+COMMAND_STOP_WAIT_S = 75.0
 #: how often finished jobs are swept
 JOB_SWEEP_S = 600.0
 
@@ -4918,6 +5445,7 @@ def _register_stack_dump() -> bool:
         return False
 
 
+@_ends_stop_watch
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -4926,6 +5454,7 @@ def run_forever():
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
     _register_stack_dump()
+    _start_stop_watch()
     from . import jobs, run_check
     all_collections = collections_mod.load_all()
     # the record of which kept statements THIS start has re-checked, which
@@ -4978,6 +5507,13 @@ def run_forever():
     dispatch.set_default_level(Level.CORPUS)
     threading.Thread(target=_stats_publisher, name="stats-publisher",
                      daemon=True).start()
+    # the card's record, second by second (app/rage/card_record.py): its busy
+    # time from the GPU probe, the gates' served time, the gaps. Telemetry
+    # on its own thread; nothing to record without a probe
+    if config.GPU_PROBE_URL:
+        card = card_record.CardRecorder(config.GPU_PROBE_URL, card_record.directory())
+        threading.Thread(target=card.run, args=(_stop,), name="card-record",
+                         daemon=True).start()
     # the vector index maintainer: its own thread, so an hour-long build or
     # a compaction never idles a pipeline thread or the GPU loop
     threading.Thread(target=_index_maintainer, name="index-maintainer",
@@ -4994,6 +5530,12 @@ def run_forever():
     threading.Thread(target=jobs_mod.serve_deposits, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="deposits", daemon=True).start()
+    # any command POSTed to its route (07 §7.4, app/api_commands.py): one at
+    # a time, on a thread of its own — a records build must not hold a create
+    command_thread = threading.Thread(target=jobs_mod.serve_commands, args=(_stop,),
+                                      kwargs={"log": lambda m: print(m, flush=True)},
+                                      name="commands", daemon=True)
+    command_thread.start()
     # a deposit collection's URL sources (06 §6.7): their own thread, since a
     # sitemap is many pages and a clone takes minutes
     from .hold import sources as sources_mod
@@ -5086,6 +5628,7 @@ def run_forever():
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = node_state.worker_state(node_con)
             _say_mode(state)
+            _say_profile()
             # WHAT A MODE RUNS is one table (app/node_state.py: MODE_RUNS;
             # operator, 2026-09-19), read here and by every other gate.
             if not node_state.runs(state, node_state.FETCH):
@@ -5192,6 +5735,9 @@ def run_forever():
     if job_thread.is_alive():
         print("[info:jobs] node: the job in hand did not finish before the stop; "
               "it is queued again at the next start", flush=True)
+    # a command in hand was sent SIGTERM by its thread; it finishes its unit
+    # or is killed (api_commands.KILL_AFTER_S), and is queued again either way
+    command_thread.join(timeout=COMMAND_STOP_WAIT_S)
     _join_pipeline_threads()
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
@@ -5217,7 +5763,8 @@ def _warn_if_pid1() -> None:
 def main() -> int:
     """`python -m app.worker`. docs/07 §7.7: the node "stops every
     collection at its unit and exits 130 on a signal" — invariant 2 says
-    the same — and it exited 0. `_stop` is set only by the signal handler."""
+    the same — and it exited 0. `_stop` is set by the signal handler, and
+    by `node stop`'s request, which exits 0 (`_stop_requested`)."""
     _warn_if_pid1()
     # the public key the web process recognises must be this key's half
     # (app/identity.py): a node whose two processes disagree about who it is
@@ -5229,6 +5776,13 @@ def main() -> int:
         print(f"REFUSED TO START: {e}", file=sys.stderr, flush=True)
         return 2
     run_forever()
+    return exit_code()
+
+
+def exit_code() -> int:
+    """0 for `node stop` or a run that ended by itself, 130 for a signal (07 §7.7)."""
+    if _stop_requested.is_set():
+        return 0
     return 130 if _stop.is_set() else 0
 
 

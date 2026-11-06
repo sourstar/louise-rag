@@ -1,0 +1,333 @@
+# wiki-gutenberg — the amendments A-K1..K4, worked out
+
+*Named `gutenberg-graph` until 2026-11-03; the operator renamed it `wiki-gutenberg`. The name is prose only: it enters no hash, no `collection_id` (codex.py: the local name and the title sit outside it).*
+
+*2026-10-19 night, the architecture session, unattended. D5 (operator: "Go
+ahead with the decisions as you recommended, D1 to D5") made wiki-gutenberg
+an annotations collection AMENDED; `wikidata-implementation.md` §4 names the
+four amendments in one line each. This note works them out to the byte so
+that the operator can decide them tomorrow — two of them (A-K3, A-K4) change
+hashed or wire bytes, and CLAUDE.md asks first for those. NOTHING HERE IS
+BUILT: `app/hold/annotations.py` still refuses every claim type but
+`same-work` and `translation-of`.*
+
+## 0. What wiki-gutenberg is
+
+Claims about gutenberg's TEXT that point into wikidata's ENTITIES: a
+mention of an entity in a chunk (entity linking), a relation between two
+entities stated by a chunk (extraction), and a community of entities with
+its summary (clustering). Each is a claim made by us — by a method with a
+model behind it — about another collection's records, which is exactly
+02 §2.10's kind. What 02 §2.10 lacks is in four places: the claim TYPES
+(A-K1), where a claim's END may point (A-K2), how many collections a claim
+collection may annotate (A-K3), and the container of parts at 10⁸–10⁹
+claims (A-K4).
+
+## A-K1 — three claim types beside `same-work` and `translation-of`
+
+Today `type` is one of two and every claim has `subject`, `object`, their
+languages, `method`, `evidence`, `confidence`, `contributor` and the pinned
+hashes (09 §9.5). The new types keep `method`, `evidence`, `confidence`,
+`contributor` and the pinned keys, and differ in their ENDS:
+
+| `type` | `subject` | `object` | own keys |
+|---|---|---|---|
+| `mention` | a chunk of the text target: `{uid, chunk_id, text_hash}` (A-K2) | an entity: a canonical id `wikidata:Q…` (A-K2) | `start`, `end` — code-point offsets in the chunk's text, `end` exclusive; `surface` — the text between them, so a reader needs no chunk to show the mention |
+| `relation` | an entity `wikidata:Q…` | an entity `wikidata:Q…` | `relation` — a canonical property id `wikidata:P…`; `evidence_chunk` — the chunk `{uid, chunk_id, text_hash}` the relation was read from |
+| `community` | the community: `{id: <string the method mints>, level: integer}` | — (`object` null) | `members` — a sorted list of canonical ids `wikidata:Q…` (no duplicates, at least 2); `summary` — text |
+
+Rules carried over: no floats anywhere (`confidence` and any score a
+method states are decimal strings); one claim per (type, subject, object,
+own keys that identify it: `start`/`end` for a mention, `relation` for a
+relation, `id`+`level` for a community); strings NFC. `subject_lang` /
+`object_lang` are REQUIRED for the two existing types and ABSENT for the
+new ones (an entity has no one language; the chunk's language is its
+record's). `edge_type` stays `annotations:<type>`.
+
+`method` gains a kind for models whose output is not bit-exact
+(`wikidata-implementation.md` §4 "Verification"): `{kind: "model", id:
+string, version: integer, model: <sha256 of the weights>, prompt: <sha256
+of the prompt text>, temperature: "0"}` — what a verifier re-runs. A
+`model` method's claims are checked by RE-RUNNING A SAMPLE and counting
+agreement; the tolerance is a measurement to make before the first
+collection (03 §3.2's plan gets a check `model-agreement`, floor TBD).
+
+## A-K2 — an end may be an entity or a chunk
+
+09 §9.14 already lets `to` be a canonical id `<namespace>:<id>` left
+unresolved; `wikidata-refs` registers `wikidata` (app/refs/wikidata.py), so
+`wikidata:Q42` resolves on a peer that holds the wikidata collection and
+stays a plain key on one that does not. What is new:
+
+- A claim's end may be a CHUNK, not only a record: `{uid, chunk_id,
+  text_hash}`, `text_hash` the BLAKE2b-128 of the chunk's text as the
+  target's chunker cut it (`embeddings.chunk_text_hash`, already stored per
+  chunk). The time rule of 02 §2.10 then holds per chunk: the mention is
+  `current` while the chunk's text hash is the one it was made against,
+  `stale` once the record's text moved under it (a re-cut moves chunk ids
+  AND hashes). `subject_hash` keeps covering the RECORD's `content_hash`,
+  so both tests are made from what a peer holds.
+- The relations member (09 §9.14) carries `from` = the chunk's RECORD uid
+  (a chunk is not a uid), `to` = the entity's canonical id, `type`
+  `annotations:mention`; a `relation` claim's edge is `from` = subject
+  entity … no: an edge's `from` MUST be a record of a collection the Codex
+  annotates (09 §9.14), and an entity is a record of wikidata (A-K3), so
+  `from` = `wikidata:<native_id>` of the subject entity, `to` = the object's
+  canonical id, `type` `annotations:relation`, and the property goes in the
+  claim, not the edge. A `community` claim has no edge of its own; its
+  members are edges `from` each member record `to` the community's claim
+  uid, type `annotations:member-of`.
+
+## A-K3 — two targets
+
+`annotates` becomes a LIST: `[{collection_id, from_snapshot}, …]`, each the
+target it is today, in a fixed order the claims refer to by position
+(`subject`'s and `object`'s collection is implied by the uid's plugin
+prefix, so no index is needed in the claim). wiki-gutenberg annotates
+gutenberg (the text) and wikidata (the entities). THIS MOVES HASHED BYTES:
+`annotates` is inside `collection_id`, so a list is a new Codex version
+(**9**, written for an annotations Codex with more than one target or any
+A-K1 type; version 7 keeps its bytes for the two existing collections —
+09 §9.3's version rule). `_target_name`, `attach`, `works` and the Library
+card read a list; `create annotations` takes `--annotates` more than once
+with `--from-snapshot` each.
+
+## A-K4 — Parquet parts for claims
+
+At 10⁸–10⁹ mentions a JSONL part of 50,000 records is 2–20 ×10⁴ parts;
+the snapshot's `shards` list alone is hundreds of MB, and every peer reads
+it. The design's Parquet packets are the right container: one part = one
+Parquet file of `shard_records` rows with the record line's columns, zstd,
+row groups of 1,000; `records_root` and `root` computed exactly as for a
+JSONL part over the CANONICAL LINE BYTES of each row (the row is rendered
+to §9.5's line to hash it, so a Parquet part and a JSONL part of the same
+records have the same `records_root` — the hashes do not depend on the
+container). `shard_records` for claims 1,000,000. The `records` check reads
+Parquet; `hold records show` renders lines. 09 §9.5 gains "The file (B):
+Parquet" beside its zstd-frames file, chosen per collection in the Codex's
+`slicing.container` (`"jsonl"` default, `"parquet"`), inside `collection_id`.
+A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
+
+## The order, if approved
+
+1. 02 §2.10, 05 §5.5, 09 §9.3 (version 9, `annotates` list,
+   `slicing.container`), §9.5 (the three claim shapes, the `model` method,
+   Parquet parts), §9.14 (the edges above) — amendments dated.
+2. app/hold/annotations.py: `check_claim` per type; `create` with several
+   targets; the chunk end's `text_hash` read from the target's vectors
+   table (a peer that holds the target's text but not its vectors recomputes
+   the hash from the chunker); Parquet parts behind `pack.records`.
+3. The Ask side: `attach` places a mention on its chunk (05 §5.3 `annotations`
+   gains `chunk_id`, `start`, `end`, `surface`), a relation on either end,
+   a community as a fact; the reader panel highlights mentions.
+4. The methods, as `tools/`: GLiNER mentions over gutenberg's chunks, linked
+   against wikidata's vectors; relations and communities after.
+5. The first instance over gutenberg's Latin and Greek slice, measured.
+
+## Questions for the operator
+
+- A-K3's Codex version 9 and A-K4's `slicing.container`: both inside
+  `collection_id`; approve, or keep one target (gutenberg) with wikidata
+  ends as plain canonical ids (no version bump; then a relation claim's
+  `from` cannot be a wikidata record and `relation` edges are dropped,
+  kept in the claim only)?
+- A-K4: Parquet parts for annotations collections only, or offered to every
+  collection (`slicing.container`)?
+- `model` methods: the agreement floor — measured on the first 1,000
+  GLiNER mentions re-run twice, or set at a value now?
+
+## Decided (operator, 2026-10-20)
+
+- **Two targets.** A-K3's Codex version 9 and A-K4's `slicing.container`,
+  both inside `collection_id`: APPROVED. A relation claim's `from` may be
+  a wikidata record; relation edges exist in the graph.
+- **Parquet parts for EVERY collection** (`slicing.container`), not for
+  annotations collections alone. A wire-format change for every
+  collection kind; the operator decided it knowing so.
+- **The agreement floor for `model` methods is MEASURED first**, on the
+  first 1,000 GLiNER mentions re-run twice, and set from that number —
+  never a value written before the measurement.
+- Order: as §"The order, if approved" says. **Step 1 is written
+  (2026-10-20):** 09 §9.3 (version 9, `annotates` list, `slicing.container`),
+  §9.5 (the three claim types and their keys, the `model` method, "The file
+  (B): Parquet"), §9.14 (the three edges), §9.18; 02 §2.10; 05 §5.3, §5.5;
+  03 §3.2 (`model-agreement`). **Step 2a is written (2026-10-20):** Codex
+  GRAPH_VERSION 9 in app/hold/codex.py (`slicing.container` required at 9,
+  `annotates` a tuple in memory — `targets_of`, `target_for`, `container_of`
+  are THE readers — written as an object at 7 and a list at 9; the cut
+  present where declared at 9); app/hold/annotations.py checks the three
+  claim types to the key (`check_claim`, `ends_of`, `identity_key`), pins a
+  chunk end by RE-CUTTING its record with the target's chunker
+  (`_check_chunk`: the chunk exists, hashes to `text_hash`, holds the
+  mention's `surface`), maps an entity's canonical id to its record uid
+  (`entity_uid`, the wikidata id rule), writes the three edges, numbers the
+  claims by `identity_tuple` at 9, and `create` takes several targets
+  (`--annotates`/`--from-snapshot` repeated, comma-separated in the API) and
+  `--container`; every reader of `annotates` (show, the Library card, Ask's
+  facts and works, traverse) reads the list. **Step 2b, Parquet parts, is
+  written (2026-10-20):** `pack/records.py` writes and reads a `.parquet`
+  part behind the same API (`write_shard`/`read_index`/`read_frame`
+  dispatch on the suffix; a row group is a frame; `line_of_row` renders
+  09 §9.5's line byte for byte, so `records_root` is the JSONL twin's and
+  the same records give the same file bytes under the pinned pyarrow);
+  `shard_path(container=)`; the snapshot entry carries the container IN
+  MEMORY only (`Shard.container`, no wire key), set by the builders and by
+  `snapshot.load` from the `codex.json` beside the snapshot
+  (`container_beside`, cached per Codex file) — so `s.path` is right at
+  every one of the 78 sites that read it; the pack build names the part by
+  the Codex's container, promotion and integrity glob both suffixes, a
+  Parquet part is not patched (`patch.part_of` None: fetched whole); a
+  recipe's `[slicing] container` makes a version-9 Codex
+  (`template._version_with_container`; a `--space-from` copy below version
+  5 is refused). Tests: tests/pack/test_records.py (the container),
+  tests/hold/test_annotations.py (a claims collection in Parquet, checked),
+  tests/hold/test_build_and_snapshot.py (a gutenberg recipe in Parquet).
+  Step 3 (the Ask side: the graph index `ClaimIndex.graph` is built, nothing
+  attaches it yet; a community's `state_of` is `unknown`, it pins no record)
+  and steps 4–5 after the wikidata collection exists.
+
+## Which gutenberg it annotates (operator, 2026-11-03)
+
+"gutenberg-nemo is just gutenberg with nemo vectors, why should it differ for
+wiki-gutenberg purpose?" It does not.
+- A claim's chunk end is `{uid, chunk_id, text_hash}`, which is content.
+- gutenberg-nemo is re-created by RULE 1 with gutenberg's records and chunks
+  carried byte-identical (nemotron-embed.md, "Production"), so every claim
+  line is the same line.
+- Only the pin differs: `annotates[].collection_id`. A target's
+  `collection_id` holds its space, and so its encoder.
+- Moving wiki-gutenberg to gutenberg-nemo is therefore a new annotations Codex
+  that re-pins the target, with the claim lines carried. Each chunk end is
+  checked again against its `text_hash`; no model runs again.
+- So wiki-gutenberg is built on today's gutenberg as soon as its tools exist,
+  and follows gutenberg to gutenberg-nemo by that re-pin. The carry is built
+  when it is first needed.
+
+## Nemotron for the task (operator, 2026-11-03) — the evaluation, PLANNED
+
+"Evaluate using a Nemotron model for the task." wiki-gutenberg has no space of
+its own, so the encoder question does not arise. The models below do its
+four jobs (wikidata-plugins.md, "Pipeline"):
+
+| job | planned | Nemotron candidates (all OpenMDW-1.1 [V]) |
+|---|---|---|
+| mentions over ~8 B tokens | GLiNER 2.5 | none. No Nemotron NER model exists, and an LLM at this volume is not a candidate. |
+| linking: the search | Jina v3 over wikidata's vectors | **already Nemotron**: wikidata is re-embedded with Nemotron-3-Embed-1B, and a mention is searched in that space. |
+| linking: the pick among the top 10 | an LLM | `nvidia/Nemotron-3.5-Rerank-8B` (cross-encoder on Ministral-3-8B, 34 languages): mention-in-context scored against each candidate's label and description, "none" below a threshold; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` |
+| relations (Q, property, Q) and community summaries | Gemma 4 26B A4B, Q8_0 (~27 GB) | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` (Mamba-2 + MoE + attention, 3 B active; en es fr de it ja; `ggml-org/…-GGUF`); `NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF` (9 B active, IQ2 trained for it, 24 GB; llama.cpp recipes for 32 GB cards) |
+
+**First, the engine** (on the node, before any score):
+- does llama.cpp `ddf48f8` load `nemotron_h` on SYCL, with its Mamba-2 ops
+  (`ssm_conv`, `ssm_scan`) on the card and not falling back to the CPU?
+- at temperature 0, does a fixed prompt give the same bytes over 3 fresh
+  loads (invariant 12)?
+- the reranker is a `mistral3` sequence-classification model; llama.cpp's
+  rerank path for it is unchecked, so the louise-python (torch) task is the
+  fallback.
+- Gemma 4 26B A4B goes through the same checks: it is the comparator.
+
+**The sets** (published, "do not reinvent the wheel"):
+- **relations: Re-DocRED** (Tan et al., EMNLP 2022; MIT [V]): 500 test
+  documents, gold entities given, triples over 96 Wikidata properties, our
+  claim's shape exactly. Scored by triple F1 against gold.
+- **the pick: Mewsli-X** (XTREME-R; Apache-2.0 [V]): WikiNews mentions
+  linked to Wikidata QIDs, with ~1 M candidate descriptions of its own.
+  - The top 10 come from BM25 over those descriptions, the same lists for
+    both pickers. So the step is measured now, not after wikidata's
+    embedding.
+  - Two numbers: the word search's recall@10 (the first stage's, not the
+    picker's), then each picker's accuracy@1 over the mentions whose gold is
+    in the 10.
+  - The search over wikidata's Nemotron vectors is measured in its place
+    once that collection is embedded.
+- **mentions: LitBank** (English novels from Project Gutenberg): GLiNER's
+  settings, not a Nemotron question.
+- None of these sets is in Latin or Ancient Greek, the first instance's
+  slice (step 5), and no candidate lists them. That instance's own check
+  is the agreement floor (decided 2026-10-20), plus a hand-read sample.
+
+**Only the two Nemotron options, at night** (operator, 2026-11-03: "Job 1
+already set, job 2 and 3, if there are no benchmarks already available
+compare the 2 nemo options during the night when no one is using louise").
+- No published score exists for these models on entity linking or relation
+  extraction: their cards report general benchmarks only.
+- So both comparisons run on the node in the night window, beside wikidata's
+  embedding.
+- Gemma 4 26B is not run: the comparison is between the two Nemotron
+  options.
+- **Job 2, the pick:** Nemotron-3.5-Rerank-8B against Lightning-30B-A3B, on
+  Mewsli-X (en, de, es), with `tools/measure/kg_link_pick_eval.py`.
+- **Job 3, relations:** Lightning-30B-A3B against Bolt-74B-A9B-24GB, on
+  Re-DocRED.
+- Community summaries have no published set. They go to the job-3 winner.
+
+**The harnesses.** `tools/measure/kg_link_pick_eval.py` (job 2) and
+`tools/measure/kg_relations_eval.py` (job 3), built 2026-11-03.
+- Re-DocRED through any OpenAI-compatible chat endpoint, temperature 0.
+- One prompt for every model, its hash recorded with the run, and the
+  output as JSON triples.
+- Precision, recall and F1, and the paired test between models over
+  documents.
+
+
+## Nemotron out for summaries and relations (operator, 2026-11-03) — PROPOSED
+
+"For wiki-gutenberg summaries nemo is out of the games, propose alternatives
+based on available benchmarks. I can get it through localai". Nemotron's
+post-training is English-only (its tech report §6), and Lightning names six
+languages; gutenberg is in dozens, and the first slice is Latin and Ancient Greek.
+
+No card publishes a summarization or relation-extraction score, so the
+shortlist rests on the nearest published rows. Every number below is copied
+from the model's own card, unless it says another card. All four are
+Apache-2.0 and in LocalAI's gallery:
+
+| option (gallery entry) | card numbers | pros | cons |
+|---|---|---|---|
+| **A. Qwen3.8-27B** (`qwen3.8-27b`: unsloth UD-Q4_K_M + an MTP draft) | IFBench 79.5, GPQA Diamond 89.2 (Qwen3.6-27B on the same card: 69.1, 87.8) | the newest Qwen and the best instruction following published for any candidate; MTP speeds decoding | dense: several times slower per token than a 3 B-active MoE; no multilingual or long-context row on its card; DeltaNet ops and MTP unchecked on our SYCL engine |
+| **B. Qwen3.6-35B-A3B** (`qwen3.6-35b-a3b`, UD-Q4_K_M ~21 GB) | MMLU-Pro 85.2, GPQA 86.0; its 3.5 predecessor: AA-LCR 58.5, IFBench 70.2, MMMLU 85.2, 201 languages | fastest (3 B active) | below A on every shared row; 21 GB beside the embedder |
+| C. Gemma 4 31B (`gemma-4-31b-it`) | MMMLU 88.4, MRCR 128k 66.4, MMLU-Pro 85.2 | best multilingual knowledge row | dense and the slowest; "35+ languages out of the box" (a Latin/Greek risk) |
+| D. Gemma 4 26B-A4B (the plan before Nemotron; `gemma-4-26b-a4b-it`, Q8_0 ~27 GB) | MMMLU 86.3, MRCR 44.1, MMLU-Pro 82.6 | MoE, 3.8 B active | weakest long-context row; the same language claim |
+
+Cross-card numbers are not comparable. Qwen3.6-27B scores IFBench 69.1 on
+Qwen3.8's card, where Qwen3.5-27B's own card gives 76.5.
+
+**Recommendation:** run A against B.
+- On the same communities: a blind-read sample of ~30 summaries, plus tokens/s.
+- On Re-DocRED for relations, with the existing harness. One model then does
+  job 3 whole.
+- Take A if it is clearly better and the volume fits the night windows,
+  otherwise B.
+- Gemma comes in only if the Qwen3.5 architecture fails on our card. Today's
+  9B engine checks answer that.
+
+### Summaries: A, B, C for language accuracy and speed; English first? (operator, 2026-11-03)
+
+"Models for summarization compare the performance in terms of language accuracy
+and speed for A, B and C. Consider also this solution: 1. always use a book
+english translation when available. 2. Select a model for summaries from english
+and another model for summaries from non-english."
+
+**The bench:** `tools/measure/summary_eval.py`. Summaries are in English
+whatever the source language.
+
+| set | languages | what it measures |
+|---|---|---|
+| WikiLingua (CC BY 3.0), 20 sections a language | fr de nl it es pt ru zh ja | each section summarised **from the original** and **from its English twin**, both scored by chrF against the same English reference. The gap is what reading the original costs. This tests (1) |
+| BookSum (BSD-3, research use), 30 chapters | en | literary English: the "from English" model of (2) |
+| the node's classical passages | la, el | Latin and Greek against their human English translation. No reference exists, so only the two summaries' agreement is scored |
+
+Speed is measured warm at concurrency 1: seconds per summary and generated
+tokens/s.
+
+**What decides:**
+- **(1)** holds where every model's gap is large and the share of works with an
+  English edition is high. The works-annotations collection names the editions;
+  for Latin and Greek, about 41 % of works have one (classical-translation.md).
+  The other languages are to be counted.
+- **(2)** pays when the best "from English" model is clearly faster than the
+  best "from original" one at an equal BookSum score.
+
+**What is known before the run** (classical-translation.md, on this card): a 3 B-active
+mixture of experts ran ~4× faster than a dense 27B, at 87 against 23 tokens/s,
+for a chrF 2 points lower on Latin.

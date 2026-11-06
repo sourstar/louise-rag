@@ -71,6 +71,55 @@ def test_the_fts_and_rdf_stages_index_through_the_pool(isolated_config, tmp_path
     con.close()
 
 
+def _tags_after_fts(tmp_path, corpus_dir, name: str) -> dict[str, list[str]]:
+    d = tmp_path / name
+    c = collections_mod.Collection(
+        name="g", plugin="gutenberg", profile=None, embed_mode_default=None, corpus_dir=corpus_dir,
+        manifest_path=d / "manifest.db", fts_dir=d / "fts", lance_dir=d / "lancedb")
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    for stage in ("rdf", "fts"):
+        first = con.execute("SELECT * FROM documents WHERE error IS NULL ORDER BY uid LIMIT 1").fetchone()
+        assert worker._execute_step(con, c, stage, first) is True
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE fts_done=0").fetchone()[0] == 0
+    tags: dict[str, list[str]] = {}
+    for r in con.execute("SELECT uid, entity_id FROM doc_keys ORDER BY uid, entity_id"):
+        tags.setdefault(r["uid"], []).append(r["entity_id"])
+    con.close()
+    return tags
+
+
+def test_the_fts_stage_tags_each_document_in_the_child_that_cut_it(isolated_config, tmp_path,
+                                                                     corpus_dir, monkeypatch):
+    """The worker's pipeline thread tagged every document under the GIL —
+    three of three py-spy samples in the citation resolver, the pool's
+    children running 0 of 90 s for 79 (2026-10-30). The children tag now,
+    with the chunks; the worker only writes, and the tags are the serial ones."""
+    from app import entities, refs
+    from app.refs import store as refs_store
+    rcon = refs.connect(config.refs_db_path())
+    refs_store.sync_all(rcon, FIXTURES / "refs-mini")
+    rcon.close()
+    book = sorted(p for p in Path(corpus_dir).iterdir() if p.is_dir())[0]
+    txt = next(book.glob("*.txt*"))
+    data = txt.read_bytes()
+    i = data.index(b"*** END OF")
+    txt.write_bytes(data[:i] + b"A chapter on the BRCA2 and TP53 genes.\n\n" + data[i:])
+    serial = _tags_after_fts(tmp_path, corpus_dir, "serial")
+    assert sorted(e for v in serial.values() for e in v) == ["hgnc:1101", "hgnc:11998"], \
+        "the book names two genes: the test proves something only if they are found"
+
+    def never(*a, **k):
+        raise AssertionError("the worker tagged a document itself")
+    monkeypatch.setattr(entities, "entity_ids_of", never)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    try:
+        assert _tags_after_fts(tmp_path, corpus_dir, "pooled") == serial
+    finally:
+        parallel.shutdown()
+
+
 def test_prefetch_prepares_the_next_container_once_in_the_background(isolated_config, tmp_path,
                                                                       two_processes, monkeypatch):
     """Regression (2026-08-28, measured): pubmed's pipeline spent 17 s of
@@ -146,6 +195,200 @@ def test_pack_records_are_computed_by_the_pool(isolated_config, tmp_path, corpus
     pack_build.build(c, serial_dir, records_per_shard=2, sign=False, log=lambda *_: None)
     for s in m["shards"]:
         assert (pack_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes()
+
+
+def test_held_record_lines_are_taken_and_cut_by_the_pool(isolated_config, tmp_path, corpus_dir,
+                                                       two_processes, monkeypatch):
+    """A build that takes its records' lines from held parts (a re-slicing
+    daughter, a discarded snapshot's rebuild) runs them through the pool:
+    in one process, wikipedia-v8's rebuild of 52.9 M records used one core
+    of eight (München, 2026-10-30; operator: "multi threading is a must,
+    not an option"). The bytes are the serial build's."""
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    parallel.shutdown()
+    config.PARSE_PROCESSES = 1
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    config.PARSE_PROCESSES = 2
+    kinds: list[str] = []
+    real = parallel._submit
+    monkeypatch.setattr(parallel, "_submit", lambda ex, kind, col, part: kinds.append(kind) or real(ex, kind, col, part))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3 and r.skipped == 0
+    assert kinds and set(kinds) == {"held-record"}, "every held record went to a child"
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+
+
+def test_the_children_encode_each_line_as_the_writer_would(isolated_config, tmp_path, corpus_dir,
+                                                         monkeypatch):
+    """The line is encoded in the child (München's samples, 2026-10-30: the
+    build's own thread spent its time in json.dumps). The parts are the
+    bytes of a build whose writer encodes every line itself."""
+    import json
+    from app.pack import build as pack_build, manifest as manifest_mod, records
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    by_child = tmp_path / "packs" / "child"
+    pack_build.build(c, by_child, records_per_shard=2, sign=False, log=lambda *_: None)
+    monkeypatch.setattr(pack_build, "with_line", lambda collection, got: got)
+    by_writer = tmp_path / "packs" / "writer"
+    pack_build.build(c, by_writer, records_per_shard=2, sign=False, log=lambda *_: None)
+    shards = manifest_mod.load(by_child)["shards"]
+    assert shards
+    for s in shards:
+        assert (by_child / s["path"]).read_bytes() == (by_writer / s["path"]).read_bytes()
+        part = by_child / s["path"]
+        index = records.read_index(part)
+        lines = [line for k in range(len(index.frames)) for line in records.read_frame(part, index, k)]
+        assert all(pack_build.LINE_KEY.encode() not in line for line in lines), "the carrier is never written"
+        assert [records.canonical_line(json.loads(line)) for line in lines] == [line + b"\n" for line in lines]
+
+
+def test_the_build_thread_names_uids_and_gets_back_lines(isolated_config, tmp_path, corpus_dir,
+                                                        monkeypatch):
+    """A held build's thread sends each child a uid and the two paths, and
+    gets back the line and the few fields it reads, never the article: the
+    children look up their documents themselves, and the text no longer
+    crosses back to be unpickled under the GIL (operator, 2026-10-30:
+    "Do A and B together, now")."""
+    from app.pack import build as pack_build, manifest as manifest_mod, records
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    sent: list[dict] = []
+    real_compute = parallel._compute
+    monkeypatch.setattr(parallel, "_compute",
+                        lambda kind, col, rows: sent.extend(rows) or real_compute(kind, col, rows))
+    written: list[tuple[list, object]] = []
+    real_write = records.write_shard
+    monkeypatch.setattr(records, "write_shard",
+                        lambda path, recs, **kw: written.append((list(recs), kw.get("lines"))) or
+                        real_write(path, recs, **kw))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3
+    assert sent and all(set(row) == {"uid", pack_build.HELD_DB, pack_build.HELD_DIR} for row in sent)
+    assert written and all(lines is not None for _recs, lines in written)
+    assert all(set(rec) <= set(pack_build.PARENT_KEYS) | {"extra"} for recs, _ in written for rec in recs)
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+
+
+def test_the_line_crosses_compressed_and_the_writer_expands_it():
+    """München's profile of wikidata's held build (2026-10-31): the build's
+    own process spent `_recv` 34.8 %, `_send` 15.6 %, `dumps` 6.7 % moving
+    lines child → build → writer. The child ships its line zstd-compressed —
+    its TASK's lines in one batch since 2026-11-02 (python-hot-spots.md
+    "C": a compress call a record cost a fixed 25-42 µs) — and the writer
+    gets back exactly the line the child encoded."""
+    from types import SimpleNamespace
+    from app.pack import build as pack_build, records
+    rec = {"uid": "fake:1", "native_id": "1", "lang": "en", "title": "Doc " + "x" * 2000,
+           "creators": [], "date": "2001", "subjects": [], "keys": [],
+           "sections": [["Abstract", "text " * 400]], "extra": {}, "layer": 0, "chunks": 1,
+           "content_hash": "00" * 16, "origin_hash": "11" * 16}
+    want = records.canonical_line(dict(rec))
+    answer = pack_build.with_line(SimpleNamespace(codex=None), (dict(rec), 0, b"", {}))
+    assert answer[0][pack_build.LINE_KEY] == want, "encoded in the child, as the writer would"
+    results = [(True, answer)]
+    pack_build.ship_lines(results)
+    shipped = results[0][1][0][pack_build.LINE_KEY]
+    (comp, size), start, end = shipped
+    assert (start, end) == (0, len(want)) and size == len(want)
+    assert len(comp) < len(want) / 3, "it travels compressed"
+    assert pack_build._unship(shipped) == want
+    assert pack_build._unship(want) == want, "a raw line still reads"
+
+
+def test_parts_are_written_by_processes_made_once_per_build(isolated_config, tmp_path, corpus_dir,
+                                                           two_processes, monkeypatch):
+    """Writer THREADS shared the build thread's GIL and the build reached ~6
+    of 8 cores (München, 2026-10-30); the parts are written by processes,
+    made once for every slice, and their bytes are the serial build's."""
+    from concurrent.futures import ProcessPoolExecutor
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    made: list = []
+    real = pack_build.part_writer_pool
+    monkeypatch.setattr(pack_build, "part_writer_pool", lambda: made.append(real()) or made[-1])
+    by_processes = tmp_path / "packs" / "processes"
+    r = pack_build.build(c, by_processes, records_per_shard=1, sign=False, log=lambda *_: None)
+    assert r.records == 3
+    assert len(made) == 1 and isinstance(made[0], ProcessPoolExecutor), "one writer pool, of processes"
+    monkeypatch.undo()
+    parallel.shutdown()
+    config.PARSE_PROCESSES = 1
+    serial = tmp_path / "packs" / "serial"
+    pack_build.build(c, serial, records_per_shard=1, sign=False, log=lambda *_: None)
+    for s in manifest_mod.load(serial)["shards"]:
+        assert (by_processes / s["path"]).read_bytes() == (serial / s["path"]).read_bytes()
+
+
+def test_a_slimmed_record_keeps_what_every_cutoff_rule_reads():
+    from app.pack import build as pack_build, cutoff
+    full = {"uid": "x:1", "native_id": "1", "content_hash": "h", "origin_hash": "o", "chunks": 3,
+            "origin": "a", "date": "1901", "title": "t", "sections": [["", "long text"]],
+            "extra": {"issued": "2001-02-03", "revised": "2020-01-01", "other": "kept in the line only"}}
+    slim = pack_build._slim(full)
+    assert "sections" not in slim and slim["extra"] == {"issued": "2001-02-03", "revised": "2020-01-01"}
+    for plugin in cutoff.KEY_OF:
+        assert cutoff.record_key(plugin, slim) == cutoff.record_key(plugin, full)
+
+
+def test_a_build_under_a_changing_profile_writes_the_serial_bytes(isolated_config, tmp_path, monkeypatch):
+    """The node profile (app/cpu_limit.py) changes how many parts run, never
+    what they produce: a build whose limit goes 12 -> 0 (paused) -> 8 -> 1
+    through real children writes every part byte-identical to a serial build."""
+    from app import cpu_limit, node_profile
+    from app.node_profile import Active, GpuLevel, Profile
+    from app.pack import build as pack_build, manifest as manifest_mod
+    from tests.conftest import gutenberg_books
+    corpus = gutenberg_books(tmp_path / "many", 160)
+    c, rows = _gutenberg(tmp_path, corpus)
+    assert len(rows) == 160                          # 50 a page: several pages per slice
+
+    def build(dest):
+        said: list[str] = []
+        pack_build.build(c, dest, records_per_shard=20, sign=False,
+                         log=lambda m: said.append(m))
+        return said
+    serial_dir = tmp_path / "packs" / "serial"
+    build(serial_dir)
+
+    reads = {"n": 0}
+    phases = [12, 12, 0, 0, 0, 0, 8, 8, 8, 1]
+
+    def scripted(now=None):
+        cores = phases[min(reads["n"], len(phases) - 1)]
+        reads["n"] += 1
+        return Active(Profile({0: "quiet", 12: "night"}.get(cores, "day"), cores, "full"),
+                      GpuLevel("full"), None, None)
+    monkeypatch.setattr(node_profile, "active", scripted)
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    monkeypatch.setattr(cpu_limit, "PAUSE_TICK_S", 0.01)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    cpu_limit.reset()                                # the serial build's read, cached for TTL_S
+    parallel.shutdown()
+    try:
+        pooled_dir = tmp_path / "packs" / "pooled"
+        said = build(pooled_dir)
+    finally:
+        parallel.shutdown()
+    profile_lines = [m for m in said if "profile" in m]
+    assert any("paused" in m for m in profile_lines) and any("8 cores" in m for m in profile_lines) \
+        and any("1 core" in m for m in profile_lines), profile_lines
+    assert reads["n"] >= len(phases), "every phase was in force for part of the build"
+    m = manifest_mod.load(pooled_dir)
+    assert [s["path"] for s in m["shards"]] == [s["path"] for s in manifest_mod.load(serial_dir)["shards"]]
+    assert len(m["shards"]) >= 8
+    for s in m["shards"]:
+        assert (pooled_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes(), s["path"]
 
 
 def test_a_pool_that_does_not_answer_never_blocks_the_caller(isolated_config, tmp_path,
@@ -537,3 +780,398 @@ def test_the_part_target_is_a_size_not_a_cap(monkeypatch):
     assert [r for p in parts for r in p] == rows, "order kept"
     assert max(cost) <= 2 * (sum(cost) / len(cost)), \
         f"one part carries the tail: {cost}"
+
+
+# ---- the page stream (compute_pages), München's profile of wikipedia-v8, 2026-10-24 -------------
+
+def _done(value):
+    from concurrent.futures import Future
+    f = Future()
+    f.set_result(value)
+    return f
+
+
+def test_the_pool_reads_the_next_page_before_the_caller_takes_this_one(isolated_config, tmp_path,
+                                                                      corpus_dir, monkeypatch):
+    """A COST test. `compute` per page waited for the page's slowest part
+    before the next page was even read: the children idled behind every
+    page's longest article (47.8 % of their samples; ~1.3 of 4 cpus).
+    `compute_pages` submits page k+1's parts while page k is still with the
+    caller, and gives the same results in the same order."""
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 20)[:60]]          # one object per row: a part names its page
+    pages = [rows[i:i + 12] for i in range(0, 60, 12)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]          # serial
+    real = parallel._compute
+    events: list[tuple[str, int]] = []
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            page = next(i for i, p in enumerate(pages) if any(part[0] is r for r in p))
+            events.append(("submit", page))
+            return _done(real(kind, collection, part))
+
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    parallel.forget_users()
+    got = []
+    for k, out in enumerate(parallel.compute_pages("chunks", c, iter(pages))):
+        events.append(("taken", k))
+        got.append(out)
+    assert got == truth
+    first_taken = events.index(("taken", 0))
+    assert ("submit", 1) in events[:first_taken], f"page 1 waited for page 0: {events}"
+    assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
+
+
+def test_a_part_that_stalls_costs_only_itself_and_what_finished_is_kept(isolated_config, tmp_path,
+                                                                      corpus_dir, monkeypatch):
+    """The timeout bounds the wait for the NEXT answer, not the page: a
+    stalled part is computed in-process after PARSE_TIMEOUT_S without
+    progress, and every part that did answer is used, not computed again
+    (15 whole pages were thrown away and re-parsed serially in 18 h)."""
+    from concurrent.futures import Future
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = (rows * 20)[:24]
+    pages = [rows[:12], rows[12:]]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    real = parallel._compute
+    stalled = {"n": 0}
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            if stalled["n"] == 0:
+                stalled["n"] += 1
+                return Future()                       # never answers
+            return _done(real(kind, collection, part))
+
+    inprocess = []
+
+    def counting(kind, collection, part):
+        inprocess.append(len(part))
+        return real(kind, collection, part)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    monkeypatch.setattr(parallel, "_compute", counting)
+    parallel.reset_failures()
+    parallel.forget_users()
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert len(inprocess) == 1, f"only the stalled part was computed in-process: {inprocess}"
+    assert parallel.health()["failures"] == 1
+    parallel.reset_failures()
+
+
+def test_one_slow_part_does_not_hold_back_the_pages_after_it(isolated_config, tmp_path,
+                                                           corpus_dir, monkeypatch):
+    """A COST test (München, 2026-10-25, wikipedia-v8 at 12 children: the cpu
+    sat at one core for stretches between 800 % readings). The stream waited
+    on its OLDEST part alone and counted a part that had answered as holding
+    a slot until its page's turn, so one long article held every child idle.
+    Here the first part answers only once parts of later pages have been
+    submitted: the old stream waits for it until the watchdog fires and
+    computes it in-process; this one keeps submitting, and the results are
+    the serial ones, in order, with no failure."""
+    from concurrent.futures import Future
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 30)[:72]]
+    pages = [rows[i:i + 12] for i in range(0, 72, 12)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    real = parallel._compute
+    first: dict = {}
+    submitted: list[int] = []
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            page = next(i for i, p in enumerate(pages) if any(part[0] is r for r in p))
+            submitted.append(page)
+            if not first:
+                first["f"], first["args"] = Future(), (kind, collection, part)
+                return first["f"]
+            if page >= 3 and not first["f"].done():
+                first["f"].set_result(real(*first["args"]))   # the long article ends
+            return _done(real(kind, collection, part))
+
+    inprocess: list[int] = []
+
+    def counting(kind, collection, part):
+        inprocess.append(len(part))
+        return real(kind, collection, part)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    monkeypatch.setattr(parallel, "_compute", counting)
+    parallel.reset_failures()
+    parallel.forget_users()
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert inprocess == [], f"the slow part was given up on and computed in-process: {inprocess}"
+    assert max(submitted) == len(pages) - 1
+    parallel.reset_failures()
+    assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
+
+
+def test_one_slow_part_does_not_stall_the_look_ahead_past_sixteen_pages(isolated_config, tmp_path,
+                                                                        corpus_dir, monkeypatch):
+    """A COST test (München, 2026-10-30, wikidata's build at 12 children: the
+    children waited 47 % of their samples for work while the parent waited
+    51 % for the next part). The look-ahead was 16 PAGES: one large entity in
+    the oldest page stopped the reading after 8,000 rows, and every child ran
+    dry behind it. The bound is in rows (`ROWS_AHEAD`): here the slow part
+    answers only once page 30 is submitted — past sixteen pages — and the
+    stream gets there without the watchdog giving the part up."""
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 40)[:80]]
+    pages = [rows[i:i + 2] for i in range(0, 80, 2)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    real = parallel._compute
+    first: dict = {}
+    submitted: list[int] = []
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            page = next(i for i, p in enumerate(pages) if any(part[0] is r for r in p))
+            submitted.append(page)
+            if not first:
+                first["f"], first["args"] = Future(), (kind, collection, part)
+                return first["f"]
+            if page >= 30 and not first["f"].done():
+                first["f"].set_result(real(*first["args"]))   # the large entity ends
+            return _done(real(kind, collection, part))
+
+    from concurrent.futures import Future
+    inprocess: list[int] = []
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    monkeypatch.setattr(parallel, "_compute", lambda *a: inprocess.append(1) or real(*a))
+    parallel.reset_failures()
+    parallel.forget_users()
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert inprocess == [], "the look-ahead stalled and the slow part was given up on"
+    assert max(submitted) == len(pages) - 1
+    # and the bound holds: rows read ahead never pass it (one page at least)
+    monkeypatch.setattr(parallel, "ROWS_AHEAD", 6)
+    first.clear()
+    submitted.clear()
+    got = parallel.compute_pages("chunks", c, iter(pages))
+    assert next(got) == truth[0] and max(submitted) <= 3 + 1
+    got.close()
+    parallel.reset_failures()
+    assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
+
+
+def test_the_page_stream_through_real_children_gives_the_serial_results(isolated_config, tmp_path,
+                                                                       corpus_dir, two_processes):
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = (rows * 10)[:30]
+    pages = [rows[i:i + 7] for i in range(0, 30, 7)]
+    got = list(parallel.compute_pages("chunks", c, iter(pages)))
+    parallel.shutdown()
+    config.PARSE_PROCESSES = 1
+    assert got == [parallel.compute("chunks", c, p) for p in pages]
+    assert list(parallel.compute_pages("chunks", c, iter([]))) == []
+
+
+def test_the_pool_is_sized_from_the_cpu_quota_not_the_host(tmp_path):
+    """München's profile: `os.cpu_count()` read the host's 12 inside a
+    4-cpu container, and 11 children shared 4 cpus at nice 19."""
+    import os
+    host = len(os.sched_getaffinity(0))
+    (tmp_path / "v2").mkdir()
+    (tmp_path / "v2" / "cpu.max").write_text("400000 100000\n")
+    assert config.available_cpus(str(tmp_path / "v2")) == min(host, 4)
+    (tmp_path / "v2" / "cpu.max").write_text("250000 100000\n")
+    assert config.available_cpus(str(tmp_path / "v2")) == min(host, 3), "2.5 cpus: three"
+    (tmp_path / "v2" / "cpu.max").write_text("max 100000\n")
+    assert config.available_cpus(str(tmp_path / "v2")) == host, "no quota: the affinity"
+    (tmp_path / "v1" / "cpu").mkdir(parents=True)
+    (tmp_path / "v1" / "cpu" / "cpu.cfs_quota_us").write_text("200000\n")
+    (tmp_path / "v1" / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
+    assert config.available_cpus(str(tmp_path / "v1")) == min(host, 2)
+    assert config.available_cpus(str(tmp_path / "none")) == host
+
+
+def test_the_records_build_takes_the_whole_quota_unless_told(monkeypatch):
+    """The A/B on wikipedia-v8 (2026-10-25): 4 children in a 4-cpu quota were
+    1.16x faster than 3, every part byte-identical. The worker keeps quota - 1."""
+    monkeypatch.setattr(config, "available_cpus", lambda: 4)
+    monkeypatch.delenv("PARSE_PROCESSES", raising=False)
+    assert config.build_parse_processes() == 4
+    monkeypatch.setenv("PARSE_PROCESSES", "2")
+    assert config.build_parse_processes() == 2, "an operator's setting wins"
+
+
+# ---- an idle pool gives its memory back (München, 2026-10-28) --------------
+#
+# Twelve children held 10.8 GiB, idle and resident 26-42 minutes after the
+# quiet profile stopped parsing and through a pause; wikipedia-v8's first
+# snapshot could not start beside them. The beat thread now releases a pool
+# nobody has been inside for PARSE_IDLE_RELEASE_S.
+
+def test_an_idle_pool_is_released_and_its_children_end(isolated_config, tmp_path, corpus_dir,
+                                                       two_processes):
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    assert parallel.chunks_for_rows(c, rows[:4])          # a real pool, with children
+    ex = parallel._pool
+    children = list(ex._processes.values())
+    assert children and all(p.is_alive() for p in children)
+    now = time.monotonic()
+    assert parallel.release_idle(600.0, now=now) == 0, "just used: not idle"
+    assert parallel.release_idle(0, now=now + 10_000) == 0, "0 keeps the pool for the process's life"
+    assert parallel.release_idle(600.0, now=now + 601) == 2
+    assert parallel._pool is None and not parallel.health()["pool"]
+    for p in children:
+        p.join(5)
+    assert not any(p.is_alive() for p in children), "the children ended: their memory is back"
+    # the next parse starts a fresh pool and computes the same chunks
+    again = parallel.chunks_for_rows(c, rows[:4])
+    assert parallel._pool is not None and parallel._pool is not ex
+    assert again == parallel._compute("chunks", c, rows[:4])
+
+
+def test_a_pool_with_a_caller_inside_is_never_released(monkeypatch):
+    """A batch inside `compute`/`compute_pages`, or a slot held, is use —
+    however long it lasts (a paused records build waits inside its stream)."""
+    stopped = []
+
+    class Pool:
+        def shutdown(self, wait=True, cancel_futures=False):
+            stopped.append(True)
+
+    monkeypatch.setattr(parallel, "_pool", Pool())
+    monkeypatch.setattr(parallel, "_pool_size", 11)
+    parallel.forget_users()
+    parallel._want("wikipedia", 1)
+    later = time.monotonic() + 10_000
+    assert parallel.release_idle(600.0, now=later) == 0, "a caller is inside"
+    parallel._want("wikipedia", -1)
+    parallel._occupy("wikipedia", 1)
+    assert parallel.release_idle(600.0, now=later) == 0, "a slot is held"
+    parallel._occupy("wikipedia", -1)
+    assert parallel.release_idle(600.0, now=time.monotonic()) == 0, "the caller just left"
+    assert parallel.release_idle(600.0, now=later) == 11 and stopped == [True]
+    assert parallel._pool is None
+
+
+def test_the_worker_beat_releases_the_pool_and_says_so(monkeypatch):
+    """The call sits on the beat thread beside the shares line (telemetry-
+    shaped work, never a pipeline thread), and a release is one log line."""
+    import inspect
+    src = inspect.getsource(worker)
+    beat = src[src.index("_log_shares(con, [c.manifest_path for c in collections])"):]
+    beat = beat[:beat.index("except Exception")]
+    assert "parallel.release_idle(config.PARSE_IDLE_RELEASE_S)" in beat
+    assert "parse pool released:" in beat
+    assert config.PARSE_IDLE_RELEASE_S == 600.0
+
+
+def test_an_operator_pass_keeps_its_children_unless_the_env_says_otherwise(monkeypatch):
+    """500 tasks a child replaced every child of wikidata's build every few
+    seconds (München, 2026-10-30); an operator pass keeps them for 20,000
+    unless PARSE_TASKS_PER_CHILD is set, as the worker's env sets it."""
+    from app import louise
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", True)
+    monkeypatch.setattr(config, "build_parse_processes", lambda: 3)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+    monkeypatch.setattr(config, "PARSE_TASKS_PER_CHILD", 500)
+    monkeypatch.delenv("PARSE_TASKS_PER_CHILD", raising=False)
+    louise._whole_quota()
+    assert (config.PARSE_PROCESSES, config.PARSE_TASKS_PER_CHILD) == (3, louise.CLI_TASKS_PER_CHILD)
+    monkeypatch.setattr(config, "PARSE_TASKS_PER_CHILD", 500)
+    monkeypatch.setenv("PARSE_TASKS_PER_CHILD", "500")
+    louise._whole_quota()
+    assert config.PARSE_TASKS_PER_CHILD == 500
+
+
+def _dies_once(marker: str, i: int) -> int:
+    """Killed by "the kernel" the first time it meets task 2."""
+    import os
+    import signal
+    m = Path(marker)
+    if i == 2 and not m.exists():
+        m.write_text("killed")
+        os.kill(os.getpid(), signal.SIGKILL)
+    return i * i
+
+
+def test_a_pass_survives_a_child_the_kernel_killed(tmp_path, monkeypatch):
+    """A child killed by the OOM killer broke the pool and ended the pass
+    (operator, 2026-10-30: a kill recovers by itself, "not involving this
+    agent"). The unanswered parts go again on a smaller pool, in order."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    marker = str(tmp_path / "killed")
+    got = list(parallel.each_part(_dies_once, [(marker, i) for i in range(12)]))
+    assert got == [i * i for i in range(12)] and Path(marker).exists()
+
+
+def test_a_held_part_is_looked_up_in_two_queries_not_two_a_record(isolated_config, tmp_path,
+                                                                   corpus_dir, monkeypatch):
+    """München's py-spy of wikidata-bge's build (2026-10-31): a busy child
+    spent 34 % in `held_or_parsed`'s two point lookups per record. A part's
+    rows are fetched in two IN queries; the parts are the same bytes."""
+    import sqlite3
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    point: list[str] = []
+    real_ro = pack_build._ro
+
+    class Counting:
+        def __init__(self, con):
+            self.con = con
+
+        def execute(self, sql, *a):
+            if "WHERE uid=?" in sql:
+                point.append(sql)
+            return self.con.execute(sql, *a)
+    monkeypatch.setattr(pack_build, "_ro", lambda path: Counting(real_ro(path)))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3
+    assert point == [], "no point lookup a record"
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+    assert isinstance(real_ro(str(c.manifest_path)), sqlite3.Connection)
+
+
+def test_a_part_goes_to_its_writer_as_columns_and_writes_the_same_bytes(isolated_config, tmp_path,
+                                                                        corpus_dir, monkeypatch):
+    """After #149 the build's threads spent `_send` 35 % pickling each part's
+    records (a dict each) and lines (a tuple each) for the writer (München,
+    2026-10-31). A part whose lines the children shipped goes as columns and
+    one bytes object; its file is the bytes the per-record hand-over wrote."""
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    used: list[int] = []
+    real = pack_build._write_part_columns
+    monkeypatch.setattr(pack_build, "_write_part_columns",
+                        lambda path, cols, *a: used.append(len(cols[0])) or real(path, cols, *a))
+    columns = tmp_path / "packs" / "columns"
+    pack_build.build(c, columns, records_per_shard=2, sign=False, log=lambda *_: None)
+    assert used and sum(used) == 3, "every part handed over as columns"
+    monkeypatch.setattr(pack_build, "_columns_of", lambda buf, lines: None)
+    records_ = tmp_path / "packs" / "records"
+    pack_build.build(c, records_, records_per_shard=2, sign=False, log=lambda *_: None)
+    a, b = manifest_mod.load(columns)["shards"], manifest_mod.load(records_)["shards"]
+    assert [s["path"] for s in a] == [s["path"] for s in b]
+    for s in a:
+        assert (columns / s["path"]).read_bytes() == (records_ / s["path"]).read_bytes()
+    import sqlite3
+
+    def roots(pack):
+        con = sqlite3.connect(pack / pack_build.BUILD_DIR / pack_build.BUILD_DB)
+        try:
+            return con.execute("SELECT slice, n, root, records_root, chunks_root FROM shards "
+                               "ORDER BY slice, n").fetchall()
+        finally:
+            con.close()
+    assert roots(columns) == roots(records_) and roots(columns)
+
+
+def test_an_unshipped_line_keeps_the_per_record_hand_over():
+    from app.pack import build as pack_build
+    assert pack_build._columns_of([{"uid": "u", "content_hash": "h"}], [b"raw line\n"]) is None
+    assert pack_build._columns_of([], []) is None

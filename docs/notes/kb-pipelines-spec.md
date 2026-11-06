@@ -24,6 +24,11 @@ namespace a client sees (§P6).
 | `fuse.k` | int ≥ 1 | 60 | the RRF constant |
 | `fuse.weights` | array of floats | all 1.0 | one per leg, in order |
 | `fuse.final_rerank` | `{model, depth}` or absent | absent | one cross-encoder over the fused top `depth` (D1) |
+| `gate` | table or absent | absent (every leg fused) | the pertinence gate (§P3a): a leg with nothing pertinent to the question is left out of the fusion |
+| `gate.model` | a reranker LocalAI lists | `fuse.final_rerank.model`, else the node's reranker | the ONE cross-encoder whose score decides, for every leg |
+| `gate.top` | int 1–10 | 3 | how many of each leg's best records it scores |
+| `gate.threshold` | decimal string | — (required with `gate`) | the score a leg's best record must reach; set from `louise pipeline calibrate`, never by hand guess (§P3a) |
+| `gate.threshold_by_lang` | table lang → decimal string | `{}` | per passage language, where the gate model's scale is measured to differ by language (reranker-scope.md §14) |
 | `facts` | array of reference collection names | `[]` | lookups by key, placed beside the hits (invariant 4) |
 | `answer` | `{lang}` or absent | absent | the chat model writes from the final list; `lang = "auto"` means the question's language |
 | `limit` | int 1–100 | 10 | results returned after grouping |
@@ -71,6 +76,9 @@ For a query `q`:
    collections share records (a lineage, 02 §2.7). Ties are broken by uid
    bytes, then by the earliest leg, so the list is the same on every peer
    with the same members (05 §5.1).
+3a. **The pertinence gate (§P3a, optional).** Before step 3, each leg's
+   best `gate.top` records are scored by `gate.model`; a leg whose best
+   score is below the threshold is not fused.
 4. **Final rerank (D1, optional).** The fused top `depth` is reranked by
    one model with 05 §5.6's candidates. The rest keep their fused order
    below. Without it, the fused order stands.
@@ -81,6 +89,66 @@ For a query `q`:
 7. **Answer (optional).** Written from the first `limit` hits, numbered as
    the list. The hits come back beside it (`louise_sources`), so it is one
    search.
+
+### P3a. The pertinence gate
+
+*Operator, 2026-10-24: "my base idea about pipelines is to merge results,
+but only if it makes sense: any collection will return something, no matter
+what, but is it meaningful? Is there a way to discard non pertinent
+collections?"*
+
+Every leg returns its best records whether or not any of them answers the
+question; fusing them puts a pertinent leg's hits beside another leg's
+least-bad ones. The gate keeps a leg out of the fusion when nothing it
+found is pertinent.
+
+**The signal.** A cross-encoder scores each (question, passage) pair on
+its own absolute scale, whatever space or collection the passage came
+from: the one cross-space scale a pipeline has (05 §5.6). Vector distances
+and RRF scores are not: one is per space, the other is a rank. Measured
+scale: LAMAR's card, a relevant passage near +5 and unrelated ones near
+−13; on our pairs the cross-language bias is about −1.7 (reranker-scope.md
+§14a), small against that gap, and `threshold_by_lang` absorbs it where the
+calibration shows it matters.
+
+**The rule.**
+- `gate.model` scores each leg's top `gate.top` records, with 05 §5.6's
+  candidates; where a leg's own reranker IS `gate.model`, its scores are
+  reused and nothing is scored twice.
+- A leg passes when its best score ≥ the threshold (by the passage's
+  language when `threshold_by_lang` names it, else `gate.threshold`).
+- Only passing legs enter step 3. A leg left out is NAMED, never dropped
+  silently: the answer's `not_pertinent` lists it with its best score and
+  the threshold (§P4).
+- **No leg passes**: the list is the best-scoring leg's, flagged
+  `below_gate: true`, and a written answer is told so and says that no
+  collection held a pertinent passage — the reader decides what it is worth.
+- The gate model is bit-exact (invariant 12), so the same question on the
+  same members gates the same legs on every peer.
+
+**The threshold is measured, never guessed** (`louise pipeline calibrate
+<name> --queries FILE`): labelled queries whose answer lies in one leg,
+run over all of them. It prints, per candidate threshold, the share of
+pertinent legs kept and of non-pertinent legs dropped, per language, and
+recommends the highest threshold that keeps every labelled answer's leg.
+`louise pipeline check` refuses a `gate` without a threshold.
+
+**Cost.** At most `gate.top` pairs per leg not already scored by the
+gate model — a fraction of one leg's rerank (6.6 s for 50 candidates
+measured on the node, 2026-10-22).
+
+**The standard, and what is not built** (CLAUDE.md, "Do not reinvent the
+wheel"). This is federated search's *resource selection* (TREC FedWeb
+2013–2014), done POST-retrieval with a cross-encoder threshold, the
+simplest form that fits a few legs that are all searched anyway. The
+standard PRE-retrieval methods — CORI (Callan et al., 1995), ReDDE (Si &
+Callan, 2003), or query-performance predictors such as NQC — choose which
+collections to search before searching them, from samples or statistics of
+each. They pay when a pipeline has many legs and searching all of them is
+the cost; adopting one means keeping a document sample per collection and
+its statistics per snapshot. Not specified until a measured pipeline needs
+it. Routing by the chat model is not used: not bit-exact, and a model call
+on every search.
 
 **Refusals** come before any search, with exit code 2 / HTTP 409:
 - a leg's collections in more than one space;
@@ -109,7 +177,7 @@ As 05 §5.3, plus the following per hit:
 | `ranks` | `{text, vector, catalog, leg, leg_rerank, fused, final}`, each 1-based or null |
 | `pipeline` | `{name, id}` |
 
-Per answer: `legs: [{collections: [{name, collection_id, snapshot_id}], space_id, question, reranker, ms}]`.
+Per answer: `legs: [{collections: [{name, collection_id, snapshot_id}], space_id, question, reranker, ms, gate: {best, threshold, passed} | null}]`; `not_pertinent: [{leg, collections, best, threshold}]` (§P3a); `below_gate: true` when no leg passed.
 
 ## P5. CLI
 
@@ -117,6 +185,8 @@ Per answer: `legs: [{collections: [{name, collection_id, snapshot_id}], space_id
   the canonical form and the id.
 - `louise pipeline check <name>`, which runs §P3's refusals without
   searching; exit 0 or 2.
+- `louise pipeline calibrate <name> --queries FILE`: the gate's threshold
+  measured on labelled queries (§P3a); prints, writes nothing.
 - `louise ask search --pipeline <name> <query>`; `--explain` prints each
   hit's `ranks`.
 
@@ -151,10 +221,16 @@ everywhere.
 8. A deferred leg is named under `withheld`, and the rest is fused.
 9. Every surface of §P6 answers with the same hits for the same query.
 10. One search per question when an answer is asked for.
-11. Plan check and timing of any new query against a real manifest
+11. The gate (§P3a): a leg below the threshold is not fused and is named
+    under `not_pertinent`; a leg whose reranker is the gate model is not
+    scored twice; `threshold_by_lang` is applied by the passage's
+    language; no leg passing returns the best leg flagged `below_gate`;
+    `check` refuses a gate without a threshold; the same question gates
+    the same legs on two runs.
+12. Plan check and timing of any new query against a real manifest
     (CLAUDE.md): a pipeline adds no per-round cost proportional to the
     number of collections.
 
 ## P8. Amendment text for 05 (applied only if D1 is "by rank")
 
-> *Amended <date> (operator).* **Pipelines** (`docs/notes/kb-pipelines-spec.md`) may fuse lists from different spaces, by RANK only: each leg is one space and is reranked by its own reranker, the legs' lists enter a reciprocal-rank sum, and an optional final reranker scores the fused top on its own scale, over text pairs and never vectors. Every hit names its leg and space. An ad-hoc search keeps one list per space, as above.
+> *Amended <date> (operator).* **Pipelines** (`docs/notes/kb-pipelines-spec.md`) may fuse lists from different spaces, by RANK only: each leg is one space and is reranked by its own reranker, the legs' lists enter a reciprocal-rank sum, and an optional final reranker scores the fused top on its own scale, over text pairs and never vectors. A leg with nothing pertinent — its best record below the pipeline's measured threshold on that one reranker's scale — is not fused, and the answer names it. Every hit names its leg and space. An ad-hoc search keeps one list per space, as above.

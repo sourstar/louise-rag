@@ -16,9 +16,12 @@ by "|" — end exclusive; a second segment covers an article whose rows
 straddle a shard boundary.
 """
 import hashlib
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
+
+from app.backend import GroupCache
 
 from . import ids
 
@@ -35,9 +38,9 @@ _LOCATOR_SEP = "::"
 # the parallel embed stage fetches from threads.
 _cache_lock = threading.Lock()
 _layouts: OrderedDict = OrderedDict()     # path -> (mtime, [row group start offsets], total)
-_groups: OrderedDict = OrderedDict()      # (path, group) -> (mtime, table)
+#: (path, group) -> (mtime, table): 256 MiB of rows (app/backend.py); it held 8 groups
+_groups = GroupCache(256 << 20)
 _MAX_LAYOUTS = 64
-_MAX_GROUPS = 8
 
 
 def _layout(path: str) -> tuple[list[int], int]:
@@ -65,17 +68,11 @@ def _group_table(path: str, g: int):
     import pyarrow.parquet as pq
     mtime = Path(path).stat().st_mtime_ns
     key = (path, g)
-    with _cache_lock:
-        hit = _groups.get(key)
-        if hit is not None and hit[0] == mtime:
-            _groups.move_to_end(key)
-            return hit[1]
+    hit = _groups.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
     table = pq.ParquetFile(path).read_row_group(g, columns=["id", "url", "title", "text"])
-    with _cache_lock:
-        _groups[key] = (mtime, table)
-        _groups.move_to_end(key)
-        while len(_groups) > _MAX_GROUPS:
-            _groups.popitem(last=False)
+    _groups.put(key, (mtime, table), table.nbytes)
     return table
 
 
@@ -123,7 +120,9 @@ def lang_of_shard(rel: Path) -> str | None:
 
 
 def shards(root: Path) -> list[Path]:
-    return sorted(p for p in root.rglob("*.parquet") if p.is_file())
+    # through the origin's links: rglob enters none (app/plugins/walk.py)
+    from .. import walk
+    return walk.files(root, "*.parquet")
 
 
 def is_archive_locator(locator: str) -> bool:
@@ -181,7 +180,10 @@ def covered_articles(root: Path, state_dir: Path | None):
         path = cache / f"{tag}.npy" if cache is not None else None
         got = None
         if path is not None and path.is_file():
-            got = np.load(path)
+            try:
+                got = np.load(path)
+            except (OSError, ValueError):   # a file another writer left half-written: read again
+                got = None
         if got is None:
             try:
                 col = pq.read_table(shard, columns=["id"]).column(0).to_pylist()
@@ -195,8 +197,12 @@ def covered_articles(root: Path, state_dir: Path | None):
                     continue
             got = np.unique(np.asarray(pages, dtype=np.int64))
             if path is not None:
+                # whole or absent: discover may run in two processes at once
                 cache.mkdir(parents=True, exist_ok=True)
-                np.save(path, got)
+                tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+                with open(tmp, "wb") as fh:
+                    np.save(fh, got)
+                os.replace(tmp, path)
         parts.setdefault(lang, []).append(got)
     return {lang: np.unique(np.concatenate(p)) for lang, p in parts.items()}
 

@@ -3,10 +3,11 @@ migration step 9e, third brick: the shards this peer leads, embedded,
 bundled, accepted by its own ladder, and announced.
 
 - BEFORE CONTRIBUTING (04 §4.5): this peer's own `roots` and `chunks`
-  passed on what it holds; a `records-vs-origin` attestation exists for
-  the snapshot — its own or another key's; its encoder passed the
-  calibration gate for the space (03 §3.3). Records are checked before GPU
-  is spent; no vector precondition.
+  passed on what it holds; its encoder passed the calibration gate for the
+  space (03 §3.3). Records are checked before GPU is spent; no vector
+  precondition. A `records-vs-origin` attestation is no longer one (04 §4.5
+  amended, operator 2026-11-01: the check against the source is optional,
+  the vectors' gate is not).
 - RENDEZVOUS: over the OPEN shards of the current snapshot (the coverage
   map, app/share/coverage.py), the live peers with a benchmark for the
   space (their digests) and this peer with its own, `rendezvous.mine`
@@ -68,8 +69,8 @@ class ContributeRefused(CodexError):
 
 def preconditions(root: Path, name: str, codex, snapshot: sn.Snapshot | None, *,
                   own_key: str | None) -> list[str]:
-    """04 §4.5's three, as the reasons this peer may NOT contribute yet;
-    empty when it may."""
+    """04 §4.5's preconditions, as the reasons this peer may NOT contribute
+    yet; empty when it may."""
     from app import copy_state
     from app.hold import runs
     reasons: list[str] = []
@@ -83,10 +84,6 @@ def preconditions(root: Path, name: str, codex, snapshot: sn.Snapshot | None, *,
             if not bodies.of(own_key, check)[0]:
                 reasons.append(f"this peer's own {check} has not passed here: `hold check "
                                f"{name} --checks roots,chunks`")
-    if not any(b.get("check") == "records-vs-origin" and b.get("result") == "pass"
-               and b.get("snapshot_hash") == snapshot.hash for b in bodies):
-        reasons.append(f"no records-vs-origin attestation for snapshot {snapshot.snapshot_id} — "
-                       f"this peer's or another key's (04 §4.5)")
     from app.hold import integrity
     bad = integrity.violations(root, name, codex)
     if bad:

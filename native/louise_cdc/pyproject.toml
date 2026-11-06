@@ -1,0 +1,22 @@
+# The wheel of the `cdc` boundary loop (docs/notes/python-hot-spots.md, "D").
+# Built in the image's builder stage (Dockerfile, `cdc-build`):
+#   maturin build --release --locked --out /wheels
+# and in a checkout, for the tests: pip install maturin==1.15.0, then
+#   maturin build --release --locked --out <dir> && pip install <dir>/louise_cdc-*.whl
+# Not on PyPI and not in requirements.txt: app/chunking.py runs its own loop
+# when this is not installed, and the tests compare the two.
+[build-system]
+requires = ["maturin==1.15.0"]
+build-backend = "maturin"
+
+[project]
+name = "louise-cdc"
+requires-python = ">=3.12"
+dynamic = ["version"]
+description = "The content-defined chunk boundary loop of Louise (app/chunking.py), compiled"
+license = { text = "AGPL-3.0-only" }
+
+[tool.maturin]
+module-name = "louise_cdc"
+bindings = "pyo3"
+strip = true

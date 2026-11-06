@@ -1,5 +1,8 @@
 # No central node: a collection outlives everyone but one peer
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` §2.2–2.6 and `docs/04-sharing.md`, which adopted it (Codex, content-addressed snapshots, rendezvous).
+
+
 *Proposal, 2026-09-05. For review — nothing here is built. Amends
 `pack-format.md` §7, §11, §13, §14 and `embedding-redundancy.md` §4; the
 proposed amendments are numbered 56–60 below for the §17 index once

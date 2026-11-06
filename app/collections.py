@@ -7,9 +7,10 @@ is synthesized whose paths equal today's top-level DATA_DIR/CORPUS_DIR layout
 exactly — an existing deployment upgrades with zero data movement and no new
 required config or volume mount.
 """
+import math
 import os
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,8 @@ from . import config
 from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikidata, wikipedia
 from .plugins.base import CorpusSource
 
-# `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
-# reference until converted to the final format or dropped.
+# `genome` and `packed` were boxed on 2026-09-14 and removed on 2026-11-01
+# (operator: retired code survives only in git; attic/ at c572c3b).
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "deposit": deposit.SOURCE,
     "embedded": embedded.SOURCE,
@@ -71,6 +72,11 @@ class EmbedRecipe:
     # `space_id` while calibration and the gate prefixed with the Codex's:
     # the gate would have passed one function and search run another.
     query_instruction: str | None = None
+    # The Codex's `space.document.instruction` (09 §9.3, Codex version 11),
+    # prepended to every DOCUMENT input by embeddings._sent — the chunks, the
+    # calibration set, the gate's texts, a probe — as the query instruction is
+    # to a query. From the Codex only, like the query's: a node cannot state it.
+    document_instruction: str | None = None
     # HOW AN INPUT LONGER THAN `ctx` IS CUT, which is part of the function a
     # space's vectors are of (docs/notes/char-cut-truncation.md, 2026-10-18).
     # `characters`: the platform cuts to ~ctx x 4 characters, as every live
@@ -87,6 +93,35 @@ class EmbedRecipe:
     # (TEI/MedCPT); GPU llama-server stays serial — its multi-sequence
     # handling is the defect the batch gate exists for.
     concurrency: int = 1
+    # Chunks a request carries (2026-10-31, München's production profile:
+    # wikipedia's embedding was bound by one chunk a request, the card ~10 %
+    # busy). 0: the node's EMBED_BATCH. Per collection because whether a
+    # batch answers as one text at a time does is the ENGINE's property: the
+    # gate measures it at this batching before a batched answer is written
+    # (`hold.runs`, `run_check.contributing`). Not part of the space, like
+    # `concurrency`.
+    batch: int = 0
+    # Which of `batch` and `concurrency` — RAGE's settings, how the RAG Engine
+    # drives this encoder (docs/notes/rage.md) — the collection FILE names.
+    # Those are the operator's and stay; a key it leaves unset may take the
+    # setting recommended for this node's card type in the collection's SHARD
+    # (app/hold/rage_settings.py, 09 §9.19; operator 2026-11-01: "A
+    # recommended, non binding, setting shall be part of a collection").
+    # Provenance, not a setting: two recipes that send the same are equal.
+    stated: frozenset[str] = field(default=frozenset(), compare=False)
+    # HOW EXACT A RUN OF THIS ENCODER MUST BE (docs/notes/near-exact-runs.md).
+    # "exact", THE DEFAULT again since 2026-11-02 (the operator: "check how
+    # much slower is the bit exact mode, if it is below 5%, bit exactness mode
+    # is the new default"; measured: every live llama.cpp encoder within
+    # +0.5 % of its speed mode at production's shape, and the speed mode not
+    # even near-exact for two of them; "bit exactness is at best a 5% to pay,
+    # it is worth the price"): bytes or nothing, batches by bytes.
+    # "near" is a collection's explicit opt-in (choice B, 2026-11-01): a run
+    # is admitted when it reproduces itself within NEAR_VARIATION across fresh
+    # loads, orders and batches, and reaches the stored CPU reference at
+    # CPU_NEAR_LINE. Never in the space: the vectors are the same function
+    # within tolerance.
+    exactness: str = "exact"
     # Which processor this endpoint spends: "gpu" | "cpu". DESCRIPTIVE
     # ONLY — it never enters the space id, because the same model on a
     # different device computes the same function (that is precisely what
@@ -145,6 +180,22 @@ def _agrees(url: str, key: str, value: str, url_key: str, where: str) -> None:
                         f"the key must agree with it (07 §7.8, amended 2026-10-08)")
 
 
+def _exactness(raw: dict, where: str) -> str:
+    value = str(raw.get("exactness", "exact"))
+    if value not in ("exact", "near"):
+        raise ValueError(f"{where}: `exactness` is \"exact\" or \"near\" "
+                         f"(docs/notes/near-exact-runs.md), got {value!r}")
+    return value
+
+
+def _batch(raw: dict, where: str) -> int:
+    value = raw.get("batch", 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{where}: `batch` is the chunks a request carries, a whole "
+                         f"number (0 or absent: the node's EMBED_BATCH), got {value!r}")
+    return value
+
+
 def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     """An [embed]-shaped TOML table -> EmbedRecipe. None for absent/not-a-
     table, so callers can say "declared or not".
@@ -154,16 +205,18 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     messages, whichever file the operator is editing."""
     if not isinstance(raw, dict):
         return None
-    for key in ("query_prefix", "query_instruction", "instruction"):
+    for key in ("query_prefix", "query_instruction", "instruction",
+                "document_prefix", "document_instruction", "passage_prefix"):
         if key in raw:
             # 25b30f3 read `query_prefix` here, and the operator was told to
             # write one into a collection file. Refused rather than ignored:
             # ignored, it would look set while search ran without it.
             raise ValueError(
-                f"{where}: `{key}` is not a node's to state. A query's "
-                f"instruction is the space's — `space.query.instruction` in "
-                f"the Codex (02 §2.4, 09 §9.3), inside `space_id` — and "
-                f"`hold collection create` is where it is set")
+                f"{where}: `{key}` is not a node's to state. An instruction "
+                f"is the space's — `space.query.instruction` or "
+                f"`space.document.instruction` in the Codex (02 §2.4, 09 §9.3), "
+                f"inside `space_id` — and `hold collection create` is where it "
+                f"is set")
     if "model" in raw:
         # No alias (operator, 2026-10-08): one `model` named the document
         # side and the query side guessed — the guess is what sent the
@@ -191,6 +244,9 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
         query_url=query_url,
         query_model=query_model,
         concurrency=max(1, int(raw.get("concurrency", 1))),
+        batch=_batch(raw, where),
+        stated=frozenset(k for k in ("batch", "concurrency") if k in raw),
+        exactness=_exactness(raw, where),
         device=(str(raw["device"]).lower()
                 if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
                 else None),
@@ -216,6 +272,59 @@ class RerankRecipe:
     # Measured on live searches: gutenberg p99 1,170 tokens (max 3,335),
     # wikipedia p99 584 — 2,048 reads 99 % of candidates whole. 0: uncut.
     window: int = 2048
+    # 05 §5.6 (amended 2026-10-31, operator's B): this reranker's score as
+    # a probability of relevance, fitted on judged candidates of THIS
+    # collection; what lets its list be merged with other collections' on
+    # relevance instead of rank. None: merged by rank.
+    calibration: "Calibration | None" = None
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """PLATT SCALING (Platt 1999): P(relevant | score) = 1 / (1 + e^-(a·score + b)),
+    fitted on a collection's own judged candidates by
+    tools/measure/fusion_calibration.py (docs/notes/federated-merge.md).
+    It names the reranker it was fitted for: under another model it is
+    not used, and the search says so (`merge_withheld`). Isotonic regression
+    (Zadrozny & Elkan 2002) is the non-parametric alternative, kept for
+    when the judged set is large enough to beat two parameters."""
+    a: float
+    b: float
+    rerank_model: str
+    judged: int = 0          # candidates it was fitted on
+    set: str = ""            # the judged set's name
+
+    def probability(self, score: float) -> float:
+        z = self.a * float(score) + self.b
+        # the two branches keep exp() from overflowing at either end
+        if z >= 0:
+            return 1.0 / (1.0 + math.exp(-z))
+        e = math.exp(z)
+        return e / (1.0 + e)
+
+
+def parse_calibration(raw: Any, *, where: str) -> Calibration | None:
+    """`[reranker] calibration = {a, b, rerank_model, judged?, set?}` ->
+    Calibration; None when the table names none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: [reranker] calibration is a table {{a, b, rerank_model}}")
+    try:
+        a, b = float(raw["a"]), float(raw["b"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"{where}: [reranker] calibration needs numbers a and b") from None
+    if not (math.isfinite(a) and math.isfinite(b)) or a <= 0:
+        # a ≤ 0 would rank a higher score as LESS relevant: not a calibration
+        raise ValueError(f"{where}: [reranker] calibration needs a finite a > 0 and a finite b, "
+                         f"got a={raw['a']!r}, b={raw['b']!r}")
+    model = raw.get("rerank_model")
+    if not isinstance(model, str) or not model:
+        raise ValueError(f"{where}: [reranker] calibration names the rerank_model it was fitted for")
+    judged = raw.get("judged", 0)
+    if not isinstance(judged, int) or isinstance(judged, bool) or judged < 0:
+        raise ValueError(f"{where}: [reranker] calibration judged is a count, got {judged!r}")
+    return Calibration(a=a, b=b, rerank_model=model, judged=judged, set=str(raw.get("set", "")))
 
 
 RERANK_APIS = ("tei", "jina")
@@ -240,7 +349,8 @@ def parse_reranker(raw: Any, *, where: str) -> RerankRecipe | None:
     window = raw.get("window", RerankRecipe.window)
     if not isinstance(window, int) or isinstance(window, bool) or window < 0:
         raise ValueError(f"{where}: [reranker] window is a number of tokens (0: uncut), got {window!r}")
-    return RerankRecipe(url=str(raw["url"]), api=api, model=model, window=window)
+    return RerankRecipe(url=str(raw["url"]), api=api, model=model, window=window,
+                        calibration=parse_calibration(raw.get("calibration"), where=where))
 
 
 def reranker_for(collection) -> RerankRecipe | None:
@@ -270,7 +380,12 @@ def recipe_for(collection) -> EmbedRecipe:
     embed = getattr(collection, "embed", None)
     if embed is None:
         raise NoEncoder(f"{getattr(collection, 'name', 'this collection')}: {NO_ENCODER}")
-    return embed
+    # what the file leaves unset of `batch` and `concurrency`, the setting
+    # recommended in the collection's SHARD for this node's card type, when
+    # one is (09 §9.19). Here, so the worker sends and the gate measures the
+    # same (`run_check.contributing`).
+    from .rage import settings
+    return settings.applied(collection, embed)
 
 
 # What the worker may SPEND on a collection's local encoder (never what
@@ -285,6 +400,9 @@ DEFAULT_EMBED_MODE = "lazy"
 #: 07 §7.8, operator 2026-10-19). The Library shows the display names; the
 #: file and the API carry these tokens, as `lazy` for on-demand.
 EMBEDDING_MODES = ("lazy", "all", "p2p")
+#: 07 §7.8 `embed_select` (2026-11-02): which documents held the encoder
+#: spends on — every one, or the smart choice (app/embed_select.py)
+EMBED_SELECT = ("all", "smart")
 BACKFILL_MODES = ("all", "p2p")
 EMBED_MODE_LABELS = {"off": "off", "lazy": "on-demand", "all": "all local", "p2p": "all p2p"}
 
@@ -358,10 +476,25 @@ class Collection:
     # `share_kinds`; 04 §4.3): what serving is narrowed to; None = all held
     share_slices: tuple[str, ...] | None = None
     share_kinds: tuple[str, ...] | None = None
+    # 07 §7.8 `embed_slices` (operator, 2026-10-31: wikidata "hold all 14 and
+    # embed 9"): the slices the node's encoder spends on, out of those held;
+    # None = every slice held. A document outside them is marked "not
+    # embedded here" by app/slice_scope.py and never offered to the encoder
+    embed_slices: tuple[str, ...] | None = None
+    # 07 §7.8 `embed_select` (operator, 2026-11-02, wikipedia): WHICH of the
+    # documents held the encoder spends on — "all", or "smart" (English, plus
+    # for each Wikidata item the longest article in another language when
+    # the English one is missing or shorter; app/embed_select.py). None = the
+    # plugin's default (`embed_select.policy`)
+    embed_select: str | None = None
     #: why `embed_mode_default` is not what the file says: `embed = "p2p"`
     #: with `share = false` runs as `all` — p2p publishes what it embeds, and
     #: a node that does not share can publish nothing (07 §7.8, 2026-10-19)
     embed_mode_note: str | None = None
+    #: set on a PART of a split vector store only (app/vector_parts.py
+    #: `view`): the value of the table key whose table `lance_dir` holds.
+    #: Never read from a file.
+    vector_part: str | None = None
 
     def plugin_instance(self) -> CorpusSource:
         inner = PLUGIN_REGISTRY[self.plugin]
@@ -474,6 +607,16 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
     share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
     share_kinds = _parse_share_list(raw.get("share_kinds"), "share_kinds", where)
+    embed_slices = _parse_share_list(raw.get("embed_slices"), "embed_slices", where)
+    embed_select = raw.get("embed_select")
+    if embed_select is not None and embed_select not in EMBED_SELECT:
+        raise ValueError(f"{where}: embed_select is one of {', '.join(EMBED_SELECT)} (07 §7.8), "
+                         f"got {embed_select!r}")
+    if embed_select == "smart":
+        from .embed_select import SMART_PLUGINS
+        if codex.plugin not in SMART_PLUGINS:
+            raise ValueError(f"{where}: embed_select = \"smart\" groups Wikipedia's articles by "
+                             f"their Wikidata item; {codex.plugin} has no such grouping")
     if share_kinds is not None:
         bad = [k for k in share_kinds if k not in SHARE_KINDS]
         if bad:
@@ -573,6 +716,8 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         share=share,
         share_slices=share_slices,
         share_kinds=share_kinds,
+        embed_slices=embed_slices,
+        embed_select=embed_select,
         source=source,
     )
 
@@ -675,7 +820,7 @@ MEMBER_KINDS = ("records", "vectors", "buckets", "index", "relations", "figures"
 #: 07 §7.7: "the default is records and vectors".
 DEFAULT_KINDS = ("records", "vectors")
 #: Keys a Codex file carried before 07 §7.8 spelled the file out. Each is
-#: still read; `web._write_codex_toml` writes one back only where the Codex
+#: still read; `collection_file._write_codex_toml` writes one back only where the Codex
 #: and the tree do not give the same answer.
 DEPRECATED_CODEX_KEYS = ("profile", "acquire_enabled", "genesis_archive",
                          "snapshot", "corpus_dir", "extras")
@@ -726,9 +871,14 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
 
     - `profile`: the acquisition spec's spelling of `slices = "all"` — the
       profile that selects everything. Profiles are local (09 §9.17); the
-      file names the selection.
+      file names the selection. A LIST of slices the origin delivers whole
+      (`spec.slice_profiles`) is spelt by their profiles, combined: what
+      `records fetch --slice` recorded, so the monthly cycle continues it
+      (07 §7.3, amended 2026-10-25). A list it does not deliver whole — a
+      `share fetch` selection of parts — derives none, as before.
     - `acquire_enabled`: the node fetches what the file holds — every
-      slice, records among the kinds — from an origin the plugin can fetch.
+      slice, or the slices the origin delivers whole, records among the
+      kinds — from an origin the plugin can fetch.
       Never when `source = "shard"`: the SHARD is the corpus, and a fetched
       collection acquiring from the origin would write the origin's files
       into it — the second peer's worker started an rsync of the whole
@@ -743,10 +893,17 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
     spec = ACQUIRE_REGISTRY.get(codex.plugin)
     everything = acquire_spec.everything_profile(spec) if spec is not None else None
     credited = _credited_archives(codex)
+    if slices == "all":
+        profile = everything
+    elif slices and spec is not None and source != "shard":
+        # a fetched copy's list is parts taken from peers, never an origin fetch
+        profile = acquire_spec.profile_for_slices(spec, slices)
+    else:
+        profile = None
     return {
         "everything": everything,
-        "profile": everything if slices == "all" else None,
-        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds and source != "shard"),
+        "profile": profile,
+        "acquire_enabled": bool(profile and "records" in kinds and source != "shard"),
         "genesis_archive": credited[0] if credited and "vectors" in kinds else None,
         "snapshot": (acquire_spec.pinned_snapshot(spec, codex.origin.spec)
                      if spec is not None else None),
@@ -812,6 +969,7 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
     # hold/embedder.py), so search runs the function the gate passed.
     # and the cut, the space's when it declares one (no live Codex does)
     return replace(recipe, query_instruction=space.query.instruction or None,
+                   document_instruction=getattr(space, "document_instruction", None) or None,
                    cut=getattr(space, "cut", None) or "characters")
 
 
@@ -866,6 +1024,16 @@ def config_toml_path(name: str) -> Path:
     exists yet). The file existing IS the collection existing — creation and
     removal act on this path, never on a database row."""
     return _config_dir() / "collections" / f"{name}.toml"
+
+
+def recipe_path(plugin: str) -> Path:
+    """Where this node keeps its recipe for a plugin (06 §6.6; 07 §7.8,
+    amended 2026-10-25): `$CONFIG_DIR/recipes/<plugin>.toml`, desired state
+    an operator writes once. The Library's *new collection* names a plugin
+    and a local name, and the node creates it from this file (RULE 2): the
+    space, the work budget and the description are the creator's choices,
+    made on the command line or in this file, never in a dialog."""
+    return _config_dir() / "recipes" / f"{plugin}.toml"
 
 
 def collections_dir() -> Path:

@@ -172,7 +172,7 @@ over
 message = <domain> ‖ 0x00 ‖ SHA-256(canonical JSON of the body)
 ```
 
-where `<domain>` is the ASCII bytes of one of six strings and the hash
+where `<domain>` is the ASCII bytes of one of seven strings and the hash
 is the 32 raw bytes of the body's canonical-JSON digest:
 
 | domain | signs |
@@ -183,6 +183,7 @@ is the 32 raw bytes of the body's canonical-JSON digest:
 | `louise/event/v1` | an event body, and a pull request (§9.9) |
 | `louise/pointer/v1` | a certifier's pointer (§9.11) |
 | `louise/calibration/v1` | the calibration member's statement (§9.12) |
+| `louise/rage-settings/v1` | a signer's recommended RAGE settings (§9.19; *added 2026-11-01*) |
 
 The bundle is signed over its own framed payload under the domain
 `louise-rag/bundle-sig/v1` (§9.7). A signature made under one domain
@@ -271,7 +272,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `6` · `7` · `8` · `9` | yes | the Codex format version (§9.18). Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target, and a version-9 Codex carries `annotates` exactly when it is an annotations Codex (its `space` null); its `space.cut` is present where the token cut is declared and absent otherwise, since a Parquet collection need not cut by tokens. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` · `7` · `8` · `9` · `10` · `11` | yes | the Codex format version (§9.18). Version 11 (*amended 2026-11-02*, operator: Nemotron-3-Embed for wikidata, gutenberg and wikipedia; docs/notes/nemotron-embed.md) is the version-10 object with `space.document` (below), written for a space that prefixes its documents and for no other, so no Codex, space or `collection_id` already written moves; `space.exactness` is required as at 10. Version 10 (*amended 2026-11-01*, operator: "if it useful add a parameter in the codex specifying if the collection requires bit exactness or near bit exactness"; CLAUDE.md invariant 12) is the version-9 object with `space.exactness` (below), written for a space that requires bit-exact runs and for no other, so no Codex, space or `collection_id` already written moves; its `slicing.container` is required as at 9. Version 9 (*amended 2026-10-20*, docs/notes/wiki-gutenberg-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target, and a version-9 Codex carries `annotates` exactly when it is an annotations Codex (its `space` null); its `space.cut` is present where the token cut is declared and absent otherwise, since a Parquet collection need not cut by tokens. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one stated before VeGa keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -308,7 +309,7 @@ number written as a decimal string is marked *decimal*.
 | ↳ `kind: "archive"` | | | a pre-embedded archive whose vectors this collection carries — zero or more, one per archive, `archive` naming it. Expanded from the platform's registry by the recipe's `archives`. `coverage` is load-bearing and not merely compliance: 06 §6.3's `archive:<id>` layer rule reads it to decide which layer a document falls in, and NO OTHER KIND is read there. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written |
 | ↳ `kind: "community"` | | | the peers who embed for this collection, as ONE collective and never as a roster. At most one entry, present exactly when `embedding` is `"open"` or `"endorsed"` and absent when it is `"certifier-only"` — so it is derived from a field already in the Codex rather than declared, and a collection that accepts no community vectors credits none. `archive` and `license` are null, `coverage` is `"all"` |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`). One key the platform reads (*amended 2026-10-12*): `validity: {kind: "versions-per-work", from: "<record field>", work: "<record field>"}` declares a VERSIONED collection — every version of a Work is a record, `from` names the field holding the start of its validity (`extra.vigenza_from`), `work` the field naming the Work (`extra.eli_work`); a search then answers a date by validity and shows one version per Work by default (05 §5.1, 07 §7.3). The end of a version's validity is derived by the peer and is in no record |
-| `annotates` | object (version 7) · list (version 9) | annotations Codex only | `{collection_id: id, from_snapshot: snapshot id}` — the TARGET collection an annotations collection makes claims about, and the target snapshot the claims were checked against and hold from (02 §2.10; *amended 2026-10-09*). At version 9 (*amended 2026-10-20*) a LIST of such objects in a fixed order, one per target — gutenberg-graph annotates gutenberg (the text) and wikidata (the entities); a claim's end names its target by the uid's plugin prefix, so no index is carried in the claim. Required and non-null at version 7; ABSENT, never null, below it — like an engine's `options`, so that every Codex already written keeps its bytes. An annotations Codex is also fixed in the rest: `plugin` `"annotations"`; `origin.spec` `{source_id: "annotations", nonce: <32 hex digits>}`, `unit` `"file"`, `cutoff_rule` `"record-date"`; `record_line` 1; `modality` `"text"`; `erasure` `append-only` or `retractable`; `privacy` `public` or `restricted`; `publication` and `embedding` `"open"`; `facets` `[]`; `credits` exactly one `corpus` entry, the annotator; every lineage field, `derivation`, `certifier`, `content` and `profile` null; and `validation.checks` drawn from `roots`, `records`, `license`, `signature`. Anything else is refused |
+| `annotates` | object (version 7) · list (version 9) | annotations Codex only | `{collection_id: id, from_snapshot: snapshot id}` — the TARGET collection an annotations collection makes claims about, and the target snapshot the claims were checked against and hold from (02 §2.10; *amended 2026-10-09*). At version 9 (*amended 2026-10-20*) a LIST of such objects in a fixed order, one per target — wiki-gutenberg annotates gutenberg (the text) and wikidata (the entities); a claim's end names its target by the uid's plugin prefix, so no index is carried in the claim. Required and non-null at version 7; ABSENT, never null, below it — like an engine's `options`, so that every Codex already written keeps its bytes. An annotations Codex is also fixed in the rest: `plugin` `"annotations"`; `origin.spec` `{source_id: "annotations", nonce: <32 hex digits>}`, `unit` `"file"`, `cutoff_rule` `"record-date"`; `record_line` 1; `modality` `"text"`; `erasure` `append-only` or `retractable`; `privacy` `public` or `restricted`; `publication` and `embedding` `"open"`; `facets` `[]`; `credits` exactly one `corpus` entry, the annotator; every lineage field, `derivation`, `certifier`, `content` and `profile` null; and `validation.checks` drawn from `roots`, `records`, `license`, `signature`. Anything else is refused |
 
 The relations are exclusive in this way: a daughter has `continues` and
 `continues_through`; a sister has `derived_from` and, when it was made with
@@ -347,8 +348,9 @@ names).
 | field | type | required | meaning |
 |---|---|---|---|
 | `keys` | list of strings | yes | slice keys in path order: `["year"]`, `["lang", "pages"]`, `[]` for one slice `all` |
-| `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin`; for a language key: `{field: "lang"}` |
+| `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin` (`field: "id"`: the number of the entity's own id, wikidata's `Q42` → 42); for a language key: `{field: "lang"}`; for a FAMILY key (*amended 2026-10-24*, pack-format.md §2): `{field: "extra.claims", rule: "wikidata-families", map: "sha256:…"}` — the family the rule gives the record's own statements under the map pinned at creation, whose bytes are the SHARD member `slicing/<sha256 hex>.json` (§9.4, §9.16; app/plugins/wikidata/families.py) |
 | `unknown` | string | yes | the slice a record joins when the key cannot be read: `"year=unknown"` |
+| `parts` | object | no | `{rule: "content", min: integer, max: integer}` — parts cut by content (02 §2.2, *amended 2026-10-24*): a record ends its part when the part holds `max` records, or at least `min` and the first 8 bytes of SHA-256 over the record's uid (UTF-8), big-endian, are divisible by `shard_records − min`; `1 ≤ min < shard_records < max`. Absent: parts cut every `shard_records`, closed parts kept where they ended |
 | `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg; 1,000,000 for a claims collection in Parquet (below) |
 | `container` | `"jsonl"` · `"parquet"` | version 9 | the record parts' file form (§9.5 "The file"): the zstd-framed JSONL of every collection so far, or one Parquet file per part. ABSENT, never null, below version 9, where a Codex reads as `"jsonl"`; REQUIRED at version 9, which is written for every collection kind that declares it (*amended 2026-10-20*, operator: Parquet parts offered to every collection, not to annotations collections alone). Inside `collection_id`: the container is part of what a part's bytes are, though not of what its records are — `records_root` does not depend on it |
 | `order` | `"bytes"` · `"numeric"` | yes | how records sort within a slice: UTF-8 byte order of `native_id`, or integer order of it |
@@ -374,6 +376,8 @@ a `<space>` segment and would read as one in a member name (§9.16; until
 | `dim` | integer | yes | vector width as stored |
 | `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by the top-level `derivation` above rather than by an encoder, because few encoders emit integers |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it. *Amended 2026-10-18* (docs/notes/char-cut-truncation.md): HOW is part of the function, so the space states it. A space that cuts by tokens has the encoder cut, with the model's own tokenizer, the platform sending the chunk whole with `ctx` as its window; every space before that day is cut by the platform to about `ctx` x 4 characters, which is how its calibration reference was made, and stays so. The field naming the cut is `cut`, below |
+| `exactness` | `"exact"` | version 10 | what every run contributing to the space must reproduce (03 §3.3, CLAUDE.md invariant 12): `"exact"`, its own bytes — the two single-text passes, every fresh load and its batched answers byte-equal to its single-text ones; a near-exact run contributes nothing to such a collection, and a node's own `[encoder] exactness` may only be stricter. ABSENT, never null, below version 10, and absent means the rule: a run is admitted exact or near-exact (within cosine 0.99999 across orders, loads and batches, and at 0.999 against the stored CPU reference; docs/notes/near-exact-runs.md). Outside `space_id`, like the engine: it admits runs and does not change the function; inside `collection_id` (*amended 2026-11-01*) |
+| `document` | object | version 11 | `{instruction: string}` — the text prepended to every DOCUMENT input of the space: a chunk, the calibration set at `create`, the gate's and the re-check's texts, a probe — as `query.instruction` is to a query, no separator added or trimmed, by the one client that sends documents. Nemotron's `"passage: "`. A model trained with a document prefix computes another function without it. Inside `space_id`: every document vector is a function of it. ABSENT, never null, below version 11 and where a space prefixes nothing; required at version 11, a non-empty text. A text form only: a space whose layers feed pairs declares none (*amended 2026-11-02*) |
 | `cut` | `"tokens"` | version 8 only | how an input longer than `ctx` is cut: by the ENCODER, at `ctx` tokens of the model's own tokenizer — VeGa's wrapper in front of a backend engine, the platform sending the input whole with `ctx` as its window (03 §3.3), since the platform holds no tokenizer. Inside `space_id`. ABSENT, never null, below version 8, and absent means the platform's cut to about `ctx` x 4 characters that every space written before 2026-10-18 was calibrated through (*amended 2026-10-18*, docs/notes/char-cut-truncation.md) |
 | `pooling` | string | yes | `"cls"`, `"mean"`, `"last"` — the pooling the encoder is run with |
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
@@ -394,8 +398,8 @@ whole so that anyone can compute them again (02 §2.4):
 | `variant` | string or null | yes | the variant of that build where the software publishes several — `"sycl"`, `"cpu"`, `"cuda"`; `null` where there is one |
 | `image` | id | yes | the digest of the OCI image holding that build, the one that was run; for a backend engine, the digest of the backend's installed files (below). It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}`, the listening port `${PORT}` and, in a backend engine alone, the backend's directory `${BACKEND}` (below), and nothing else in it names the host |
-| `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
-| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
+| `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. On a card it carries the vendor's bitwise-reproducibility mode (`GGML_SYCL_ENABLE_DNN=0` on Intel SYCL, `ROCBLAS_DEFAULT_ATOMICS_MODE=0` on AMD ROCm; CLAUDE.md invariant 12, docs/notes/approved-encoders.md): a card engine without it states no run. Never a credential: the Codex is public |
+| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). A second file the load opens — a LoRA adapter, a projector, a draft model — is written `${WEIGHTS:<field>}`, `${WEIGHTS:<field>[i]}` for a list (`${WEIGHTS:LoraAdapters[0]}`), and is part of the weights digest below; it must reach the engine as an absolute path, so that the file hashed is the file opened, and a relative name makes the run unstatable (amended 2026-10-31, operator: a LoRA "decouples the embedder from a tuning"). An option naming any other absolute path makes the run unstatable. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
 
 `name`, `build`, `variant` and `device` are readable; they are bound by
@@ -420,7 +424,7 @@ parent, writes them from what it launched, at every load:
 | `name` | `"localai/<name>"`, `<name>` being the `name` the runner's install record (`metadata.json` in the backend's directory) gives, or the directory's name where there is no record |
 | `build` | the `version` the install record declares; where it declares none — the case on the reference node — the first 12 hexadecimal digits of `image`'s tree digest, without its `sha256:` prefix. Never the record's `uri`, whose tag moves |
 | `variant` | `null` |
-| `image` | the **tree digest** of the backend's directory, below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
+| `image` | the **tree digest** of the backend's directory and of VeGa's wrapper (*amended 2026-10-31*), below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
 | `args` | `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`: the argument vector the wrapper started the backend with, from the backend's directory, as the runner starts one; `${BACKEND}` is the backend's directory, whose bytes `image` names, so the vector is relative to it as the options are to `${MODELS}` |
 | `env` | the variables the runner set for the load — LocalAI's `EnvVars` — as for any engine the runner loads by a call; what the backend's own `run.sh` exports is inside `image` |
 | `options` | the `ModelOptions` of the `LoadModel` call exactly as the wrapper received them, read as protobuf JSON with the protocol's field names and unset fields omitted, then written as the `options` row states. A field the wrapper's copy of the runner's protocol definition cannot name refuses the load: an option missing from the engine would be a declaration where 02 §2.4 asks for what ran |
@@ -457,6 +461,28 @@ of a directory: that one refuses links and maps a path to a digest, this
 one keeps links, because a backend is a program and its links are part
 of it.
 
+**The wrapper is part of the engine** (*amended 2026-10-31*, operator,
+choice A). VeGa's wrapper decides what the backend is given: the cut to a
+window, a pair's form. A change to it can change a vector, and the run
+named only the backend's tree: a wrapper change (#110) left every run its
+identity and its validation. So the same object also holds the wrapper's
+package, the directory the runner launches the wrapper from:
+- the wrapper's CODE, by an allow-list: every `*.py` file below the
+  package, outside `venv/` (the third-party environment) and every
+  `__pycache__`, and the top-level `run.sh` the runner starts, each as a
+  regular file above, its path prefixed `/vega/` (a relative path never
+  begins with `/`, so the two halves cannot collide). Nothing else the
+  package holds: the wrapper's settings (`vega.json`), the install record,
+  the digests it keeps, the receipts socket's directory, a kernel cache a
+  model's environment may let the driver write there, a revision note.
+  Each of those, hashed, would move the run under load;
+- one setting of `vega.json`, the one that changes what is embedded: `cuts`
+  as `"/vega/vega.json#cuts": {"type": "setting", "value": "<tokenizer or
+  context_size>"}`.
+The host's settings (the receipts socket, the cards) are not in it. A
+wrapper change is therefore a new run of every backend behind it, gated
+before a vector is written (03 §3.3).
+
 A backend engine is told by its bytes: its program, `args[0]`, begins
 with `${BACKEND}/`, which no other engine may carry, and its `image` is
 then a tree digest and names no OCI image. It is admitted from Codex
@@ -484,6 +510,17 @@ from its directory is a file like any other, because it is part of the
 function: two copies that differ in it are two encoders. The same rule
 gives the `weights` of a query encoder and of the run identity (§9.12).
 
+A model loaded from SEVERAL files — weights and a LoRA adapter, a
+projector, a draft model, each written `${WEIGHTS:<field>}` among the
+`options` — has as its weights digest `H` of the canonical JSON object
+that maps `${WEIGHTS}` to the digest above, each second file's
+placeholder to that file's digest, and each option that says how much of
+an adapter is applied (`LoraScale`, `LoraScales`) to its value as the
+`options` write it. `W + s·BA` is one set of weights: a tuning applied
+at another strength, or another tuning on the same base, is another
+encoder and so another space. A load that names no second file keeps
+the digest of its one file or directory (amended 2026-10-31).
+
 **space_id.**
 
 ```
@@ -492,11 +529,13 @@ space_id = H( canonical JSON of
    "encoder":          {"weights": "<space.encoder.weights>"},
    "layers":           <the layers list, byte for byte>,
    "space":            {"ctx", "dim", "dtype", "epoch", "normalise", "pooling", "query"
-                        and, where the space declares it, "cut"}} )
+                        and, where the space declares them, "cut" and "document"}} )
 ```
 
 `cut` enters exactly where the space declares it (version 8): a space that
-declares none hashes as it always did (*amended 2026-10-18*).
+declares none hashes as it always did (*amended 2026-10-18*). So does
+`document`, as the Codex writes it, `{"instruction": …}` (version 11,
+*amended 2026-11-02*).
 
 `query` enters as the Codex writes it, except that a non-null
 `query.encoder` is reduced to `{"weights"}`. `layers` carries each
@@ -574,8 +613,8 @@ fields that carry its choices (every other field is present in the file):
             "unknown":"year=unknown","shard_records":30000,"order":"numeric"},
  "space":{"encoder":{"weights":"sha256:e2…","label":"MedCPT-Article-Encoder",
                      "engine":{"name":"llama.cpp","build":"b10630","variant":"sycl","image":"sha256:8c…",
-                               "args":["llama-server","-m","${WEIGHTS}","--embedding","--pooling","cls","-c","512","-ngl","99","--port","${PORT}"],
-                               "env":{},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
+                               "args":["llama-server","-m","${WEIGHTS}","--embedding","--pooling","cls","-c","512","-ngl","99","-np","1","--port","${PORT}"],
+                               "env":{"GGML_SYCL_ENABLE_DNN":"0"},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
           "dim":768,"dtype":"f16","ctx":512,"pooling":"cls","normalise":true,
           "query":{"encoder":{"weights":"sha256:b7…","engine":{…the same, its own weights…}},"instruction":null},
           "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","query_vectors":"sha256:5e…","quorum":{"n":16,"min_pass":12}},
@@ -645,7 +684,7 @@ the chain, and never ahead of the period open now.
 | `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
 | `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
 | `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here, nor a part that a `shards`, `relations` or `figures` entry names, nor a file of the `rage-settings` member (§9.19) is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A part entry:
@@ -791,7 +830,7 @@ fetchable before an acknowledgement (04 §4.4).
 | `keys` | list of strings | yes | canonical ids `<namespace>:<id>` the document is about (06 §6.5); sorted by bytes |
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
 | `figures` | list of figure | `record_line` 2 only | the plates this document carries, in `seq` order; `[]` when it has none, and `[]` on a pointer record. An entry NAMES a figure and never holds it — the bytes are the member `figures-<slice>` (§9.16), which a peer may hold or not. Absent entirely where `record_line` is 1 |
-| `extra` | object | yes | plugin-defined, fixed keys; **everything the origin asserts about the entity that the keys above have no home for** (01 promise 9, 06 §6.4) — ids, publication details, classifications, keywords, an author's identifiers. Its keys are fixed for the collection's LIFE, so a field omitted here is not deferred: adding one bumps the parser and mints a new `collection_id` (§9.3, 02 §2.7). `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
+| `extra` | object | yes | plugin-defined, fixed keys; **everything the origin asserts about the entity that the keys above have no home for** (01 promise 9, 06 §6.4) — ids, publication details, classifications, keywords, an author's identifiers. Its keys are fixed for the collection's LIFE, so a field omitted here is not deferred: adding one bumps the parser and mints a new `collection_id` (§9.3, 02 §2.7). The deposit plugin's are 06 §6.7's: a collection answers at the parser version its Codex names, so one created before a key was added keeps the shape it had (amended 2026-10-25, operator: "Keep all", which added a source page's `html_*`). `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
 | `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL — a URL into a credited archive where that archive supplies the document's text (06 §6.4) — and where the document is a member of a container the path or URL followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
 | `content_hash` | BLAKE2b-128 | yes | below |
 | `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of this document's own origin bytes, the ones `origin` locates — one record, one hash, whatever the origin ships them in (02 §2.3); a record without one is refused at build |
@@ -819,10 +858,10 @@ object with exactly these keys in this order:
 | key | type | meaning |
 |---|---|---|
 | `hash` | id | `H` over the figure's bytes as the origin ships them |
-| `media_type` | string | one of 08 §8.7's admitted types; compared against what the bytes actually are, never trusted |
+| `media_type` | string | the type the origin gives the figure, whatever it is (*amended 2026-10-25, "Every plate"*: until then one of 08 §8.7's admitted types); DISPLAY compares it against what the bytes actually are and never trusts it (08 §8.7) |
 | `bytes` | integer | the size of those bytes |
 | `seq` | integer | this appearance's position in the record's text, from 0 |
-| `carried` | boolean | whether this collection carries the bytes. `false` where the origin HAS the image and the collection does not admit it — a media type outside 08 §8.7's list, or a figure over one of its caps. The entry is still written, because a reader that meets the caption and no picture must be able to tell "not here yet" from "not here ever" |
+| `carried` | boolean | whether this collection carries the bytes. `true` for every image the origin has, whatever its type or size (*amended 2026-10-25, operator: "Every plate"*: 08 §8.7's closed list and caps bind display, not storage). `false` only where the origin names an image whose bytes do not exist to carry, and on records written before the amendment, which set it for a type outside 08 §8.7's list or a figure over a cap; such an entry is still written, because a reader that meets the caption and no picture must be able to tell "not here yet" from "not here ever". Kept in the format because records already published carry it |
 
 `hash` is `H` — SHA-256 — and not the BLAKE2b-128 of `content_hash` and
 `origin_hash` beside it, which is the one place in a record line the two
@@ -850,15 +889,19 @@ times over 66 distinct images.
 
 The alignment is a rule about the WRITER: whatever produces the text and
 whatever produces this list walk one filtered sequence of images, so a
-cover, a broken reference and a refused type drop from both together or
-from neither.
+cover and a broken reference drop from both together or from neither,
+and every other image stays in both whatever its type.
 
 **The figures container.** `figures/<slice>/<NNNNN>.fig.zst`, one
 container per record part of the same slice and number, holding every
-figure that part's records name, each stored once and ordered by
-`hash`. A figure is addressed BY HASH INSIDE the container and never by a
-path of its own, so §9.1's "path segments from digests" rule does not
-reach here — no directory is ever named after a figure.
+figure that part's records name with `carried: true`, each stored once
+and ordered by `hash`. It holds OPAQUE BYTES: an SVG, a GIF or a plate
+over 08 §8.7's caps is stored exactly as the origin ships it, verified by
+its hash and nothing else, and never decoded here — whether it may be
+shown is decided at display (08 §8.7, *amended 2026-10-25, operator:
+"Every plate"*). A figure is addressed BY HASH INSIDE the container and
+never by a path of its own, so §9.1's "path segments from digests" rule
+does not reach here — no directory is ever named after a figure.
 
 One container per part, and not one file per plate, because §9.16 makes
 every FILE of a member its own BitTorrent v2 torrent. A corpus of
@@ -904,7 +947,7 @@ The claim, an object with exactly these keys:
 
 | key | type | meaning |
 |---|---|---|
-| `type` | `"same-work"` · `"translation-of"` · `"mention"` · `"relation"` · `"community"` | `same-work`: the two records are versions of one work in different languages, and neither is said to be the other's source; `translation-of`: the subject translates the object. *Amended 2026-10-20* (version 9; docs/notes/gutenberg-graph-amendments.md A-K1): `mention`: a span of a chunk of the text target names an entity of the entity target; `relation`: an entity stands in a relation to another, read from a chunk; `community`: a set of entities the method groups, with its summary |
+| `type` | `"same-work"` · `"translation-of"` · `"mention"` · `"relation"` · `"community"` | `same-work`: the two records are versions of one work in different languages, and neither is said to be the other's source; `translation-of`: the subject translates the object. *Amended 2026-10-20* (version 9; docs/notes/wiki-gutenberg-amendments.md A-K1): `mention`: a span of a chunk of the text target names an entity of the entity target; `relation`: an entity stands in a relation to another, read from a chunk; `community`: a set of entities the method groups, with its summary |
 | `subject`, `object` | uid, chunk or canonical id | for `same-work` and `translation-of`: two records of the annotated collection, different from each other. For `mention`: `subject` a CHUNK of the text target, `{uid, chunk_id, text_hash}` — `text_hash` the BLAKE2b-128 of the chunk's text as the target's chunker cut it (06 §6.3), the hash every stored chunk already carries — and `object` an entity as a canonical id `<namespace>:<id>` (`wikidata:Q42`). For `relation`: both ends entities as canonical ids. For `community`: `subject` `{id: <string the method mints>, level: integer}` and `object` null (A-K2) |
 | `subject_lang`, `object_lang` | string | ISO 639 or `"und"`: the languages of the two versions. For `translation-of`, `object_lang` is the source language and `subject_lang` the target language. REQUIRED for `same-work` and `translation-of`; ABSENT for the three types of 2026-10-20 — an entity has no one language, and a chunk's is its record's |
 | `start`, `end`, `surface` | integer, integer, string | `mention` only: code-point offsets into the chunk's text, `end` exclusive, and the text between them, so a reader shows the mention without the chunk |
@@ -966,7 +1009,7 @@ header included), so a reader takes the last 8 bytes, seeks back
 ```
 
 **The file (B): Parquet** (*amended 2026-10-20*, operator's decision A-K4,
-docs/notes/gutenberg-graph-amendments.md; a Codex whose
+docs/notes/wiki-gutenberg-amendments.md; a Codex whose
 `slicing.container` is `"parquet"`, version 9, §9.3). At 10⁸–10⁹ claims a
 JSONL part of 50,000 records is tens of thousands of parts, and the
 snapshot's `shards` list alone is hundreds of megabytes every peer reads.
@@ -1001,7 +1044,7 @@ the compressor and its level, honest peers agree on `root` as well.
 **Worked example.** Two lines. A Gutenberg record (green, text travels):
 
 ```
-{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"downloads":61432},"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
+{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"loc_class":"PR"},"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
 ```
 
 A PubMed pointer record (red, text stays where it was fetched):
@@ -1018,7 +1061,17 @@ record on a text-holding peer has the title and the abstract in
 
 A peer's vectors rest in its own LanceDB table, one per space: assembled
 from accepted bundles (§9.7), never a member's bytes, never fetched as
-such — vectors travel only as bundles (04 §4.3). *Amended 2026-10-12*
+such — vectors travel only as bundles (04 §4.3). *Amended 2026-11-01*
+(operator: "Different tables, make it a standard practice when separated
+searches might be done"): where the collection's plugin declares a TABLE
+KEY — one of its slice keys a search narrows by (`slicing.TABLE_KEYS`) —
+the space rests in one table per value of the key:
+`<lance>/layout.json` (`{"format": 1, "table_key": "<key>"}`) and
+`<lance>/<key>=<value>/chunks.lance`, the value percent-encoded, each
+table of the one schema. A document's table is its slice's value for the
+key. This is the rest form only: nothing hashed, signed or moved changes,
+and a peer holding one table and a peer holding several exchange the same
+bundles (docs/notes/vector-tables-split.md). *Amended 2026-10-12*
 (operator): a per-part file `vectors/<space>/<slice>/<NNNNN>.safetensors`
 was specified here and never built; nothing reads or exchanges it, so it
 is removed. The files below are under `vectors/<space>/`, `<space>` the
@@ -1271,7 +1324,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `roots` | exact | `{failed: [part…]}` |
 | `records` | exact | `{records: n, failed: [uid…]}` — content and origin hashes present and, where the text is, reproduced |
 | `chunks` | exact | `{records: n, failed: [uid…]}` |
-| `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], moved: [uid…], origin: "reachable"}` — `records` the sampled parts hold, `compared` those of the `k` origin units read out of the `K` the sampled parts reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record; `moved` names records whose line differs in `origin_hash` alone, which do not fail the check (03 §3.2, amended 2026-10-07; a reader of an older detail treats it as absent) |
+| `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], moved: [uid…], origin: "reachable"}` — `records` the sampled parts hold, `compared` those of the `k` origin units read out of the `K` the sampled parts reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record; `moved` names records whose line differs in `origin_hash` alone, which do not fail the check (03 §3.2, amended 2026-10-07; a reader of an older detail treats it as absent); `origin_units_in_part: [{unit, weight, sampled, compared}…]` names each unit heavier than the bound and the seeded share of its sampled records compared (03 §3.2, amended 2026-11-01; absent when none) |
 | `image-equivalence` | exact | `{against: "reference-image", reference_image: id, records: n, compared: m, failed: [uid…], errored: k, reference_errored: j}` — `records` the reference re-parsed, `compared` those this image re-parsed, `failed` those whose line differs (03 §3.4, added 2026-10-07); never counted toward a trust level |
 | `vectors-sample` | statistical | `{chunks: n, passed: n, median: decimal, failed: [chunk id…], producers: [key…]}` — the producers whose bundles supplied the sampled vectors; two producers when the attestation compares duplicate bundles (04 §4.5) |
 | `calibration` | statistical | `{n: 16, passed: n, median: decimal}` |
@@ -1625,7 +1678,7 @@ snapshot (`files`, §9.4):
 
 | tensor / header | type | required | meaning |
 |---|---|---|---|
-| `vectors` | `[512, dim]` f32 | yes | the reference vectors, in set order, as the creator's encoder produced them, unit-normalised when `space.normalise` |
+| `vectors` | `[512, dim]` f32 | yes | the reference vectors, in set order, as the creator's encoder produced them, `space.document.instruction` prefixed where the space declares one (*amended 2026-11-02*), unit-normalised when `space.normalise` |
 | `query_vectors` | `[512, dim]` f32 | when `space.query.encoder` is not null | the query encoder's reference vectors for the same texts, `space.query.instruction` prefixed — a pair set's as `<first>\n\n<second>` (*amended 2026-10-08*): what an asymmetric space's query runs are validated against (03 §3.3) |
 | `envelope` | `[2, dim]` f32 | yes | row 0 the per-dimension mean of `vectors`, row 1 the per-dimension standard deviation |
 | `pairs` | `[bytes]` u8 | exactly when the space's layers feed pairs | the pair set, the bytes of its file (above) (*amended 2026-10-08*) |
@@ -1674,22 +1727,22 @@ run_id = H( canonical JSON of
 The platform computes it from what it launched, never from a
 declaration, and states it in one of two ways (*amended 2026-10-08*,
 docs/notes/vega.md): VeGa by a **receipt** for every input (below);
-RAGE, until it retires, in the response header `Louise-Run` of every
-answer, which stays defined as it was for the endpoints behind RAGE and
-counts for nothing on an answer through VeGa. Each describes a run on
-request — VeGa at `GET /vega/runs/<run_id>`, RAGE at
+a **front** — an endpoint not behind VeGa — in the response header
+`Louise-Run` of every answer, which counts for nothing on an answer
+through VeGa. Each describes a run on
+request — VeGa at `GET /vega/runs/<run_id>`, a front at
 `GET /louise/runs/<run_id>` — answering with that same object, which is
 where a statement's `engine`, `weights` and `driver` come from.
 
 Five things make "what it launched" computable, and a platform that
 states a run follows all five:
-- **`image`.** Behind RAGE: a process cannot see the digest of the image
-  it runs in; only the container runtime knows it. RAGE therefore learns
+- **`image`.** Behind a front: a process cannot see the digest of the image
+  it runs in; only the container runtime knows it. A front therefore learns
   its `image` from a deployment pinned by digest and refuses to start
   otherwise: a tag is not an image. A digest-pinned deployment IS the
   observation, since the runtime runs nothing else. An engine the
   runner installed after the image was built — a backend fetched at
-  run time — is not in that image, and RAGE states no run for it.
+  run time — is not in that image, and a front states no run for it.
   Behind VeGa every engine is such a backend, and its `image` is the
   tree digest of its installed files (§9.3), which the wrapper computes
   at every load while the backend loads, reading again only a file whose
@@ -1700,7 +1753,7 @@ states a run follows all five:
   variables set for the engine — never the process's raw argument vector
   and environment, which carry a port, a path and a container's host
   name that change at every start and would make every restart another
-  run. RAGE checks that the process serving the answer is the one it
+  run. A front checks that the process serving the answer is the one it
   read them for — by pid and start time, before and after the answer —
   and that it matches them; a process that does not match states none.
   VeGa's wrapper is the backend's parent: the vector is the one it
@@ -1710,7 +1763,7 @@ states a run follows all five:
   receipt.
 - **`options`.** For an engine that receives its load options over its
   own protocol, the options as the runner sent them (§9.3) — behind
-  RAGE read at every launch from the runner's record of that load, never
+  a front, read at every launch from the runner's record of that load, never
   from its configuration, which the runner completes with defaults of
   its own; behind VeGa the load call itself, which the wrapper receives.
   The environment the runner sets for it is its `env`, not an option.
@@ -1849,9 +1902,12 @@ refusal.
 **The request's level.** Every request a node makes to a model endpoint
 — an encoder, a reranker, the chat model, the translation model —
 carries the request header `Louise-Level`, one of `corpus` ·
-`translate` · `chat` · `rerank` · `query`, lowest first: the node's own
-order of model work. It is advisory. RAGE uses it to hold the device's
-clock while a person waits, and may use it for nothing an answer
+`translate` · `query` · `rerank` · `chat`, lowest first: the node's own
+order of model work — corpus embedding, then a query's steps in their order,
+so a query further along goes first (*amended 2026-10-25, operator*: the
+same five values; the order was corpus · translate · chat · rerank · query).
+It is advisory. A model platform may use it to hold the device's
+clock while a person waits, and for nothing an answer
 depends on: the same request gives the same answer at every level, and
 an endpoint that ignores the header loses nothing but speed.
 
@@ -1866,8 +1922,10 @@ embedded one at a time, truncated as a chunk is. A run's fingerprint is
 returned it, converted to little-endian f32 and concatenated. The gate
 embeds the same sixteen a second time as the peer contributes, with its
 batching and concurrency. The run is batch-invariant at those settings
-when the bytes are equal, or when its batched vectors stay within the
-band two single-text passes show (03 §3.3, *amended 2026-10-12*). An asymmetric space's query run has its own
+when the bytes are equal (03 §3.3, *amended 2026-10-25*; the band of
+2026-10-12 is gone). Before that the gate embeds the sixteen one at a
+time a second time, in reverse order; bytes that differ fail the run
+(invariant 12). An asymmetric space's query run has its own
 fingerprint, over the same texts with `space.query.instruction`
 prefixed.
 
@@ -1904,6 +1962,27 @@ documents (against `vectors`) or queries (against `query_vectors`).
 `fingerprint` and `batch_invariant` are the gate's own measurements
 (03 §3.3); a run that is not batch-invariant is validated for
 single-text, one-at-a-time work only.
+
+**Version 5** (*amended 2026-10-31*, operator's choice C;
+docs/notes/near-exact-runs.md) is every run's statement from then on:
+the body above with four keys more:
+- `exactness`: `"exact"` or `"near"`;
+- `loads`: the fresh loads the gate measured;
+- `load_variation`: the worst cosine between two answers of one text, as
+  a decimal; `"1"` when they were byte-equal;
+- `cpu_reference`: `{run, worst, median}` against the stored CPU reference
+  (the CPU twin's run, and its 512 answers' worst and median cosine), or
+  `null` where none is stored.
+
+They are part of the verdict a write is admitted by:
+- an exact run's `load_variation` is `"1"`;
+- a near-exact run measured at least 3 loads, varies by no more than
+  `0.99999`, and reaches `0.999` against a stored CPU reference;
+- any run below the review line `0.995` against one fails.
+
+Before version 5 the gate's own-bytes verdict was not in the statement, so
+it did not reach the write. Versions 3 and 4 stay read, meaning "exact,
+one load, no CPU reference".
 
 A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
@@ -2102,8 +2181,10 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `calibration-<set>` | `calibration/<set>.safetensors` and `.sig.json` | in the snapshot's `files` |
 | `validation` | `validation.json` | in the snapshot's `files` |
 | `terms` | `LICENSE-TERMS` | in the snapshot's `files` |
+| `slicing` | `slicing/<sha256 hex>.json`: the family map a slicing block names (§9.3; *amended 2026-10-24*) | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json`, and `seals/lists/<sha256>.xml` for each trusted list its entries name (*amended 2026-10-08*) | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
+| `rage-settings` | `rage-settings/<key hex>.json`, one per signer: recommended RAGE settings (§9.19), optional | per file, in the digest's `files` (*added 2026-11-01*) |
 
 No two kinds share a shape (the text index's `index-<slice>`, which shared
 `index-<space>`'s, left the table on 2026-10-08), and a slice name of 16
@@ -2178,6 +2259,7 @@ half never leaves the plugin and the peer.
 | `etiquette` | | no | `{max_conns, bandwidth_cap_bps, windows}` |
 | `profiles`, `profile_mode`, `profile_labels`, `estimated_bytes` | | no | named selections of slices and their sizes |
 | `all_profile` | string or null | no | the profile `slices = "all"` spells (07 §7.8) where it is not the one whose filter includes everything — a spec that lists files beyond a collection's whole names it (*amended 2026-10-13*: Normattiva's `full` is the 23 pre-packaged collections; `archive` adds the yearly exports for another collection) |
+| `slice_profiles` | map of slice name to profile | no | the slices the origin delivers whole, each with the profile that fetches it — `lang=it` → `it` for Wikipedia's dumps; a slice under one (`lang=it/pages=3M`) is fetched as it, and an origin whose every file may hold any slice declares none (*amended 2026-10-25*: `records fetch --slice`, 07 §7.3) |
 | `probe_file` | | no | the mirror structure probe |
 | `extras` | | no | formats the origin offers that Louise does not exchange |
 | `terms_text_path`, `ssh_key_path`, `auth_token_path` | paths | no | never in any shared object |
@@ -2235,7 +2317,10 @@ saves it only after the manifest commits.
 `origin` (from the `DocRef`) and `content_hash` when it writes the
 record (§9.5). It adds no layer: which layer a document falls in is
 derived from the Codex's rules whenever it is needed, never stored
-(02 §2.3).
+(02 §2.3). Its `issues` (`[{code, detail}]`, 06 §6.1, *amended
+2026-10-25*) are none of these bytes: the platform records them in the
+peer's state database and writes nothing of them into a record, a part
+or any other object of this document.
 
 `Edge`: `{to: str, type: str}` — what `relations()` yields, one call
 per parsed document (06 §6.1). `to` is the uid the edge points at, which
@@ -2289,7 +2374,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 9 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5; 7 since 2026-10-09: `annotates`, written for an annotations Codex alone, 02 §2.10; 8 since 2026-10-18: `space.cut`, written for a space that declares the token cut alone; 9 since 2026-10-20: `slicing.container`, `annotates` as a list, the claim types `mention`, `relation`, `community` — written for a Codex that declares one of them alone) |
+| `louise-codex` | 10 | §9.3 (10 since 2026-11-01: `space.exactness`, written for a space that requires bit-exact runs alone; 5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5; 7 since 2026-10-09: `annotates`, written for an annotations Codex alone, 02 §2.10; 8 since 2026-10-18: `space.cut`, written for a space that declares the token cut alone; 9 since 2026-10-20: `slicing.container`, `annotates` as a list, the claim types `mention`, `relation`, `community` — written for a Codex that declares one of them alone) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
@@ -2305,6 +2390,7 @@ names one schema, the one its section fixes:
 | `louise-calibration-run` | 4 | §9.12 (4 since 2026-10-08: a backend engine's run; every other run is stated at 3) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
+| `louise-rage-settings` | 1 | §9.19 |
 | VeGa tag (`\x1eVEGA/1\x1e`), receipt, receipts route | 1 | §9.12 (the version is in the tag's marker; neither the receipt nor the routes carry `kind` or `version`) |
 
 Two rows above were one row each until the figures amendment, and the
@@ -2332,7 +2418,7 @@ WHOLE, the Codex and the peer's calibration statement, because a reader
 of the old version would take a tree digest for an image and guess, and
 writes the new version for an object carrying a backend engine alone:
 every Codex, statement, `engine_id` and run already written or stated —
-an argv engine's, one RAGE stated — keeps its bytes, and nothing is
+an argv engine's, one stated before VeGa — keeps its bytes, and nothing is
 gated again for it. The bundle header, the attestation, the digest and
 the space author's calibration member carry an `engine_id` and kept
 their versions. `protocol_version` (§9.3, §9.17)
@@ -2361,3 +2447,71 @@ never a silent extension. The platform image that introduces version
 canonical form of §9.1, the two hash functions and the signature scheme
 of §9.2 are not versioned by a field: they are what every version is
 written in, and changing them is a new protocol, not a new version.
+
+## 9.19 Recommended RAGE settings
+
+*(Added 2026-11-01, operator: "A recommended, non binding, setting shall be
+part of a collection"; choice B — a separate signed file in the SHARD, one
+entry per card type, updatable without touching the collection.)*
+
+How fast a collection embeds on a card depends on settings that are not
+the space's: how RAGE, the RAG Engine (01; docs/notes/rage.md), drives
+the encoder — texts a request (`batch`) and requests in flight
+(`concurrency`). They are RAGE's settings, never the encoder's *engine*
+(§9.3), which is the Codex's and inside `collection_id`. They change no vector beyond the space's tolerance — the
+gate measures them before a batched answer is written (03 §3.3) — so they
+are never inside `collection_id` or `space_id`. What one peer measured on
+a card is what the next peer with the same card wants to start from, so it
+travels with the collection, signed by whoever measured it.
+
+**The file.** `rage-settings/<key hex>.json` at the SHARD's root, where
+`<key hex>` is the signer's public key as 64 lowercase hexadecimal digits
+(the textual form of §9.2 without `ed25519:`). One file per signer, so two
+peers never write the same file and a signer re-measuring replaces only
+its own entry. An envelope (§9.2) under `louise/rage-settings/v1`, whose
+body is exactly:
+
+| key | type | meaning |
+|---|---|---|
+| `kind` | `"louise-rage-settings"` | |
+| `version` | `1` | |
+| `key`, `time` | §9.2 | the signer, and when it signed |
+| `collection_id`, `space_id` | ids | the collection and space the settings were measured for; a file naming others is set aside |
+| `entries` | non-empty list | one per card type, ordered by `driver:vendor_id:device_id` |
+
+and each entry is exactly:
+
+| key | type | meaning |
+|---|---|---|
+| `card` | `{driver, vendor_id, device_id}` | the card TYPE: the kernel driver it binds (`xe`, `amdgpu`, `nvidia`) and its PCI vendor and device ids, four lowercase hexadecimal digits each, no `0x` |
+| `engine_id` | id | the engine (§9.3) of the validated run the settings were measured under. For a reader: it selects nothing, since any engine whose run passes the gate may contribute |
+| `settings` | object | one or both of `batch` (1–1024) and `concurrency` (1–64), whole numbers |
+| `measured` | object | `time` (required), and any of `busy` (the card's compute engine busy share, a decimal string), `chunks_per_s` (a decimal string), `window_s` (whole seconds) |
+
+No two entries of one file name the same card type. A file whose name is
+not its body's signer, whose signature does not verify, or with any
+unknown key (§9.18) is set aside, and `hold rage-settings show` says why.
+
+**Never binding.** A node takes an entry only:
+
+1. for a key its collection file's `[encoder]` leaves unset (07 §7.8) — a
+   `batch` or `concurrency` written there is the operator's and wins;
+2. for one of its own card types, as its GPU probe reports them — another
+   card's numbers are not this card's;
+3. this node's own entry first; else the most recently measured; ties by
+   signer, so every node reading the same files takes the same entry.
+
+What it takes enters the collection's recipe where the worker and the gate
+both read it (`collections.recipe_for`), so a changed batching is measured
+by the gate before one batched vector is written, exactly as an edited
+file is: a recommendation a node cannot reproduce stops nothing but
+itself. Without a probe, or without an entry for its card, a node runs
+the file's settings and its own defaults.
+
+**The member.** All signers' files are one member, `rage-settings`
+(§9.16): not in the snapshot — so a re-measurement needs no new snapshot —
+but in the digest's `members` with its `files` (§9.9), each file its own
+torrent, the member root over them. A fetcher keeps a file only when it
+verifies, and replaces its copy of a signer's file only with one signed
+later.
+

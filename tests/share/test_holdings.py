@@ -47,6 +47,9 @@ def test_member_names_say_their_kind_and_slice():
     assert holdings.slice_of("records-year=1975-1979") == "year=1975-1979"
     assert holdings.slice_of("relations-lang=de/pages=3M") == "lang=de/pages=3M"
     assert (holdings.kind_of("terms"), holdings.slice_of("terms")) == ("terms", None)
+    # the family map (09 §9.16): `hold collection show wikidata-bge` raised on it (2026-11-01)
+    assert (holdings.kind_of("slicing"), holdings.slice_of("slicing")) == ("slicing", None)
+    assert "slicing" in holdings.WHOLE_KINDS, "a fetcher needs the map before any slice is of use"
     assert holdings.kind_of("calibration-abc") == "calibration" and holdings.slice_of("seals-2026-08") is None
     assert holdings.slice_of("vectors-" + "a" * 16 + "-year=2023") == "year=2023"
     assert holdings.kind_of("index-" + "a" * 16) == "index" and holdings.slice_of("index-" + "a" * 16) is None

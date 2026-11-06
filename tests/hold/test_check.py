@@ -165,6 +165,54 @@ def test_a_chunker_that_moves_boundaries_without_changing_the_count_is_CAUGHT(
         "the count was unchanged, which is the point"
 
 
+# ---- per part, in processes ----------------------------------------------
+
+def test_the_per_part_checks_run_in_processes_and_say_what_the_serial_run_says(
+        checkable, monkeypatch):
+    """wikipedia-v8's records check took 46 min on one core (2026-10-28):
+    roots, records and chunks go part by part to spawned processes, and the
+    outcomes — a failing part included — are the serial run's, in order."""
+    from app import config, parallel
+    root, snapshot, codex = checkable
+    *rest, last = snapshot.shards                    # each check fails on the last part
+    snapshot = replace(snapshot, shards=(*rest, replace(
+        last, root="sha256:" + "0" * 64, records_root="sha256:" + "0" * 64, chunks=last.chunks + 1)))
+    checks = ["roots", "records", "chunks"]
+
+    def outcomes():
+        r = _run(root, codex, snapshot, checks, sample="1")
+        return [(o.result, o.detail, o.shards, o.why) for o in (r.outcome(c) for c in checks)]
+
+    serial = outcomes()
+    assert [o[0] for o in serial] == [chk.FAIL] * 3 and len(snapshot.shards) > 1
+    pools = []
+
+    class Spy(parallel.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    assert outcomes() == serial
+    assert pools == [2, 2, 2], "one pool per check, the node's process count"
+
+
+def test_the_command_gives_the_per_part_checks_the_whole_quota(checkable, monkeypatch, capsys):
+    from app import config, louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", True)
+    monkeypatch.setattr(config, "build_parse_processes", lambda: 1)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 7)
+    seen = []
+    real = chk._map_parts
+    monkeypatch.setattr(chk, "_map_parts", lambda fn, tasks: (seen.append(config.PARSE_PROCESSES),
+                                                               real(fn, tasks))[1])
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    assert louise.main(["hold", "check", "gutenberg", "--root", str(root), "--seed", SEED.hex()]) == 0
+    assert seen and set(seen) == {1}
+
+
 # ---- license and signature ----------------------------------------------
 
 def test_license_passes_for_a_green_collection_with_no_terms(checkable):
@@ -1109,3 +1157,124 @@ def test_the_bound_weighs_only_the_units_it_reaches():
     keep, bound = chk._origin_units_taken(ctx, dict.fromkeys(sizes))
     assert keep == set() and len(asked) == chk.UNWEIGHED_STOP
     assert bound["origin_units_unlisted"] == chk.UNWEIGHED_STOP
+
+
+def test_every_check_03_names_answers():
+    """03 §3.2's table, read from the document: every check it names is a
+    key of CHECKS — a check not built answers INCONCLUSIVE with its reason
+    rather than being refused as unknown (model-agreement was, until
+    2026-10-25)."""
+    import re
+    from pathlib import Path
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "03-checking.md").read_text(encoding="utf-8")
+    table = doc.split("## 3.2", 1)[1].split("\n\n**", 1)[0]
+    named = set(re.findall(r"^\| `([a-z-]+)`", table, re.M))
+    assert "model-agreement" in named and named <= set(chk.CHECKS), named - set(chk.CHECKS)
+
+
+# ---- records-vs-origin in the parse pool (2026-11-01) -------------------------
+
+def _both(root, codex, snapshot, origin):
+    from app import louise
+    serial = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+                  reparse=louise._reparse_from(codex, "gutenberg", origin)).outcome("records-vs-origin")
+    pooled = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+                  reparse=louise._reparse_from(codex, "gutenberg", origin),
+                  reparse_many=louise._reparse_many_from(codex, "gutenberg", origin)
+                  ).outcome("records-vs-origin")
+    return serial, pooled
+
+
+def test_the_pooled_origin_check_gives_the_serial_outcome(checkable, corpus_dir, monkeypatch):
+    """CLAUDE.md, multi-core: one wikidata check re-parsed its 3.7 M sampled
+    records at 38/s on one core, ~27 h (München, 2026-11-01). The re-parse
+    runs in the parse pool (`origin-line`); the outcome — verdict, detail,
+    why — is the serial one, a revised origin text included."""
+    from app import parallel
+    root, snapshot, codex = checkable
+    kinds: list[str] = []
+    real = parallel.compute_pages
+    monkeypatch.setattr(parallel, "compute_pages",
+                        lambda kind, *a, **k: kinds.append(kind) or real(kind, *a, **k))
+    serial, pooled = _both(root, codex, snapshot, corpus_dir)
+    assert kinds and set(kinds) == {"origin-line"}, "the pooled path ran"
+    assert serial.result == chk.PASS
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+    victim = _all_records(root, snapshot)[0]
+    _change_the_text(next((corpus_dir / str(victim["native_id"])).glob("*.txt*")))
+    serial, pooled = _both(root, codex, snapshot, corpus_dir)
+    assert victim["uid"] in serial.detail["changed"]
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+
+
+def test_the_pooled_origin_check_says_unreachable_as_the_serial_one(checkable, tmp_path):
+    root, snapshot, codex = checkable
+    empty = tmp_path / "no-origin"
+    empty.mkdir()
+    serial, pooled = _both(root, codex, snapshot, empty)
+    assert serial.detail["origin"] == "unreachable"
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+
+
+def test_a_network_origin_stays_serial_under_this_process_s_budget():
+    """Invariant 5: a network origin's members are fetched under this
+    process's transfer budget; children fetching at once would each draw a
+    budget of their own."""
+    from app import louise
+    assert louise._reparse_many_from(object(), "gutenberg", None) is None
+
+
+def test_the_pooled_origin_check_crosses_real_processes(checkable, corpus_dir, monkeypatch):
+    """The collection, its Codex and the rows pickle into spawned children,
+    and the outcome is the serial one."""
+    from app import config, parallel
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    try:
+        root, snapshot, codex = checkable
+        serial, pooled = _both(root, codex, snapshot, corpus_dir)
+        assert parallel.pool() is not None, "a real pool"
+        assert serial.result == chk.PASS
+        assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+    finally:
+        parallel.shutdown()
+
+
+def test_a_unit_heavier_than_the_bound_is_compared_in_part_by_the_seed(checkable, corpus_dir):
+    """03 §3.2, amended 2026-11-01 (operator, RULE 1): wikidata's every record
+    points into its one dump file, so its check re-parsed all 3.7 M sampled
+    records (~27 h). A unit heavier than the bound is compared in part: of its
+    n sampled records, the ⌈n × bound / weight⌉ (at least one) the seeded
+    rule ranks first over their uids — and the report names the share."""
+    from app import louise
+    from app.hold import codex as cx
+    root, snapshot, codex = checkable
+    reparse = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    asked: list[str] = []
+
+    def counted(uid, locator):
+        asked.append(uid)
+        return reparse(uid, locator)
+
+    uids = [r["uid"] for r in _all_records(root, snapshot) if r.get("origin")]
+    n = len(uids)
+    assert n >= 3, "the fixture has records enough for a share below n"
+    weight = (chk.ORIGIN_BYTES * n) // 2               # a share of exactly two
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", weight)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert sorted(asked) == sorted(cx.sample(SEED, 2, iter(uids))), "the two the seed ranks first"
+    assert o.detail["compared"] == 2 and o.detail["records"] == n
+    assert o.detail["origin_units_in_part"] == [
+        {"unit": "the-one-dump", "weight": weight, "sampled": n, "compared": 2}]
+    assert "compared in part: 2 of its" in o.why
+    # at least one, however heavy
+    asked.clear()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", 1 << 50)).outcome("records-vs-origin")
+    assert o.detail["compared"] == 1 == len(asked)
+    # and a unit within the bound is compared whole, as before
+    asked.clear()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", 1 << 20)).outcome("records-vs-origin")
+    assert o.detail["compared"] == n and "origin_units_in_part" not in o.detail

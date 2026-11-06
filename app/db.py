@@ -293,6 +293,22 @@ CREATE TABLE IF NOT EXISTS chunk_hashes (
   native_id INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chunk_hashes_native ON chunk_hashes(native_id);
+-- 06 §6.1 (amended 2026-10-25, operator: "any inconsistency is logged and
+-- flagged"): the inconsistencies in the ORIGIN that the last parse of each
+-- document met (app/issues.py). Keyed (uid, code); a parse replaces the
+-- codes it checked for its document, so a re-parse of a fixed origin clears
+-- them. Local state, never travels, in no record. Additive: created on open
+-- like every local table, existing rows untouched (07 §7.3 `dev migrate
+-- schema`, amended the same day).
+CREATE TABLE IF NOT EXISTS issues (
+  uid TEXT NOT NULL,
+  code TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  PRIMARY KEY (uid, code)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_issues_code ON issues(code, uid);
 """
 
 class ManifestConnection(sqlite3.Connection):
@@ -328,14 +344,18 @@ def wal(con, *, tries: int = 50, pause_s: float = 0.1) -> str:
     raise last
 
 
-def connect(collection=None) -> sqlite3.Connection:
+def connect(collection=None, *, shared: bool = False) -> sqlite3.Connection:
+    """The collection's manifest. `shared`: the connection may be handed from
+    one thread to another (never used by two at once) — the embed stage's
+    pool lends one to each document in turn instead of opening a new one,
+    schema script included, per document."""
     if collection is None:
         collection = collections_mod.default_collection()
     collection.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     collection.fts_dir.mkdir(parents=True, exist_ok=True)
     collection.lance_dir.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None,
-                          factory=ManifestConnection)
+                          factory=ManifestConnection, check_same_thread=not shared)
     con.collection_name = collection.name
     con.row_factory = sqlite3.Row
     wal(con)
@@ -604,7 +624,7 @@ def _read_sample(con, key: str, max_age_s: float):
 
 
 # QUERY PRIORITY (A5) is the node's interactive claim now, in
-# state/node.sqlite (app/dispatch.py, docs/notes/scheduling.md §12): one
+# state/node.sqlite (app/rage/dispatch.py, docs/notes/scheduling.md §12): one
 # claim for every interactive level, cleared when the last call ends, read
 # by the worker before each REQUEST rather than between documents.
 

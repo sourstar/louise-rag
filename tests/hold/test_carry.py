@@ -1137,3 +1137,154 @@ def test_predecessor_rows_restores_a_carry_that_cleared_them(pair):
     assert contribute.predecessors(root, "re") == [old.collection_id]
     again = carry.keep_predecessor_rows(root, "old", "re", apply=True, log=quiet)
     assert again["rows_written"] == 0 and again["bundles"]["linked"] == 0
+
+
+# ---- A1h: a collection holding no vector, into ANY space --------------------
+
+def _bge_space(root, name="bge"):
+    """The same records in another FUNCTION: other weights, other width, another
+    query encoder (wikidata from jina-v3 to bge-m3, 2026-10-31)."""
+    from functools import partial
+    space = {**SPACE, "encoder": {**SPACE["encoder"], "weights": "sha256:" + "be" * 32},
+             "dim": 1024, "query": {"encoder": {"weights": "sha256:" + "bf" * 32}, "instruction": None}}
+    return col.create_from_recipe(root, "gutenberg", recipe(space=space), platform_image=PLATFORM,
+                                  embed=partial(fake_embed, dim=1024),
+                                  embed_query=partial(fake_query_embed, dim=1024),
+                                  name=name, key=KEY, now=NOW)
+
+
+def test_unembedded_carries_the_manifest_and_index_into_another_space(pair):
+    root, old, _new = pair
+    bge = _bge_space(root)
+    assert {"encoder.weights", "dim", "query.encoder.weights"} <= set(carry.space_differences(old, bge))
+    with pytest.raises(CodexError, match="spaces differ"):
+        carry.carry(root, "old", "bge", apply=True, log=quiet)
+    (root / "old" / "index").mkdir(parents=True, exist_ok=True)
+    (root / "old" / "index" / "words").write_text("the text index")
+    con = sqlite3.connect(root / "old" / "state" / "manifest.sqlite")
+    declined = con.execute("SELECT uid FROM documents ORDER BY rowid LIMIT 1").fetchone()[0]
+    con.execute("UPDATE documents SET embed_done=-1 WHERE uid=?", (declined,))
+    con.commit()
+    n = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    con.close()
+
+    plan = carry.carry(root, "old", "bge", unembedded=True, log=quiet)
+    assert plan["apply"] is False and (root / "old" / "state" / "manifest.sqlite").is_file()
+    out = carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert out["done"] == {"index": "moved", "manifest": "moved"}, "no vector table crosses"
+    assert out["documents"] == n
+    assert (root / "bge" / "index" / "words").read_text() == "the text index"
+    assert json.loads((root / "bge" / "state" / carry.MARKER).read_text())["unembedded"] is True
+    coll = _local(root, "bge")
+    con = db.connect(coll)
+    try:
+        assert con.execute("SELECT space_id, dim FROM space").fetchone()[:] == (bge.space_id, 1024)
+        spaces._validate_codex(con, coll)            # the boot check passes: not refused
+        assert con.execute("SELECT embed_done FROM documents WHERE uid=?", (declined,)).fetchone()[0] == -1
+    finally:
+        con.close()
+    assert carry.records_twin_of(root / "bge" / "state") == old.collection_id
+    again = carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert again["done"] == {"index": "present", "manifest": "present"}
+
+
+def test_a_declared_jsonl_container_holds_the_records_of_an_undeclared_one(pair):
+    """09 §9.5: below version 9 an absent `slicing.container` reads as JSONL, so a
+    version-11 Codex declaring "jsonl" holds its version-8 source's parts
+    (wikidata into Nemotron's space, 2026-11-03); "parquet" is other parts."""
+    _root, old, _new = pair
+    base = old.slicing if isinstance(old.slicing, dict) else {}
+    assert seed.record_differences(old, replace(old, slicing={**base, "container": "jsonl"})) == []
+    assert seed.record_differences(old, replace(old, slicing={**base, "container": "parquet"})) == ["slicing"]
+    seed.refuse_unless_same_records(old, replace(old, slicing={**base, "container": "jsonl"}), "carry")
+
+
+def test_unembedded_refuses_a_source_that_holds_a_vector(pair):
+    root, old, _new = pair
+    _bge_space(root)
+    _vectors(root, old)
+    with pytest.raises(CodexError, match="holds vectors .*row"):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert (root / "old" / "state" / "manifest.sqlite").is_file()
+
+
+def test_unembedded_refuses_a_document_marked_embedded(pair):
+    root, _old, _new = pair
+    _bge_space(root)
+    con = sqlite3.connect(root / "old" / "state" / "manifest.sqlite")
+    con.execute("UPDATE documents SET embed_done=1 WHERE rowid=(SELECT MIN(rowid) FROM documents)")
+    con.commit()
+    con.close()
+    with pytest.raises(CodexError, match="marked embedded"):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+
+
+def test_unembedded_refuses_other_records_and_any_other_mode(pair):
+    root, _old, new = pair
+    col.create(root, replace(new, parser=Parser("gutenberg", 99)), name="other")
+    with pytest.raises(CodexError, match="parser"):
+        carry.carry(root, "old", "other", unembedded=True, apply=True, log=quiet)
+    _bge_space(root)
+    for mode in ({"rebuilt": True}, {"resliced": True}, {"recut": True}, {"keep": ARCHIVE}):
+        with pytest.raises(CodexError, match="carries no vector"):
+            carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet, **mode)
+    assert (root / "old" / "state" / "manifest.sqlite").is_file()
+
+
+def test_the_command_carries_unembedded(pair, capsys):
+    from app import louise
+    root, _old, _new = pair
+    bge = _bge_space(root)
+    assert louise.main(["dev", "carry", "old", "bge", "--root", str(root), "--unembedded", "--yes"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["carry"]["space_id"] == bge.space_id and printed["carry"]["unembedded"] is True
+
+
+def test_unembedded_refuses_what_cuts_the_chunks(pair, monkeypatch):
+    """The text index is keyed on chunk ids and the manifest counts chunks: the
+    layers (chunker, rule, input form) and the cleaning may not differ (A1h)."""
+    from app.hold.codex import INPUT_PAIR
+    root, _old, _new = pair
+    bge = _bge_space(root)
+    chunker = replace(bge.layers[0].chunker, version=bge.layers[0].chunker.version + 1)
+    col.create(root, replace(bge, layers=(replace(bge.layers[0], chunker=chunker),)), name="rechunked")
+    col.create(root, replace(bge, cleaning_version=bge.cleaning_version + 1), name="recleaned")
+    for name, what in (("rechunked", "layers"), ("recleaned", "cleaning_version")):
+        with pytest.raises(CodexError, match=what):
+            carry.carry(root, "old", name, unembedded=True, apply=True, log=quiet)
+    # the input form alone (no record decides it): a pair layer is refused on
+    # this chunker at create, so the twin is read as one in memory
+    real = col.resolve
+
+    def resolve(r, ref):
+        name, c = real(r, ref)
+        if ref != "bge":
+            return name, c
+        return name, replace(c, layers=(replace(c.layers[0], input=INPUT_PAIR),))
+    monkeypatch.setattr(col, "resolve", resolve)
+    with pytest.raises(CodexError, match="differ in layers"):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert (root / "old" / "state" / "manifest.sqlite").is_file()
+
+
+def test_unembedded_resumes_a_move_stopped_between_the_index_and_the_manifest(pair, monkeypatch):
+    """invariant 2: index/ first, the manifest last — its arrival is the commit;
+    a run that finds the index moved and no manifest finishes, never restarts."""
+    root, _old, _new = pair
+    _bge_space(root)
+    (root / "old" / "index").mkdir(parents=True, exist_ok=True)
+    (root / "old" / "index" / "words").write_text("the text index")
+    real = carry._transfer
+
+    def stopped_at_the_manifest(src, dst, *, copy):
+        if src.name == "manifest.sqlite":
+            raise Stopped
+        return real(src, dst, copy=copy)
+    monkeypatch.setattr(carry, "_transfer", stopped_at_the_manifest)
+    with pytest.raises(Stopped):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    monkeypatch.undo()
+    assert (root / "bge" / "index" / "words").is_file() and not (root / "bge" / "state" / "manifest.sqlite").exists()
+    out = carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert out["done"] == {"index": "present", "manifest": "moved"}
+    assert not (root / "old" / "state" / "manifest.sqlite").exists()

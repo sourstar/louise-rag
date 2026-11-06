@@ -10,7 +10,7 @@ N=root@192.168.178.10
 REMOTE=$(cat <<'RSH'
 IMG=$(docker inspect ix-louise-rag-web-1 --format '{{.Image}}')
 docker run --rm -i --name onelang-rep --network container:ix-louise-rag-web-1 \
-  --env-file <(docker inspect ix-louise-rag-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -v -E '^(ADMIN_TOKEN|DEPOSIT_TOKEN_FILE)=' | grep .) \
+  --env-file <(docker inspect ix-louise-rag-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -v -E '^(ADMIN_TOKEN|ADMIN_TOKEN_FILE|DEPOSIT_TOKEN_FILE)=' | grep .) \
   -v /mnt/ssd4/apps/louise-rag/data:/data:ro \
   -v /mnt/ssd4/apps/louise-rag/config:/config:ro \
   -v /mnt/tank/apps/louise-shard/gutenberg:/data/collections/gutenberg/shard:ro \
