@@ -23,18 +23,21 @@ THE CHECK, by effect, on Ask's real first request for a recorded question:
    Ask sends, `add_generation_prompt`, and the request's
    `chat_template_kwargs`; the BOS text dropped where the tokenizer adds one
    and the EOS where it appends one (llama.cpp's common/chat.cpp does both).
-2. CHAT: Ask's request itself (llm._request, Ask's tools), at greedy.
-3. RAW: the reference sent to /v1/completions (no template: LocalAI hands
-   a completion's prompt to the backend as it is), at greedy, twice. The
-   reference is the one the chat request's count matched: the tools as Ask
-   sends them, or with their keys sorted, as LocalAI's Go encoding writes
-   them to the backend.
+2. CHAT: Ask's request itself (llm._request, Ask's tools), at greedy; a
+   one-token one first leaves the engine's prompt in the slot's cache.
+3. RAW: a reference sent to /v1/completions (no template: LocalAI hands a
+   completion's prompt to the backend as it is), at greedy, twice. The
+   reference is the candidate the engine's cache says is its prompt TOKEN
+   FOR TOKEN: the tools as Ask sends them, as LocalAI's Go Tool struct
+   writes them (field order, "strict": false, parameters' keys sorted), or
+   with every key sorted; each with and without the BOS text.
 Wired when:
-- INPUT: the chat request's prompt tokens equal the reference counted by
-  the model's own tokenizer (LocalAI /v1/tokenize, special tokens parsed;
-  what it adds by itself off, the engine's BOS/EOS on). Not the raw
-  request's usage: LocalAI's /v1/completions reports 0 on this backend
-  (the node, 2026-11-06);
+- INPUT: a candidate has the engine's prompt count AND, sent after the
+  one-token chat request, evaluates only its last token (llama.cpp's
+  print_timing, in the log LocalAI keeps per model): its tokens are the
+  engine's. Counts alone proved nothing (2026-11-06: a reference with the
+  engine's count parted from its prompt at token 330). With no log line,
+  only the count is said, and identity is undecidable;
 - OUTPUT: the chat answer's text, reasoning and tool calls are inside a raw
   run's text (a greedy answer can part from itself on a near-tie on this
   engine, so the agreeing run is the measure, and a third run is asked when
@@ -233,13 +236,6 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     kwargs = dict(body.get("chat_template_kwargs") or {})
     reference, which = render(t, messages, tools, kwargs)
     reference += append
-    # THE TOOLS AS THE ENGINE GETS THEM (the node, 2026-11-06: every model's
-    # prompt differed in the tools part alone, R7B -3, Qwen3-8B -2,
-    # Qwen3.5-9B +1). LocalAI is Go: a tool's JSON object decoded into a map
-    # and encoded again comes out with its keys sorted (encoding/json writes
-    # map keys in sorted order). The same content rendered so is the second
-    # reference; which one the engine's count matches is said.
-    sorted_ref = (render(t, messages, go_order(tools), kwargs)[0] + append) if tools else None
     checks: list[Check] = []
     got: dict[str, Any] = {}
     ids: dict[str, list[int]] = {}
@@ -265,63 +261,6 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
             return len(tokens)
         return None
 
-    # the engine's prompt count, from a one-token chat request; it also
-    # leaves the prompt in the slot's cache for every run below
-    if asked("chat_count", url, {**body, "max_tokens": 1}) is None:
-        return _result(model, question, which, t, reference, append, got, checks, greedy)
-    p_chat = (got["chat_count"]["answer"].get("usage") or {}).get("prompt_tokens")
-
-    # INPUT. LocalAI's /v1/completions reports usage 0 on this backend (the
-    # node, 2026-11-06, every model), so the reference is counted by the
-    # model's tokenizer: what it adds on its own (an empty text's tokens) is
-    # taken off and the BOS/EOS the engine adds put on, and a marker of the
-    # template must read as ONE token (special tokens parsed), else the
-    # count says nothing
-    n_ref, n_empty = count("tokenize_reference", reference), count("tokenize_empty", "")
-    empty_refused = n_empty is None and n_ref is not None
-    n_empty = 0 if empty_refused else n_empty
-    marker = re.search(r"<\|[^|>\s]+\|>|<[a-z_]+>", reference)
-    n_marker = count("tokenize_marker", marker.group(0)) if marker else None
-    if n_ref is None or n_empty is None:
-        checks.append(Check("INPUT: the prompt is the template's", False,
-                            "undecidable: /v1/tokenize gave no tokens"))
-    elif marker and n_marker is not None and n_marker - n_empty != 1:
-        checks.append(Check("INPUT: the prompt is the template's", False,
-                            f"undecidable: /v1/tokenize reads {marker.group(0)} as {n_marker - n_empty} tokens"))
-    else:
-        added = int(t.add_bos) + int(t.add_eos) - n_empty
-        expected = n_ref + added
-        n_sorted = count("tokenize_reference_keys_sorted", sorted_ref) if sorted_ref is not None else None
-        as_sorted = n_sorted is not None and n_sorted + added == p_chat and expected != p_chat
-        if as_sorted:
-            reference = sorted_ref
-        checks.append(Check("INPUT: the prompt is the template's", expected == p_chat or as_sorted,
-                            f"{p_chat} prompt tokens through chat; the template's text ({which}"
-                            f"{', + appended' if append else ''}) is {expected}"
-                            + (f"; with the tools' keys sorted, as LocalAI's Go encoding writes them, "
-                               f"{n_sorted + added}" if n_sorted is not None else "")
-                            + ("" if expected == p_chat or as_sorted else f", {(p_chat or 0) - expected:+d} through chat")
-                            + (" (an empty text refused by /v1/tokenize: nothing assumed added)"
-                               if empty_refused else "")))
-        if expected != p_chat and not as_sorted:
-            # WHERE the prompts part: the same comparison on cut-down
-            # conversations, each asked for one token
-            parts = localize(count, n_empty, t, messages, tools, kwargs, post, got)
-            checks[-1].detail += "; by part: " + ", ".join(
-                f"{v['part']} {v['delta']:+d}" if isinstance(v.get("delta"), int) else f"{v['part']} ?"
-                for v in parts)
-            got["localized"] = parts
-
-    # the raw runs on the reference the engine's count matched, so the two
-    # paths read the same prompt; raw, chat, raw, each FROM THE SAME CACHED
-    # PROMPT (the node, 2026-11-06: with the chat request first, its prefill
-    # reused another question's cached prefix and the raw runs reused its
-    # whole prompt; the Qwens' chat answers then parted from both raw runs,
-    # which repeated each other, after 45-189 characters: llama.cpp's own
-    # warning that a cached prompt's logits need not be bit-identical to a
-    # fresh one's, as batch splits differ)
-    raw_body = {"model": model, "prompt": reference, "max_tokens": max_tokens, **greedy}
-
     def evaluated(label: str, u: str, b: dict[str, Any]) -> Any | None:
         """`asked`, and the prompt tokens the engine evaluated for it, read
         from the lines its log gained meanwhile (llama.cpp's print_timing)."""
@@ -332,38 +271,121 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
         if answer is not None:
             got[label]["prompt_evaluated"] = int(_PROMPT_EVAL.search(new[-1]).group(1)) if new else None
         return answer
+
+    # the engine's prompt count, from a one-token chat request; it also
+    # leaves the engine's prompt in the slot's cache
+    if evaluated("chat_count", url, {**body, "max_tokens": 1}) is None:
+        return _result(model, question, which, t, reference, append, got, checks, greedy)
+    p_chat = (got["chat_count"]["answer"].get("usage") or {}).get("prompt_tokens")
+
+    # INPUT, TOKEN FOR TOKEN (the node, 2026-11-06). LocalAI's /v1/completions
+    # reports usage 0 on this backend, so the counts come from the model's own
+    # tokenizer; and equal counts proved nothing: the Qwen3-8B's "keys sorted"
+    # reference had the engine's count and parted from its prompt at token 330,
+    # the first key of the first tool. What decides is the cache: after the
+    # one-token chat request the slot holds the engine's prompt, and a raw
+    # prompt token for token the same evaluates only its last token
+    # (llama.cpp's print_timing, in the log LocalAI keeps per model).
+    # THE CANDIDATES, each a way the engine may have been given the tools:
+    # - as Ask sends them;
+    # - as LocalAI's Go Tool struct re-encodes them (the engine's own log,
+    #   2026-11-03: {"type":"function","function":{"name":…,"description":…,
+    #   "strict":false,"parameters":{…}}}: the struct's field order, an added
+    #   "strict": false, the parameters a Go map, so its keys sorted);
+    # - every key sorted;
+    # each with and without the BOS text (Qwen3.5-9B parted at token 0).
+    n_empty = count("tokenize_empty", "")
+    empty_refused = n_empty is None
+    n_empty = 0 if empty_refused else n_empty
+    added = int(t.add_bos) + int(t.add_eos) - n_empty
+    forms: list[tuple[str, Any]] = [("as Ask sends them", tools)]
+    if tools:
+        forms += [("as LocalAI's Tool struct writes them", localai_tools(tools)),
+                  ("with every key sorted", go_order(tools))]
+    candidates: list[tuple[str, str]] = []
+    bos_kept: list[bool] = []
+    for name, form in forms:
+        text = render(t, messages, form, kwargs)[0] + append
+        candidates.append((f"tools {name}" if tools else "no tools", text))
+        bos_kept.append(False)
+        if t.bos and not text.startswith(t.bos):
+            # the raw path adding no BOS of its own while the chat path has one
+            candidates.append((f"tools {name}, the BOS text kept" if tools else "the BOS text kept", t.bos + text))
+            bos_kept.append(True)
+    counts = [count(f"tokenize_candidate_{i}", text) for i, (_, text) in enumerate(candidates)]
+    tried: list[dict[str, Any]] = [
+        {"candidate": name, "count": None if n is None else n + (added - int(t.add_bos) if kept else added)}
+        for (name, _), n, kept in zip(candidates, counts, bos_kept, strict=True)]
+    matched: tuple[str, str] | None = None
+    unlogged = False
+    for i, (name, text) in enumerate(candidates):
+        if i and evaluated(f"prime_{i}", url, {**body, "max_tokens": 1}) is None:
+            break
+        if evaluated(f"candidate_{i}", f"{chat_url}/v1/completions",
+                     {"model": model, "prompt": text, "max_tokens": 1, **greedy}) is None:
+            break
+        tried[i]["evaluated"] = got[f"candidate_{i}"].get("prompt_evaluated")
+        if tried[i]["evaluated"] is None:
+            unlogged = True                         # no log: token identity cannot be told
+            break
+        if tried[i]["count"] == p_chat and tried[i]["evaluated"] <= 1:
+            matched = (name, text)
+            break
+    got["candidates"] = tried
+    same_count = next((c for (c, _), r in zip(candidates, tried, strict=True) if r["count"] == p_chat), None)
+    if matched:
+        reference = matched[1]
+        checks.append(Check("INPUT: the prompt is the template's", True,
+                            f"token for token the engine's ({p_chat} tokens): {matched[0]}"))
+    elif unlogged:
+        if same_count:
+            reference = dict(candidates)[same_count]
+        checks.append(Check("INPUT: the prompt is the template's", bool(same_count),
+                            f"{p_chat} prompt tokens through chat; "
+                            + (f"the same count: {same_count}" if same_count else "no candidate has that count")
+                            + "; token identity undecidable: no prompt eval line in the backend's log"))
+        if not same_count:
+            parts = localize(count, n_empty, t, messages, tools, kwargs, post, got)
+            checks[-1].detail += "; counts by part: " + ", ".join(
+                f"{v['part']} {v['delta']:+d}" if isinstance(v.get("delta"), int) else f"{v['part']} ?"
+                for v in parts)
+            got["localized"] = parts
+    else:
+        probed = [r for r in tried if r.get("evaluated") is not None]
+        best = max(probed, key=lambda r: (p_chat or 0) - r["evaluated"], default=None)
+        where = ""
+        if best is not None:
+            i = [r["candidate"] for r in tried].index(best["candidate"])
+            part = (p_chat or 0) - (best.get("evaluated") or 0)
+            best_ids = ids.get(f"tokenize_candidate_{i}") or []
+            if best_ids and 0 <= part < len(best_ids):
+                s1, before = post(f"{chat_url}/v1/detokenize",
+                                  {"model": model, "tokens": best_ids[max(0, part - 12):part]})
+                s2, after = post(f"{chat_url}/v1/detokenize", {"model": model, "tokens": best_ids[part:part + 12]})
+                if s1 == 200 and s2 == 200:
+                    where = (f"; the closest, {best['candidate']}, parts at token {part}: "
+                             f"…{(before or {}).get('content', '')!r} ‖ {(after or {}).get('content', '')!r}…")
+            reference = candidates[i][1]
+        checks.append(Check("INPUT: the prompt is the template's", False,
+                            f"{p_chat} prompt tokens through chat; none token for token: " + "; ".join(
+                                f"{r['candidate']}: {r['count']} tokens, {r.get('evaluated')} evaluated"
+                                for r in probed) + where))
+        parts = localize(count, n_empty, t, messages, tools, kwargs, post, got)
+        checks[-1].detail += "; counts by part: " + ", ".join(
+            f"{v['part']} {v['delta']:+d}" if isinstance(v.get("delta"), int) else f"{v['part']} ?"
+            for v in parts)
+        got["localized"] = parts
+    if empty_refused:
+        checks[-1].detail += " (an empty text refused by /v1/tokenize: nothing assumed added)"
+
+    # raw, chat, raw on that reference, each FROM THE SAME CACHED PROMPT
+    # (the node, 2026-11-06: with the chat request first, its prefill reused
+    # another question's prefix and the answers parted on near-ties)
+    raw_body = {"model": model, "prompt": reference, "max_tokens": max_tokens, **greedy}
     if evaluated("raw", f"{chat_url}/v1/completions", raw_body) is None \
             or evaluated("chat", url, body) is None \
             or evaluated("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
         return _result(model, question, which, t, reference, append, got, checks, greedy)
-
-    # THE SAME TOKENS, not only as many (the node, 2026-11-06: with equal counts
-    # and top_k 1 on both paths, the Qwens' chat answers still parted from the
-    # raw runs at the same characters). After the one-token chat request the
-    # slot holds the engine's prompt; a raw run whose prompt is token for token
-    # the same evaluates only its last token, and one that parts at token P
-    # evaluates from P on. Where it parts is shown in the reference's text.
-    n_eval = got["raw"].get("prompt_evaluated")
-    if n_eval is None:
-        checks.append(Check("INPUT: the same tokens, not only as many", False,
-                            "undecidable: no prompt eval line in the backend's log", decides=False))
-    elif n_eval <= 1:
-        checks.append(Check("INPUT: the same tokens, not only as many", True,
-                            "the raw run reused the engine's whole prompt from the cache"))
-    else:
-        part = (p_chat or 0) - n_eval
-        ref_ids = ids.get("tokenize_reference_keys_sorted" if reference == sorted_ref else "tokenize_reference") or []
-        where = ""
-        if ref_ids and 0 <= part < len(ref_ids):
-            status, said = post(f"{chat_url}/v1/detokenize",
-                                {"model": model, "tokens": ref_ids[max(0, part - 12):part]})
-            status2, said2 = post(f"{chat_url}/v1/detokenize", {"model": model, "tokens": ref_ids[part:part + 12]})
-            if status == 200 and status2 == 200:
-                where = (f": …{(said or {}).get('content', '')!r} ‖ {(said2 or {}).get('content', '')!r}… "
-                         f"(the reference's text before ‖ after)")
-        checks.append(Check("INPUT: the same tokens, not only as many", False,
-                            f"the raw run evaluated {n_eval} of {p_chat} prompt tokens: the prompts part at "
-                            f"token {part}" + where))
     msg = got["chat"]["answer"]["choices"][0].get("message") or {}
     content = msg.get("content") or ""
     thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
@@ -409,6 +431,22 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     checks.append(Check("OUTPUT: no marker left in the answer", not left,
                         "none" if not left else ", ".join(left)))
     return _result(model, question, which, t, reference, append, got, checks, greedy)
+
+
+def localai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tools as LocalAI's Go structs encode them for the backend (its
+    pkg/functions Tool and Function; the engine's own log, 2026-11-03):
+    type, then function with name, description, strict (false unless set)
+    and parameters, in that order; parameters a Go map, so with every key
+    sorted."""
+    out = []
+    for tool in tools:
+        f = tool.get("function") or {}
+        out.append({"type": tool.get("type", "function"),
+                    "function": {"name": f.get("name", ""), "description": f.get("description", ""),
+                                 "strict": bool(f.get("strict", False)),
+                                 "parameters": go_order(f.get("parameters"))}})
+    return out
 
 
 def go_order(x: Any) -> Any:
