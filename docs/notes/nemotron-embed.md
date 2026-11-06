@@ -1035,6 +1035,35 @@ costs less. The KV cache: F16 for the sweep, one Q8_0 arm on each
 winner, unless the operator chooses Q8_0 from the start (put to the
 operator, 2026-11-06).
 
+**The operator, 2026-11-06:** "Go for the first [KV cache F16 for the
+sweep, a Q8_0 arm on each winner], we are testing. Before lowering the
+quantization level experiment different settings at Q8; when you find the
+optimal one you lower the quantization to observe the performance
+decrease. Be absolutely sure that localai is applying your settings
+otherwise the test is void. In case it does not, check online for open
+bugs before planning anything, then report to me."
+
+**One more pitfall, from the code of the family defaults**
+(core/config/inference_defaults.go). They fill a penalty that is 0, and
+they match by name: `louise-chat-qwen3.5-9b-q8` contains "qwen3.5". So
+the 9B file's presence 0 runs at 1.5. Now that `repeat_last_n` is 64,
+that penalty is no longer disabled.
+
+**THE PROBE** (tools/measure/sampling_probe.py, `chat_eval probe`) checks
+every value by its effect, on the node, through the body Ask sends. A run
+of a model whose probe has not passed is refused.
+
+**Searched online for open bugs, 2026-11-06:**
+- None is open on a penalty of 0 read as unset, `repeat_last_n` 0, or a
+  family default filling a 0.
+- Closed:
+  - LocalAI #11230, "Gallery install writes sampling parameters where the
+    config loader cannot read them" (2026-09-03);
+  - #1051, request penalties discarded (2023).
+- Merged: #12732, "bump inference defaults from unsloth" (2026-10-16).
+- llama.cpp #25388: `--repeat-last-n -1` silently disables the penalty,
+  so -1 is never used here.
+
 **The order:**
 0. **On the node: what reaches the engine.**
    - Install the Q8 and record its VRAM beside the search models (the 35B

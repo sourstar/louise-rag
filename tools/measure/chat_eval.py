@@ -110,6 +110,10 @@ what can be sent (measured from its code, 2026-11-06):
   the file names none. The bench's files state 64, llama.cpp's default;
 - an unset temperature, top_p or top_k gets LocalAI's generic 0.9, 0.95 and
   40, not the card's: the files state every value.
+A PROBE BEFORE ANY ARM (operator, 2026-11-06: "Be absolutely sure that
+localai is applying your settings otherwise the test is void"): `probe
+--model M` checks every value by its effect on the node
+(sampling_probe.py); `run` refuses a model whose probe has not passed.
 LOOPS are counted (`looped`): a span of words repeated back to back three
 times, the degenerate repetition near-greedy sampling can fall into (the
 35B pilot, 2026-11-03: "Rouge-Profond ? Non, …" to the token bound).
@@ -127,6 +131,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from tools.measure import sampling_probe
 
 DEFAULT_QUERIES = Path(__file__).with_name("one_language_queries.tsv")
 #: a citation by uid or canonical id in brackets ([pubmed:37000021]); Ask's own
@@ -935,6 +941,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sampling", default="", help="the arm: values every request sends over the "
                    "model file, e.g. temperature=0.1,presence_penalty=1.5 (a penalty of 0 is refused: "
                    "LocalAI reads it as unset)")
+    p = sub.add_parser("probe", help="does LocalAI apply the sampling sent? (sampling_probe.py)")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--installed", type=Path, default=None, help="the model's file as LocalAI "
+                   "installed it, kept with the result as evidence")
     p = sub.add_parser("pilot-ok")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--name", required=True)
@@ -953,6 +964,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "run":
         if a.sampling and a.direct:
             raise SystemExit("--sampling with --direct: no model answers a direct run")
+        if not a.direct:
+            # operator, 2026-11-06: "Be absolutely sure that localai is applying
+            # your settings otherwise the test is void"
+            sampling_probe.require(a.out, a.model)
         cols = [c for c in a.collections.split(",") if c] or None
         langs = frozenset(l for l in a.langs.split(",") if l) or None
         queries = read_queries(a.queries, a.per_lang, langs)
@@ -970,6 +985,11 @@ def main(argv: list[str] | None = None) -> int:
         if a.pilot:
             print(f"pilot: {pilot_report(a.out, a.name, a.tag, [q['key'] for q in queries])}")
         return code
+    if a.cmd == "probe":
+        result = sampling_probe.probe(a.model)
+        where = sampling_probe.write(a.out, result, a.installed, sampling_probe.localai_version())
+        print(sampling_probe.table(result) + f"\n\n{where}")
+        return 0 if result["passed"] else 1
     if a.cmd == "pilot-ok":
         return pilot_ok(a.out, a.name, a.tag, a.by, a.note)
     if a.cmd == "score":
