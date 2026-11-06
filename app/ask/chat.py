@@ -588,6 +588,18 @@ def ask(question: str, *, collections: list[str] | None = None, history: list[di
             except KeyError:
                 error = f"no tool named {c.name!r}"
                 result, shown = None, json.dumps({"error": error}, ensure_ascii=False)
+            except Exception as e:
+                # A REQUEST THE SERVICE REFUSES AS ITS OWN FAULT (2026-11-06,
+                # Command R7B's pilot: record uids passed as louise_search's
+                # `collections`, the query service's HTTPException 400 "unknown
+                # collection(s)" ended the whole answer). A 4xx is the call's
+                # fault, handed back to the model like any refusal; anything
+                # else is a fault to see, raised
+                status = getattr(e, "status_code", None)
+                if not (isinstance(status, int) and 400 <= status < 500):
+                    raise
+                error = f"{status}: {getattr(e, 'detail', None) or e}"
+                result, shown = None, json.dumps({"error": error}, ensure_ascii=False, default=str)
             turn = {"tool": c.name, "arguments": args, "by": "model", "result": result, "error": error,
                     "seconds": round(time.monotonic() - t0, 3)}
             if dropped:

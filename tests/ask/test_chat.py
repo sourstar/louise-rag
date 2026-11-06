@@ -491,3 +491,30 @@ def test_without_tool_turns_leaves_the_conversation_as_it_was():
     assert flat == [{"role": "system", "content": "S"},
                     {"role": "user", "content": "Sources:\n\nA\n\n---\n\nB\n\nQuestion: q"}]
     assert len(msgs) == 4 and msgs[1]["content"] == "Sources:\n\nA\n\nQuestion: q"
+
+
+def test_a_call_the_service_refuses_as_its_own_fault_is_handed_back(chat_model):
+    """2026-11-06, Command R7B's pilot: record uids passed as louise_search's
+    `collections`; the query service's 400 "unknown collection(s)" ended the
+    whole answer. A 4xx is the call's fault: handed back to the model, which
+    answers; a 5xx is a fault, raised."""
+    from fastapi import HTTPException
+    wrong = llm.ToolCall("c1", "louise_search", {"query": "Hélène", "collections": ["gutenberg:24325"]})
+    model = scripted(("", [wrong]), ("From the sources: [1].", []))
+
+    def call(name, args):
+        if args.get("collections") == ["gutenberg:24325"]:
+            raise HTTPException(400, "unknown collection(s): ['gutenberg:24325']")
+        return SEARCH_RESULT
+    out = chat.ask("q", call=call, model=model)
+    assert out["answer"] == "From the sources: [1]."
+    assert out["turns"][1]["error"] == "400: unknown collection(s): ['gutenberg:24325']"
+    told, _ = model.seen[1]
+    assert json.loads(told[-1]["content"]) == {"error": "400: unknown collection(s): ['gutenberg:24325']"}
+
+    def down(name, args):
+        if args.get("collections") == ["gutenberg:24325"]:
+            raise HTTPException(503, "the index is reloading")
+        return SEARCH_RESULT
+    with pytest.raises(HTTPException):
+        chat.ask("q", call=down, model=scripted(("", [wrong]), ("x", [])))
