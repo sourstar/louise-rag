@@ -1,9 +1,7 @@
-# Qwen3-8B at unsloth's Dynamic 4-bit, UD-Q4_K_XL (unsloth/Qwen3-8B-GGUF, 5.14 GB): the 4-bit
-# quantization unsloth recommends (its Qwen3.5 guide, read by the operator 2026-11-06: "All uploads
-# use Unsloth Dynamic 2.0 ... 4-bit has important layers upcasted to 8 or 16-bit"). Beside Qwen's
-# own Q4_K_M (louise-chat-qwen3-8b-q4) in the winner's Q4 step: independent tests found the uploaders
-# within a few percent at one quant type, bartowski's Q4_K_M closer than unsloth's for Qwen3.5 4B/9B
-# (quantdiff.com), and unsloth's UD quants ahead at low bits; so it is measured, not assumed.
+# Qwen3-8B at unsloth's Dynamic 4-bit, UD-Q4_K_XL (unsloth/Qwen3-8B-GGUF, 5.14 GB): THE 4-bit of
+# the winner's Q4 step (operator, 2026-11-06: "Use the unsloth recommend model for 4 bits"; its
+# Qwen3.5 guide: "All uploads use Unsloth Dynamic 2.0 ... 4-bit has important layers upcasted to 8
+# or 16-bit"). Qwen's own Q4_K_M, staged beside it the same day, was withdrawn by that choice.
 # The file pinned to the Hub's commit and its sha256 at the install. Sampling: the Q8 file's.
 # f16, function.grammar.disable and stopwords: written by the gallery's qwen3-8b base at install (2026-11-06);
 # kept here so this file equals the node's, key for key.
