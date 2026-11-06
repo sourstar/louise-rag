@@ -70,7 +70,8 @@ louise hold
                                                                        absent, refused when another); 3 create, or hold the collection already made to the
                                                                        recipe; 4 the CPU reference written from the store; 5 the gate. Exit 0 only on a
                                                                        pass; embedding stays off. The measurement is kept in <collection>/state/calibration.json.
-                                                                       A symmetric space (asymmetric and pair spaces: the steps below by hand)
+                                                                       A symmetric space for now: every case, its steps and its plan in
+                                                                       docs/notes/new-collection.md (asymmetric and pair spaces: the steps below by hand until built)
               create <plugin> --recipe FILE --encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]
               [--space-from CODEX] [--calibration-set FILE]
                                                                        the model flags: required where a URL names no model (§7.8, amended 2026-10-09)
