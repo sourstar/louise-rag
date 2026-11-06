@@ -24,6 +24,14 @@
 # one back to 0 (LocalAI reads 0 as unset): the chat benchmark's arms send the penalty
 # they test; `repeat_last_n` 64 (llama.cpp's default) because LocalAI sends 0 when the
 # file names none, and 0 DISABLES every penalty in llama.cpp.
+# THE WEIGHTS ARE A DERIVED FILE (operator, 2026-11-06, "B": R7B at the Qwens' 16K). Every Command
+#   R7B GGUF declares cohere2.context_length 8192 (llama.cpp's conversion never read the 128K Cohere
+#   documents, llama.cpp #10816), and our engine caps a slot's context at the declared value: the
+#   probe got "exceeds the available context size (8192 tokens)" for a 16384 file. The derived file
+#   is bartowski's Q8_0 with that ONE value set to 131072 (Cohere's), by llama.cpp's own
+#   gguf_set_metadata.py: ../derive_gguf_context.sh, which refuses unless 1-4 bytes differ and writes
+#   the source's and the result's sha256 beside it (<file>.derivation.json). The gallery body still
+#   installs the uploader's file; the derivation is made from it on the node.
 {
   "name": "louise-chat-command-r7b-q8",
   "backend": "vega-louise-llama-cpp",
@@ -54,7 +62,7 @@
     "ubatch:512"
   ],
   "parameters": {
-    "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf",
+    "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.ctx131072.gguf",
     "batch": 2048,
     "seed": 0,
     "temperature": 0.3,
