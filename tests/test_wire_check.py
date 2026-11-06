@@ -355,3 +355,23 @@ def test_a_slot_emptied_between_prime_and_probe_is_primed_and_asked_again():
     got = run(engine(forget_once=True))
     assert got["passed"], _failed(got)
     assert "candidate_0_again" in got["answers"] and "prime_0_again" in got["answers"]
+
+
+def test_a_request_the_server_answers_with_two_evaluations_is_said():
+    """wire18, 2026-11-06: one question of qwen3-8b-q8 reused no prefix even
+    after a fresh prime. A server that asks the engine twice for one request
+    shows as two evaluation lines in the log during it."""
+    inner = engine()
+    lines = []
+
+    def post(url, body):
+        status, got = inner(url, body)
+        if url.endswith("/v1/chat/completions") and body.get("max_tokens") != 1:
+            lines.append({"timestamp": "x1", "text": "prompt eval time = 1.0 ms / 3600 tokens"})
+            lines.append({"timestamp": "x2", "text": "prompt eval time = 1.0 ms / 2900 tokens"})
+        return status, got
+    post.get = lambda url: (200, inner.get(url)[1] + list(lines))
+    got = run(post)
+    said = next(c for c in got["checks"] if c["name"] == "one engine evaluation per request")
+    assert not said["ok"] and not said["decides"] and "chat: [" in said["detail"]
+    assert next(c for c in run(engine())["checks"] if c["name"] == "one engine evaluation per request")["ok"]
