@@ -27,24 +27,33 @@ def tokens(text: str) -> int:
     return len(re.findall(r"<\|\w+\|>|\S+", text))
 
 
-def engine(*, adds: str = "", parse: str = "right"):
+def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None):
     """LocalAI over llama.cpp as the check sees it: the chat route renders
-    the template (plus whatever `adds`), the completion route takes the
-    prompt as given; the model calls the tool when tools are in its prompt;
-    `parse` is what the chat route makes of the raw text."""
+    the template (plus whatever `adds`) and counts the BOS the tokenizer
+    adds; the completion route takes the prompt as given and reports usage
+    0, as LocalAI's does; /v1/tokenize counts a text with special tokens
+    parsed and adds nothing; the model calls the tool when tools are in its
+    prompt; `parse` is what the chat route makes of the raw text; `raws`
+    the texts successive raw runs give, `chat_says` the chat's own text."""
+    runs = iter(raws or [])
+
     def generate(prompt: str) -> str:
         return CALL if "<|tools|>" in prompt else ANSWER
 
     def post(url, body):
+        if url.endswith("/v1/tokenize"):
+            return 200, {"tokens": list(range(tokens(body["content"])))}
         if url.endswith("/v1/completions"):
-            raw = generate(body["prompt"])
+            raw = next(runs, None) or generate(body["prompt"])
             return 200, {"choices": [{"text": raw}],
-                         "usage": {"prompt_tokens": tokens(body["prompt"]), "completion_tokens": tokens(raw)}}
+                         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
         prompt = wc.render(T, body["messages"], body.get("tools"), body.get("chat_template_kwargs") or {})[0]
         prompt += adds
         raw = generate(prompt)
         msg: dict = {"role": "assistant", "content": ""}
-        if raw == CALL and parse == "right":
+        if chat_says is not None:
+            msg["content"] = chat_says
+        elif raw == CALL and parse == "right":
             msg["tool_calls"] = [{"type": "function", "function": {
                 "name": "louise_search", "arguments": json.dumps({"query": "Dumas collier"})}}]
         elif parse == "markers":
@@ -52,7 +61,7 @@ def engine(*, adds: str = "", parse: str = "right"):
         elif raw == ANSWER:
             msg["content"] = "It is The Queen's Necklace [1]."
         return 200, {"choices": [{"message": msg}],
-                     "usage": {"prompt_tokens": tokens(prompt), "completion_tokens": tokens(raw)}}
+                     "usage": {"prompt_tokens": tokens(prompt) + 1, "completion_tokens": tokens(raw)}}
     return post
 
 
@@ -152,3 +161,35 @@ def test_a_run_on_a_model_not_shown_wired_is_refused(tmp_path):
         ev.main(args)
     wc.write(tmp_path, [run(engine())])
     wc.require(tmp_path, "m")
+
+
+def test_a_greedy_answer_that_parts_from_itself_is_held_to_the_run_it_agrees_with():
+    """2026-11-06, qwen3-8b-q8 on the node: two greedy raw runs parted after
+    596 characters, the chat answer equal to the first. Reported, not
+    decided on; the chat answer is held to the run it agrees with."""
+    other = CALL.replace("Dumas collier", "Dumas collana")
+    got = run(engine(raws=[CALL, other]))
+    assert got["passed"], _failed(got)
+    greedy = next(c for c in got["checks"] if c["name"] == "greedy repeats itself (raw)")
+    assert not greedy["ok"] and not greedy["decides"] and "2 different texts in 2 runs" in greedy["detail"]
+    lost = run(engine(raws=[other, other.replace("collana", "collar"), other], chat_says="Something else."))
+    assert "in no raw run" in _failed(lost)["OUTPUT: the answer is the model's own text"]
+    assert "raw_third" in lost["answers"], "a third run asked when neither agrees"
+
+
+def test_a_tokenizer_that_does_not_read_markers_decides_nothing():
+    def post(url, body):
+        if url.endswith("/v1/tokenize"):
+            return 200, {"tokens": list(range(len(body["content"]) // 2 + 3))}
+        return engine()(url, body)
+    got = run(post)
+    assert "undecidable" in _failed(got)["INPUT: the prompt is the template's"]
+
+
+def test_a_tokenizer_that_refuses_an_empty_text_still_counts():
+    def post(url, body):
+        if url.endswith("/v1/tokenize") and not body["content"]:
+            return 400, "empty"
+        return engine()(url, body)
+    got = run(post)
+    assert got["passed"], _failed(got)
