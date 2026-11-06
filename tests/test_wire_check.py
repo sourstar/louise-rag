@@ -24,7 +24,9 @@ ANSWER = "<|resp|>It is The Queen's Necklace [1].<|end|>"
 
 
 def tokens(text: str) -> int:
-    return len(re.findall(r"<\|\w+\|>|\S+", text))
+    """A tokenizer that, as a real one, counts the same content differently
+    in another key order (a merge across `{"type"`)."""
+    return len(re.findall(r"<\|\w+\|>|\S+", text)) + text.count('{"type"')
 
 
 def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None):
@@ -118,7 +120,7 @@ def test_markers_left_in_the_answer_are_caught():
 
 def test_a_refused_request_fails_with_the_server_s_answer():
     got = run(lambda url, body: (500, "Unexpected error in RPC handling"))
-    assert not got["passed"] and "raw: 500: Unexpected error" in _failed(got)["every request answered"]
+    assert not got["passed"] and "chat: 500: Unexpected error" in _failed(got)["every request answered"]
 
 
 def test_the_templates_are_read_from_the_gguf_as_llama_cpp_carries_them(tmp_path):
@@ -208,4 +210,25 @@ def test_a_prompt_difference_is_located_by_part():
     got = run(post)
     detail = _failed(got)["INPUT: the prompt is the template's"]
     assert "-2 through chat" in detail
-    assert "by part: a user turn +0, + system +0, + tools -2, Ask's turns, no tools +0" in detail
+    assert ("by part: a user turn +0, + system +0, + tools -2, + tools, keys sorted -1, "
+            "Ask's turns, no tools +0") in detail
+
+
+def test_tools_whose_keys_the_engine_sorts_are_its_template_s_prompt():
+    """LocalAI is Go: the request's tools decoded into maps and encoded again
+    come out with sorted keys. The same content, so the prompt is the
+    template's; the check says so, and the raw runs read that prompt."""
+    def post(url, body):
+        if url.endswith("/v1/chat/completions") and body.get("tools"):
+            body = {**body, "tools": wc.go_order(body["tools"])}
+        return engine()(url, body)
+    tools_sorted = wc.go_order(TOOLS)
+    assert json.dumps(tools_sorted) != json.dumps(TOOLS), "the test's tools change when sorted"
+    got = run(post)
+    assert got["passed"], _failed(got)
+    detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    assert "keys sorted, as LocalAI's Go encoding writes them" in detail
+    assert '"function": {"description"' in got["reference"]["head"] + got["reference"]["tail"], \
+        "the raw runs read the sorted rendering"
+    plain = run(engine())
+    assert plain["passed"] and '{"type": "function"' in plain["reference"]["head"] + plain["reference"]["tail"]

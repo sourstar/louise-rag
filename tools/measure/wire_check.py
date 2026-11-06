@@ -23,10 +23,12 @@ THE CHECK, by effect, on Ask's real first request for a recorded question:
    Ask sends, `add_generation_prompt`, and the request's
    `chat_template_kwargs`; the BOS text dropped where the tokenizer adds one
    and the EOS where it appends one (llama.cpp's common/chat.cpp does both).
-2. RAW: that text sent to /v1/completions — no template, LocalAI hands a
-   completion's prompt to the backend as it is — at greedy, twice (before
-   and after the chat request: greedy must repeat itself).
-3. CHAT: Ask's request itself (llm._request, Ask's tools), at greedy.
+2. CHAT: Ask's request itself (llm._request, Ask's tools), at greedy.
+3. RAW: the reference sent to /v1/completions (no template: LocalAI hands
+   a completion's prompt to the backend as it is), at greedy, twice. The
+   reference is the one the chat request's count matched: the tools as Ask
+   sends them, or with their keys sorted, as LocalAI's Go encoding writes
+   them to the backend.
 Wired when:
 - INPUT: the chat request's prompt tokens equal the reference counted by
   the model's own tokenizer (LocalAI /v1/tokenize, special tokens parsed;
@@ -198,9 +200,16 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
                              num_ctx=16384, sampling={"temperature": 0})
     if tools:
         body["tools"] = tools
-    reference, which = render(t, messages, tools, dict(body.get("chat_template_kwargs") or {}))
+    kwargs = dict(body.get("chat_template_kwargs") or {})
+    reference, which = render(t, messages, tools, kwargs)
     reference += append
-    raw_body = {"model": model, "prompt": reference, "temperature": 0, "max_tokens": max_tokens}
+    # THE TOOLS AS THE ENGINE GETS THEM (the node, 2026-11-06: every model's
+    # prompt differed in the tools part alone, R7B -3, Qwen3-8B -2,
+    # Qwen3.5-9B +1). LocalAI is Go: a tool's JSON object decoded into a map
+    # and encoded again comes out with its keys sorted (encoding/json writes
+    # map keys in sorted order). The same content rendered so is the second
+    # reference; which one the engine's count matches is said.
+    sorted_ref = (render(t, messages, go_order(tools), kwargs)[0] + append) if tools else None
     checks: list[Check] = []
     got: dict[str, Any] = {}
 
@@ -223,14 +232,8 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
             return len(tokens)
         return None
 
-    if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
-            or asked("chat", url, body) is None \
-            or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
+    if asked("chat", url, body) is None:
         return _result(model, question, which, t, reference, append, got, checks)
-    msg = got["chat"]["answer"]["choices"][0].get("message") or {}
-    content = msg.get("content") or ""
-    thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
-    calls = [c.get("function") or {} for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
     p_chat = (got["chat"]["answer"].get("usage") or {}).get("prompt_tokens")
 
     # INPUT. LocalAI's /v1/completions reports usage 0 on this backend (the
@@ -251,24 +254,39 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
         checks.append(Check("INPUT: the prompt is the template's", False,
                             f"undecidable: /v1/tokenize reads {marker.group(0)} as {n_marker - n_empty} tokens"))
     else:
-        expected = n_ref - n_empty + int(t.add_bos) + int(t.add_eos)
-        checks.append(Check("INPUT: the prompt is the template's", expected == p_chat,
+        added = int(t.add_bos) + int(t.add_eos) - n_empty
+        expected = n_ref + added
+        n_sorted = count("tokenize_reference_keys_sorted", sorted_ref) if sorted_ref is not None else None
+        as_sorted = n_sorted is not None and n_sorted + added == p_chat and expected != p_chat
+        if as_sorted:
+            reference = sorted_ref
+        checks.append(Check("INPUT: the prompt is the template's", expected == p_chat or as_sorted,
                             f"{p_chat} prompt tokens through chat; the template's text ({which}"
                             f"{', + appended' if append else ''}) is {expected}"
-                            + ("" if expected == p_chat else f", {(p_chat or 0) - expected:+d} through chat")
+                            + (f"; with the tools' keys sorted, as LocalAI's Go encoding writes them, "
+                               f"{n_sorted + added}" if n_sorted is not None else "")
+                            + ("" if expected == p_chat or as_sorted else f", {(p_chat or 0) - expected:+d} through chat")
                             + (" (an empty text refused by /v1/tokenize: nothing assumed added)"
                                if empty_refused else "")))
-        if expected != p_chat:
-            # WHERE the prompts part (the node, 2026-11-06: R7B -3, Qwen3-8B -2,
-            # Qwen3.5-9B +1, the same on both questions, so a part of the
-            # structure): the same comparison on cut-down conversations, each
-            # asked for one token
-            parts = localize(lambda label, text: count(label, text), n_empty, t, messages, tools,
-                             dict(body.get("chat_template_kwargs") or {}), post, got)
+        if expected != p_chat and not as_sorted:
+            # WHERE the prompts part: the same comparison on cut-down
+            # conversations, each asked for one token
+            parts = localize(count, n_empty, t, messages, tools, kwargs, post, got)
             checks[-1].detail += "; by part: " + ", ".join(
                 f"{v['part']} {v['delta']:+d}" if isinstance(v.get("delta"), int) else f"{v['part']} ?"
                 for v in parts)
             got["localized"] = parts
+
+    # the raw runs on the reference the engine's count matched, so the two
+    # paths read the same prompt
+    raw_body = {"model": model, "prompt": reference, "temperature": 0, "max_tokens": max_tokens}
+    if asked("raw", f"{chat_url}/v1/completions", raw_body) is None \
+            or asked("raw_again", f"{chat_url}/v1/completions", raw_body) is None:
+        return _result(model, question, which, t, reference, append, got, checks)
+    msg = got["chat"]["answer"]["choices"][0].get("message") or {}
+    content = msg.get("content") or ""
+    thought = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    calls = [c.get("function") or {} for c in msg.get("tool_calls") or [] if isinstance(c, dict)]
 
     # OUTPUT. A greedy answer does not always repeat itself on this engine
     # (qwen3-8b-q8, 2026-11-06: two raw runs parted after 596 characters, a
@@ -312,6 +330,13 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     return _result(model, question, which, t, reference, append, got, checks)
 
 
+def go_order(x: Any) -> Any:
+    """`x` with every object's keys in sorted order: how Go's encoding/json
+    writes a map (LocalAI decodes a request's tools into maps and encodes them
+    again for the backend)."""
+    return json.loads(json.dumps(x, sort_keys=True, ensure_ascii=False))
+
+
 #: a turn the model has no reason to answer at length: the cut-down conversations' user turn
 HELLO = "Hello."
 
@@ -326,22 +351,24 @@ def localize(count: Callable[[str, str], int | None], n_empty: int, t: Templates
     content). The part whose difference is not 0 is where the engine renders
     otherwise; each request is asked for one token."""
     from app import llm
-    variants = [("a user turn", [{"role": "user", "content": HELLO}], None),
-                ("+ system", [messages[0], {"role": "user", "content": HELLO}], None),
-                ("+ tools", [{"role": "user", "content": HELLO}], tools),
-                ("Ask's turns, no tools", messages, None)]
+    hello = [{"role": "user", "content": HELLO}]
+    variants = [("a user turn", hello, None, None),
+                ("+ system", [messages[0], *hello], None, None),
+                ("+ tools", hello, tools, tools),
+                ("+ tools, keys sorted", hello, tools, go_order(tools) if tools else None),
+                ("Ask's turns, no tools", messages, None, None)]
     out: list[dict[str, Any]] = []
-    for i, (part, msgs, tls) in enumerate(variants):
-        if part == "+ tools" and not tls:
+    for i, (part, msgs, sent, rendered) in enumerate(variants):
+        if part.startswith("+ tools") and not sent:
             continue
         url, body = llm._request(msgs, stream=False, temperature=None, max_tokens=1, num_ctx=16384,
                                  sampling={"temperature": 0})
-        if tls:
-            body["tools"] = tls
+        if sent:
+            body["tools"] = sent
         status, answer = post(url, body)
         row: dict[str, Any] = {"part": part}
         try:
-            reference, which = render(t, msgs, tls, kwargs)
+            reference, which = render(t, msgs, rendered, kwargs)
         except Exception as e:   # noqa: BLE001 — a template that refuses the shape is said, not raised
             row["error"] = f"the template refused: {e}"[:200]
             out.append(row)
