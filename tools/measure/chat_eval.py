@@ -291,7 +291,7 @@ def citation_support(got: dict[str, Any], turns: list[dict[str, Any]],
         terms = [_POSSESSIVE.sub("", e) for e in names + numbers if fold(e) not in inside]
         named = {_POSSESSIVE.sub("", e) for e in names}
 
-        def found(e: str, hay: str, words: set[str]) -> bool:
+        def found(e: str, hay: str, words: set[str], named: set[str] = named) -> bool:
             return held(e, hay, words) if e in named else fold(e) in hay
         if not ns and not ids:
             missing = ([q for q in quotes if fold(q) not in everything and fold(q) not in asked]
@@ -1071,7 +1071,9 @@ def rescore(out: Path, name: str, cache: Path) -> int:
     rewritten only when the rebuilt sources give back what the row recorded
     that the change cannot touch — its citing sentences, quoted spans and
     the spans found; otherwise it is kept as it was and counted. The rows as
-    they were are kept beside, once (answers.checker-<n>.jsonl)."""
+    they were are kept beside, once per checker: answers.checker-<n>.jsonl,
+    n = CHECKER - 1, the rows before this checker first rewrote any (a second
+    pass, its cache grown, keeps that file; the rows it rewrites are in it)."""
     from app.ask.chat import Sources, shown_search
     kept: dict[str, Any] = {}
     for line in cache.read_text(encoding="utf-8").splitlines()[1:]:
@@ -1109,7 +1111,7 @@ def rescore(out: Path, name: str, cache: Path) -> int:
                     "support": support, "checker": CHECKER})
         done += 1
     if done:
-        before = path.with_name(f"answers.checker-{rows[0].get('checker', 1)}.jsonl")
+        before = path.with_name(f"answers.checker-{CHECKER - 1}.jsonl")
         if not before.exists():
             before.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in new), encoding="utf-8")

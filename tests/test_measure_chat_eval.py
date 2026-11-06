@@ -609,3 +609,14 @@ def test_rescore_rewrites_a_run_from_its_recorded_searches(tmp_path, capsys):
     assert "checker" not in got[1] and got[1]["support"] == old, "its search is not recorded: kept"
     assert (run / "answers.checker-1.jsonl").read_text(encoding="utf-8").count("\n") == 2
     assert "1 rows rescored" in capsys.readouterr().out
+    # a second pass, its cache grown: the file kept beside is the rows before checker 2, untouched
+    # (named after the first row's checker, it was answers.checker-2.jsonl, and a checker 3 pass
+    # would then have found it there and kept none of the rows checker 2 wrote)
+    with cache.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"key": json.dumps({"query": "x"}, sort_keys=True, ensure_ascii=False),
+                            "result": result, "seconds": 1.0}) + "\n")
+    assert ev.main(["rescore", "--out", str(tmp_path), "--runs", "m", "--search-cache", str(cache)]) == 0
+    assert all(r["checker"] == ev.CHECKER for r in ev._rows(tmp_path, "m"))
+    assert not (run / "answers.checker-2.jsonl").exists()
+    assert [json.loads(x)["support"] for x in (run / "answers.checker-1.jsonl").read_text(
+        encoding="utf-8").splitlines()] == [old, old], "the rows as checker 1 left them"
