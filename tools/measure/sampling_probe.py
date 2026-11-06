@@ -25,11 +25,17 @@ draws, so a cut to one candidate IS greedy decoding):
 - temperature: hot (1.5, seed 11) differs from greedy;
 - seed: hot with seed 11 twice is the same, with seed 12 it differs;
 - top_k 1, top_p 1e-6, min_p 0.999, each hot: the greedy answer;
-- the file's penalties neutral: greedy on a repetitive prompt equals the
-  same with presence 1e-6 (a request value LocalAI does apply, too small
-  to move a float32 logit) — and if it equals presence 1.5 instead, that
-  is said: the family's default is filling the file's 0;
-- a presence penalty applied: presence 2.0 differs from presence 1e-6;
+- the file's penalties neutral: greedy, on free text and on a repetitive
+  prompt, equals the same with presence 1e-6 (a request value LocalAI
+  does apply, too small to move a float32 logit) — and if it equals
+  presence 1.5 instead, that is said: the family's default is filling the
+  file's 0;
+- a presence penalty applied: presence 2.0 differs from presence 1e-6 on
+  free text or on the repetitive prompt. Free text is the sensitive one
+  (2026-11-06, München's first probes): told to repeat a word, Qwen3-8B is
+  sure enough of every token that 2.0 moves none, while free text is full
+  of near-ties; the live file, which states no `repeat_last_n`, is the
+  negative control — it must fail here;
 - max_tokens: 7 asked, 7 generated, finish "length";
 - thinking off: no <think> and no reasoning in the answer;
 - the context: a request past it is refused naming 16384 tokens.
@@ -158,17 +164,23 @@ def probe(model: str, post: Post = http_post) -> dict[str, Any]:
                                 "the greedy answer" if got == greedy else
                                 f"not the greedy answer: {short(got)}" if hot_differs else
                                 "undecidable: the temperature did not reach the engine"))
-        plain = _said(ask(REPEAT, {"temperature": 0}, 120))
-        tiny = _said(ask(REPEAT, {"temperature": 0, "presence_penalty": TINY}, 120))
-        strong = _said(ask(REPEAT, {"temperature": 0, "presence_penalty": 2.0}, 120))
-        family = _said(ask(REPEAT, {"temperature": 0, "presence_penalty": 1.5}, 120))
-        checks.append(Check("the file's penalties are neutral", plain == tiny,
-                            "no penalty unless sent" if plain == tiny else
-                            "penalised as by presence 1.5: a family default fills the file's 0"
-                            if plain == family else f"penalised by an unknown value: {short(plain)}"))
-        checks.append(Check("a presence penalty reaches the engine", strong != tiny,
-                            short(strong) if strong != tiny else
-                            "2.0 changed nothing: penalties disabled (repeat_last_n 0?) or dropped"))
+        seen: dict[str, dict[str, str]] = {}
+        for label, prompt, n in (("free text", SEA, 48), ("repetition", REPEAT, 120)):
+            seen[label] = {"plain": greedy if prompt == SEA else _said(ask(prompt, {"temperature": 0}, n)),
+                           "tiny": _said(ask(prompt, {"temperature": 0, "presence_penalty": TINY}, n)),
+                           "strong": _said(ask(prompt, {"temperature": 0, "presence_penalty": 2.0}, n)),
+                           "family": _said(ask(prompt, {"temperature": 0, "presence_penalty": 1.5}, n))}
+        filled = [k for k, v in seen.items() if v["plain"] != v["tiny"]]
+        checks.append(Check("the file's penalties are neutral", not filled,
+                            "no penalty unless sent (free text and repetition)" if not filled else
+                            f"penalised on {', '.join(filled)} as by presence 1.5: a family default fills "
+                            f"the file's 0" if all(seen[k]["plain"] == seen[k]["family"] for k in filled)
+                            else f"penalised on {', '.join(filled)} by an unknown value"))
+        moved = [k for k, v in seen.items() if v["strong"] != v["tiny"]]
+        checks.append(Check("a presence penalty reaches the engine", bool(moved),
+                            f"2.0 changed the answer on {', '.join(moved)}" if moved else
+                            "2.0 changed nothing on free text or repetition: penalties disabled "
+                            "(repeat_last_n 0?) or dropped"))
         capped = ask(SEA, {"temperature": 0}, 7)
         used = (capped.get("usage") or {}).get("completion_tokens")
         finish = capped["choices"][0].get("finish_reason")
