@@ -605,7 +605,7 @@ def cmd_collection_new(a) -> int:
     import copy
     import decimal
 
-    from app import collections as collections_mod, run_check
+    from app import collections as collections_mod, node_state, run_check
     from app.hold import calibrate as calib, codex as cx, workflow as wf
     say = (lambda line: print(line, file=sys.stderr))
     recipe = _recipe(a.recipe)
@@ -736,6 +736,15 @@ def cmd_collection_new(a) -> int:
                                                model=None, query_model=None))
     run.record("gate", {"rc": rc})
     say(f"{name}: {'the gate PASSED; embedding stays off until the operator turns it on' if rc == 0 else f'the gate exited {rc}: nothing may be embedded'}")
+    # RULE 2 (2026-11-06): what would still stop it once turned on, said now —
+    # wikidata was turned on after `new` and sat paused for hours. The setting
+    # is said on the line above, so it is left out here
+    blockers = node_state.embedding_blockers(name, None) if rc == 0 else []
+    if blockers:
+        say(f"{name}: turned on, it still embeds nothing until "
+            f"{'this is' if len(blockers) == 1 else 'these are'} lifted:")
+        for line in blockers:
+            say(f"  {line}")
     return rc
 
 

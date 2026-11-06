@@ -419,6 +419,41 @@ def test_a_mode_or_sharing_switch_asks_for_a_digest_at_once(client):
     assert node_state.take_digest_request() is True
 
 
+def test_turning_embedding_on_says_what_still_stops_it(client):
+    """RULE 2 (2026-11-06): wikidata was turned on in the Library, the switch
+    answered ok, and the collection sat paused on its own for hours."""
+    from app import node_state
+    node_state.set_worker_state("running")
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
+    assert r.status_code == 200, r.text
+    assert r.json()["blocked"] == [] and r.json()["note"] is None, "nothing blocks: nothing said"
+    node_state.set_paused("gutenberg", True, by="rename g -> gutenberg")
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
+    assert r.status_code == 200 and r.json()["ok"] is True, r.text
+    (said,) = r.json()["blocked"]
+    assert said.startswith('gutenberg is paused on its own, by "rename g -> gutenberg"'), said
+    assert r.json()["note"] == "Saved to gutenberg.toml, but nothing will embed until this is lifted: " + said
+    assert collections_mod.by_name("gutenberg").embed_mode_default == "all", "saved all the same"
+    node_state.set_worker_state("acquire-only")
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "lazy"})
+    assert len(r.json()["blocked"]) == 2 and "until these are lifted: The node is in" in r.json()["note"]
+
+
+def test_resume_lifts_a_collections_own_pause_and_records_the_library(client):
+    from app import node_state
+    node_state.set_paused("gutenberg", True, by="rename g -> gutenberg")
+    node_state.set_paused("other", True, by="louise node pause other")
+    r = client.post("/admin/library/gutenberg/resume")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "paused": ["other"]}
+    assert node_state.paused_collections() == {"other"}
+    last = node_state.pause_history()[-1]
+    assert (last["collection"], last["paused"], last["by"]) == ("gutenberg", False, "Library (admin)")
+    assert client.post("/admin/library/nope/resume").status_code == 404
+    del client.headers["X-Admin-Token"]
+    assert client.post("/admin/library/gutenberg/resume").status_code == 401
+
+
 def test_an_annotations_card_names_a_records_twin_of_its_target(client, monkeypatch):
     """02 §2.4 A1f: claims about a target apply to the collection a carry
     made of it, byte for byte (368365e), so the card names that collection

@@ -217,6 +217,29 @@ def test_another_request_under_the_same_name_starts_afresh(tmp_path, steps, caps
     assert steps["order"][0] == "calibrate" and "started afresh" in capsys.readouterr().err
 
 
+def test_a_passed_gate_says_what_would_still_stop_embedding(tmp_path, steps, capsys):
+    """RULE 2 (2026-11-06): wikidata was turned on after `new` ended on "the
+    gate PASSED" and sat paused on its own for hours, carried over by a
+    rename; nothing had said so."""
+    from app import node_state
+    node_state.set_worker_state("running")
+    node_state.set_paused("wd", True, by="rename wikidata -> wd")
+    assert _new(tmp_path, _recipe(tmp_path)) == 0
+    err = capsys.readouterr().err
+    assert "wd: the gate PASSED; embedding stays off until the operator turns it on" in err
+    assert "wd: turned on, it still embeds nothing until this is lifted:\n" \
+           '  wd is paused on its own, by "rename wikidata -> wd"' in err, err
+    assert "`louise node resume wd`" in err
+    assert 'embed setting is "off"' not in err, "the line above says it"
+    steps["gate_rc"] = 1
+    assert _new(tmp_path, _recipe(tmp_path)) == 1
+    assert "still embeds nothing" not in capsys.readouterr().err, "a failed gate embeds nothing anyway"
+    steps["gate_rc"] = 0
+    node_state.set_paused("wd", False, by="louise node resume wd")
+    assert _new(tmp_path, _recipe(tmp_path)) == 0
+    assert "still embeds nothing" not in capsys.readouterr().err, "nothing stands: nothing said"
+
+
 def test_the_steps_are_the_workflows_numbered_in_case_as_order(tmp_path, steps, capsys):
     assert _new(tmp_path, _recipe(tmp_path)) == 0
     said = [line.split()[1] for line in capsys.readouterr().err.splitlines() if line[:2] in

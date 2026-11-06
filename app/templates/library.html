@@ -208,6 +208,18 @@
     </div>
     {% endif %}
   </div>
+  {# RULE 2 (2026-11-06: wikidata turned on here sat paused for hours, the
+     card silent): what still stops it embedding, in words, where the
+     setting is shown (node_state.embedding_blockers — a pause among them,
+     named with who and when); a paused collection whose setting is off says
+     its pause on its own #}
+  {% if c.embed_blocked %}
+  <div class="note" data-embed-blocked><span class="badge err">nothing embeds</span> {{ c.embed_blocked|join(' ') }}</div>
+  {% elif c.paused %}
+  <div class="note" data-paused><span class="badge err">paused</span>
+    {% if c.paused.by or c.paused.when %}by {{ c.paused.by or 'unnamed' }}{% if c.paused.when %} on {{ c.paused.when }}{% endif %}{% else %}nothing recorded who paused it, or when{% endif %}:
+    the worker runs nothing for it until it is resumed — Options › resume</div>
+  {% endif %}
   {% if c.embed_mode_note %}
   <div class="note"><span class="badge err">runs as all local</span> {{ c.embed_mode_note }}</div>
   {% endif %}
@@ -288,6 +300,9 @@
       <button onclick="confirmAction('rescan', '{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan…</button>
     </div>
     <div class="actions">
+      {% if c.paused %}
+      <button class="primary" onclick="resumeCollection('{{ c.name }}')">resume</button>
+      {% endif %}
       {% if c.license.needs_ack %}
       <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
       {% endif %}
@@ -578,9 +593,22 @@ async function setEmbedMode(name,mode,shared){
   // all p2p publishes what it embeds, so it comes with sharing: asked, never done behind the operator's back (07 §7.8)
   if(mode==='p2p'&&!shared&&!confirm(name+': all p2p publishes the bundles it embeds, so sharing will be enabled for this collection. Proceed?')){location.reload();return}
   try{const d=await postJSON('/admin/library/'+name+'/embed-mode',{mode});
+    // RULE 2 (2026-11-06): saved is not embedding — what still stops it is
+    // said, and OK reloads the card, which shows it beside the setting
+    if(mode!=='off'&&(d.blocked||[]).length){
+      showModal(`<h2>${esc(name)}: embed mode → ${esc(EMBED_LABELS[mode]||mode)}</h2>
+        <div class="note">${esc(d.note)}</div>
+        <div class="actions"><button class="primary" onclick="location.reload()">OK</button></div>`);
+      return}
     toast(name+': embed mode → '+(EMBED_LABELS[mode]||mode)+(d.share_enabled?' — sharing enabled':'')+' — saved to collections/'+name+'.toml');
     if(d.share_enabled){location.reload()}}
   catch(e){toast('embed mode failed: '+e);location.reload()}
+}
+async function resumeCollection(name){
+  try{await postJSON('/admin/library/'+name+'/resume',{})}
+  catch(e){toast('resume failed: '+e);return}
+  toast(name+': resumed — the worker takes it up within a round');
+  location.reload();
 }
 async function setEmbedSelect(name,value){
   try{await postJSON('/admin/library/'+name+'/embed-select',{value});

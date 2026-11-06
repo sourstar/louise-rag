@@ -14,6 +14,7 @@ the same dialogs in a real browser.
 from __future__ import annotations
 
 import re
+import time
 from html.parser import HTMLParser
 
 import pytest
@@ -253,6 +254,50 @@ def test_a_copy_taken_from_peers_defaults_its_removal_to_forget(isolated_config)
         request=None, active="library", shelves=[shelf], counts_age=0, plugins=[],
         plugin_profiles={}, plugin_extras={}, corpus_mounts=[], corpus_mounts_dir="", worker_state="running")
     assert _buttons(_cards(html)["gutenberg"])["remove…"]["attrs"]["onclick"] == "removeCollection('gutenberg', 'shard')"
+
+
+# ---- what stops it embedding, in sight (RULE 2, 2026-11-06) ------------------
+
+def _in_sight_text(html: str, name: str) -> str:
+    """The card's text above its Details line, tags dropped, as read."""
+    import html as html_mod
+    card = html[html.index(f'data-collection="{name}"'):]
+    card = card[:card.index('data-drawer="details"')]
+    return " ".join(html_mod.unescape(re.sub(r"<[^>]+>", " ", card)).split())
+
+
+def test_a_paused_collection_says_who_paused_it_and_resume_is_under_options(client):
+    """wikidata was turned on in the Library and sat paused on its own for
+    hours, carried over by a rename; the card never said so."""
+    html = client.get("/admin/library").text
+    assert "resume" not in _buttons(_cards(html)["gutenberg"])
+    assert "paused" not in _in_sight_text(html, "gutenberg")
+    node_state.set_paused("gutenberg", True, by="rename g -> gutenberg")
+    at = node_state.pause_history()[-1]["at"]
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(at))
+    html = client.get("/admin/library").text
+    # its setting embeds (on-demand): the pause is said beside it, as what stops it
+    sight = _in_sight_text(html, "gutenberg")
+    assert (f'nothing embeds gutenberg is paused on its own, by "rename g -> gutenberg" on {when}: '
+            "the worker runs nothing for it, embedding included.") in sight, sight
+    resume = _buttons(_cards(html)["gutenberg"])["resume"]
+    assert resume["drawer"] == "options" and resume["attrs"]["onclick"] == "resumeCollection('gutenberg')"
+    assert "postJSON('/admin/library/'+name+'/resume'" in _function(html, "resumeCollection")
+    # its setting off: the pause is said on its own, once
+    assert client.post("/admin/library/gutenberg/embed-mode", json={"mode": "off"}).status_code == 200
+    sight = _in_sight_text(client.get("/admin/library").text, "gutenberg")
+    assert (f"paused by rename g -> gutenberg on {when}: the worker runs nothing for it until it is "
+            "resumed — Options › resume") in sight, sight
+    assert "nothing embeds" not in sight and sight.count("paused") == 1
+
+
+def test_a_mode_that_does_not_embed_is_said_beside_the_setting(client):
+    node_state.set_worker_state("acquire-only")
+    sight = _in_sight_text(client.get("/admin/library").text, "gutenberg")
+    assert 'nothing embeds The node is in "download/seeding only" mode' in sight, sight
+    # turning it on where something blocks says so, and does not just toast "saved"
+    set_mode = _function(client.get("/admin/library").text, "setEmbedMode")
+    assert "(d.blocked||[]).length" in set_mode and "showModal(" in set_mode and "esc(d.note)" in set_mode
 
 
 def test_a_cards_rescan_stays_grey_where_the_mode_parses_nothing(client):
