@@ -297,3 +297,4 @@ answer.
   image.
 - **The general rule:** the pilot's reading includes what the tool said
   about itself, the sources block's own warnings first.
+- **An API key on LocalAI stops chat_eval** (2026-11-06, 23:00): a key  saved in LocalAI's Settings page at 21:56 made it answer 401 to every  call without one, and Louise sends none. The settle said "NOT settled",  the wire stopped with exit 3, and no pilot ran; live Ask, reranking and  translation failed the same way. Before a night's runs, check that  `curl -s -o /dev/null -w '%{http_code}' <server>/v1/models` answers 200.
