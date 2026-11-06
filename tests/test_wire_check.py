@@ -17,7 +17,8 @@ TOOL_TEMPLATE = ("{{ bos_token }}{% for m in messages %}<|{{ m.role }}|>{{ m.con
                  "{% if tools %}<|tools|>{{ tools | tojson }}\n{% endif %}"
                  "{% if add_generation_prompt %}<|assistant|>{% endif %}")
 TOOLS = [{"type": "function", "function": {"name": "louise_search", "description": "search",
-                                           "parameters": {"type": "object"}}}]
+                                           "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                                                          "required": ["query"]}}}]
 T = wc.Templates(default=TEMPLATE, tool_use=TOOL_TEMPLATE, bos="<s>", eos="</s>", add_bos=True, add_eos=False)
 CALL = '<|act|>{"name": "louise_search", "arguments": {"query": "Dumas collier"}}<|end|>'
 ANSWER = "<|resp|>It is The Queen's Necklace [1].<|end|>"
@@ -34,7 +35,7 @@ def tokens(text: str) -> int:
 
 
 def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = None, chat_says: str | None = None,
-           tools_as=None, swap: tuple[str, str] | None = None, raw_bos: bool = True):
+           tools_as=None, swap: tuple[str, str] | None = None, raw_bos: bool = True, reuse: bool = True):
     """LocalAI over llama.cpp as the check sees it.
     - The chat route renders the template with the tools as the engine gets
       them (`tools_as`), plus whatever `adds`, with `swap` replacing a word,
@@ -57,7 +58,7 @@ def engine(*, adds: str = "", parse: str = "right", raws: list[str] | None = Non
 
     def evaluate(prompt_toks: list[str]) -> None:
         common = 0
-        while common < min(len(cache), len(prompt_toks)) and cache[common] == prompt_toks[common]:
+        while reuse and common < min(len(cache), len(prompt_toks)) and cache[common] == prompt_toks[common]:
             common += 1
         n = max(1, len(prompt_toks) - common)
         cache[:] = prompt_toks
@@ -252,8 +253,11 @@ def test_the_tools_as_the_engine_gets_them_are_found_token_for_token():
     sorted_ = run(engine(tools_as=wc.go_order))
     assert "tools with every key sorted" in next(
         c["detail"] for c in sorted_["checks"] if c["name"] == "INPUT: the prompt is the template's")
-    assert wc.localai_tools(TOOLS)[0]["function"] == {"name": "louise_search", "description": "search",
-                                                      "strict": False, "parameters": {"type": "object"}}
+    assert wc.localai_tools(TOOLS)[0]["function"] == {
+        "name": "louise_search", "description": "search", "strict": False,
+        "parameters": {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}}
+    assert list(wc.parameters_sorted(TOOLS)[0]["function"]) == ["name", "description", "parameters"]
+    assert list(wc.parameters_sorted(TOOLS)[0]["function"]["parameters"]) == ["properties", "required", "type"]
 
 
 def test_a_raw_path_that_adds_no_bos_is_matched_with_the_bos_text_kept():
@@ -304,3 +308,25 @@ def test_the_same_tokens_not_only_as_many():
     got = run(unlogged)
     detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
     assert "token identity undecidable" in detail and "the same count: tools as Ask sends them" in detail
+
+
+def test_the_parameters_sorted_in_a_struct_that_keeps_its_own_order_are_found():
+    """2026-11-06, wire16: Qwen3-8B's engine prompt is Ask's text up to the
+    parameters object, whose keys come sorted, and no "strict"."""
+    got = run(engine(tools_as=wc.parameters_sorted))
+    assert got["passed"], _failed(got)
+    assert "tools as Ask sends them, the parameters' keys sorted" in next(
+        c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+
+
+def test_an_engine_that_reuses_no_prefix_is_decided_by_count_and_the_greedy_answers():
+    """2026-11-06, wire16: Qwen3.5-9B (a hybrid model) re-evaluated every
+    candidate whole. The cache tells nothing; the count chooses and the
+    output checks decide."""
+    got = run(engine(tools_as=wc.parameters_sorted, reuse=False))
+    assert got["passed"], _failed(got)
+    detail = next(c["detail"] for c in got["checks"] if c["name"] == "INPUT: the prompt is the template's")
+    assert "the engine reuses no cached prefix" in detail
+    assert "the same count: tools as Ask sends them, the parameters' keys sorted" in detail
+    diverging = run(engine(tools_as=wc.parameters_sorted, reuse=False, chat_says="Something else."))
+    assert "in no raw run" in _failed(diverging)["OUTPUT: the answer is the model's own text"]
