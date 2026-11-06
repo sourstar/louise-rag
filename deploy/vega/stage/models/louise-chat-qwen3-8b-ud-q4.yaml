@@ -5,10 +5,24 @@
 # within a few percent at one quant type, bartowski's Q4_K_M closer than unsloth's for Qwen3.5 4B/9B
 # (quantdiff.com), and unsloth's UD quants ahead at low bits; so it is measured, not assumed.
 # The file pinned to the Hub's commit and its sha256 at the install. Sampling: the Q8 file's.
+# f16, function.grammar.disable and stopwords: written by the gallery's qwen3-8b base at install (2026-11-06);
+# kept here so this file equals the node's, key for key.
 {
   "name": "louise-chat-qwen3-8b-ud-q4",
   "backend": "vega-louise-llama-cpp",
   "context_size": 16384,
+  "f16": true,
+  "function": {
+    "grammar": {
+      "disable": true
+    }
+  },
+  "stopwords": [
+    "<|im_end|>",
+    "<dummy32000>",
+    "</s>",
+    "<|endoftext|>"
+  ],
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",
     "GGML_SYCL_FA_ONEDNN": "0",
