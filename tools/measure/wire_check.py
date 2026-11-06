@@ -258,6 +258,17 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
                             + ("" if expected == p_chat else f", {(p_chat or 0) - expected:+d} through chat")
                             + (" (an empty text refused by /v1/tokenize: nothing assumed added)"
                                if empty_refused else "")))
+        if expected != p_chat:
+            # WHERE the prompts part (the node, 2026-11-06: R7B -3, Qwen3-8B -2,
+            # Qwen3.5-9B +1, the same on both questions, so a part of the
+            # structure): the same comparison on cut-down conversations, each
+            # asked for one token
+            parts = localize(lambda label, text: count(label, text), n_empty, t, messages, tools,
+                             dict(body.get("chat_template_kwargs") or {}), post, got)
+            checks[-1].detail += "; by part: " + ", ".join(
+                f"{v['part']} {v['delta']:+d}" if isinstance(v.get("delta"), int) else f"{v['part']} ?"
+                for v in parts)
+            got["localized"] = parts
 
     # OUTPUT. A greedy answer does not always repeat itself on this engine
     # (qwen3-8b-q8, 2026-11-06: two raw runs parted after 596 characters, a
@@ -299,6 +310,51 @@ def check(model: str, question: dict[str, str], t: Templates, *, collections: li
     checks.append(Check("OUTPUT: no marker left in the answer", not left,
                         "none" if not left else ", ".join(left)))
     return _result(model, question, which, t, reference, append, got, checks)
+
+
+#: a turn the model has no reason to answer at length: the cut-down conversations' user turn
+HELLO = "Hello."
+
+
+def localize(count: Callable[[str, str], int | None], n_empty: int, t: Templates,
+             messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, kwargs: dict[str, Any],
+             post: Post, got: dict[str, Any]) -> list[dict[str, Any]]:
+    """The prompt difference, chat minus template, on cut-down conversations:
+    a user turn alone (the generation prompt: a thinking block, a closing
+    marker), with Ask's system turn (the system's handling), with Ask's
+    tools (their rendering), and Ask's own turns without tools (their
+    content). The part whose difference is not 0 is where the engine renders
+    otherwise; each request is asked for one token."""
+    from app import llm
+    variants = [("a user turn", [{"role": "user", "content": HELLO}], None),
+                ("+ system", [messages[0], {"role": "user", "content": HELLO}], None),
+                ("+ tools", [{"role": "user", "content": HELLO}], tools),
+                ("Ask's turns, no tools", messages, None)]
+    out: list[dict[str, Any]] = []
+    for i, (part, msgs, tls) in enumerate(variants):
+        if part == "+ tools" and not tls:
+            continue
+        url, body = llm._request(msgs, stream=False, temperature=None, max_tokens=1, num_ctx=16384,
+                                 sampling={"temperature": 0})
+        if tls:
+            body["tools"] = tls
+        status, answer = post(url, body)
+        row: dict[str, Any] = {"part": part}
+        try:
+            reference, which = render(t, msgs, tls, kwargs)
+        except Exception as e:   # noqa: BLE001 — a template that refuses the shape is said, not raised
+            row["error"] = f"the template refused: {e}"[:200]
+            out.append(row)
+            continue
+        n = count(f"tokenize_part_{i}", reference)
+        p = (answer.get("usage") or {}).get("prompt_tokens") if status == 200 and isinstance(answer, dict) else None
+        row.update(template=which, chat=p, tail=reference[-160:],
+                   delta=(p - (n - n_empty + int(t.add_bos) + int(t.add_eos))) if p is not None and n is not None
+                   else None)
+        if status != 200:
+            row["error"] = f"{status}: {str(answer)[:200]}"
+        out.append(row)
+    return out
 
 
 def _args(raw: Any) -> Any:

@@ -1077,6 +1077,12 @@ the reference is counted by the tokenizer, and the answer is held to the raw
 run it agrees with. Whether greedy repeats itself is reported, not decided
 on.
 
+Second run (2026-11-06): every model's prompt differs from its template's by a few
+tokens, chat minus template, the same on both questions: R7B −3, Qwen3-8B (all three files) −2,
+Qwen3.5-9B +1. R7B with a closed thinking block appended: −5, so llama.cpp does not add one. A
+failed INPUT now locates the part: the same count on cut-down conversations (a user turn, + Ask's
+system turn, + Ask's tools, Ask's turns without tools).
+
 Why now: Command R7B's pilot searched a source's id as a query and searched
 again for titles it had already been given. Two answers failed both with
 and without tools. The Qwens never called a tool.

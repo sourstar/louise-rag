@@ -193,3 +193,19 @@ def test_a_tokenizer_that_refuses_an_empty_text_still_counts():
         return engine()(url, body)
     got = run(post)
     assert got["passed"], _failed(got)
+
+
+def test_a_prompt_difference_is_located_by_part():
+    """2026-11-06 on the node: every model's prompt differed from its
+    template's by a few tokens (R7B -3, Qwen3-8B -2, Qwen3.5-9B +1), the
+    same on both questions. Cut-down conversations say which part."""
+    def post(url, body):
+        if url.endswith("/v1/chat/completions") and body.get("tools"):
+            status, got = engine()(url, body)
+            got["usage"]["prompt_tokens"] -= 2           # an engine that renders the tools shorter
+            return status, got
+        return engine()(url, body)
+    got = run(post)
+    detail = _failed(got)["INPUT: the prompt is the template's"]
+    assert "-2 through chat" in detail
+    assert "by part: a user turn +0, + system +0, + tools -2, Ask's turns, no tools +0" in detail
