@@ -342,7 +342,7 @@ def _facts_of(collection, hits: Sequence[dict[str, Any]], work_of: dict[str, str
     for u in want:
         if ":" not in u:
             continue
-        for shard in snap.shards_of(u.split(":", 1)[1], order):
+        for shard in snap.lookup_order(u.split(":", 1)[1], order):   # the true part first
             part = part_facts(tree, store, shard)
             if part is None:
                 f = _facts_read(tree, shard, u)
