@@ -380,8 +380,11 @@ def test_a_tool_call_the_engine_cannot_parse_is_answered_without_tools(chat_mode
     def down(messages, tools):
         raise httpx.HTTPStatusError("500", request=httpx.Request("POST", "http://x"),
                                     response=httpx.Response(500, text="down"))
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx.HTTPStatusError) as raised:
         chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=down), "failing without tools too: raised"
+    # 2026-11-06, Command R7B's pilot: both requests refused, and only the
+    # second one's error was left; the first one's body goes with it now
+    assert raised.value.__notes__ == ["the request with tools failed first: 500: down"]
 
 
 def test_ask_sends_no_temperature_and_each_model_runs_its_own_file(fake_chat, monkeypatch):
