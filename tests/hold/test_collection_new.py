@@ -38,6 +38,7 @@ def steps(monkeypatch, tmp_path):
     """Every step stood in for, recording what it was given."""
     seen: dict = {"order": []}
 
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "9a" * 32)
     monkeypatch.setattr(calib, "load_set", lambda set_id: (set_id, ["t1", "t2"]))
     monkeypatch.setattr(louise.cx, "engine_from_dict", lambda d, where: SimpleNamespace(engine_id="e", **d)
                         if isinstance(d, dict) else d)
@@ -81,9 +82,10 @@ def steps(monkeypatch, tmp_path):
 
 
 def _new(tmp_path, recipe, *extra):
+    """`new` with the test's recipe; `--name wd` unless `extra` gives the name."""
     return louise.main(["hold", "collection", "new", "wikidata", "--root", str(tmp_path), "--recipe", recipe,
                         "--encoder", "http://localai:8080", "--api", "vega", "--embed-model", "vega-nemo",
-                        "--cpu-model", "vega-nemo-cpu", *extra])
+                        "--cpu-model", "vega-nemo-cpu", *(extra or ("--name", "wd"))])
 
 
 def test_every_input_comes_from_the_recipe_and_the_steps_run_in_order(tmp_path, steps):
@@ -134,7 +136,7 @@ def test_a_collection_already_made_is_held_to_the_recipe(tmp_path, steps, monkey
     codex = SimpleNamespace(space=sp)
     monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", codex))
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2
-    assert "create" not in steps["order"] and "cpu-reference" not in steps["order"]
+    assert steps["order"] == [], "refused before any measurement: the cut differs"
     sp.cut = "tokens"
     steps["order"].clear()
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 0
@@ -142,3 +144,22 @@ def test_a_collection_already_made_is_held_to_the_recipe(tmp_path, steps, monkey
     sp.encoder = SimpleNamespace(weights="sha256:" + "ef" * 32, engine=ENGINE)
     steps["order"].clear()
     assert _new(tmp_path, _recipe(tmp_path), "--name", "wd") == 2, "another encoder's collection: refused"
+
+
+def test_an_existing_collection_of_another_tolerance_is_refused_after_the_measurement(tmp_path, steps,
+                                                                                     monkeypatch):
+    sp = SimpleNamespace(ctx=8191, cut="tokens", document_instruction="passage: ",
+                         calibration=SimpleNamespace(set=SET), tolerance="0.99999",
+                         encoder=SimpleNamespace(weights=WEIGHTS, engine=ENGINE))
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("wd", SimpleNamespace(space=sp)))
+    assert _new(tmp_path, _recipe(tmp_path)) == 2
+    assert steps["order"] == ["calibrate"], "measured, then refused: not changed in place"
+
+
+def test_the_name_is_the_operators_and_is_asked_for(tmp_path, steps):
+    """RULE 2: the local name is the one thing only the operator knows."""
+    with pytest.raises(SystemExit):
+        louise.main(["hold", "collection", "new", "wikidata", "--root", str(tmp_path),
+                     "--recipe", _recipe(tmp_path), "--encoder", "http://localai:8080",
+                     "--cpu-model", "vega-nemo-cpu"])
+    assert steps["order"] == []
