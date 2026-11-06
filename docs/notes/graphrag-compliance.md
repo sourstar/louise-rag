@@ -26,8 +26,8 @@ session's sandbox; what could not be read is marked UNVERIFIED.*
    claim types `mention` / `relation` / `community`, 09 §9.5, §9.14) and
    **unbuilt at both ends**: no tool produces a claim of those types and
    `ClaimIndex.graph` is built but attached nowhere
-   (gutenberg-graph-amendments.md, step 3).
-4. The plan as written (wikidata-plugins.md "gutenberg-graph") is FULL
+   (wiki-gutenberg-amendments.md, step 3).
+4. The plan as written (wikidata-plugins.md "wiki-gutenberg") is FULL
    GraphRAG: an LLM at index time, 2–3 weeks of B70 for 15 % of
    Gutenberg, claims that are not bit-exact and need a measured
    agreement floor. LazyGraphRAG's split — no LLM at index time, the LLM
@@ -161,7 +161,7 @@ Neither number converts into the other.
 **Index cost.** Louise embeds and indexes; no LLM. GraphRAG standard: about
 two LLM calls per 1,200-token text unit plus one per multi-description
 entity plus one or two per community (its own docs, no token figure).
-Louise's own plan for gutenberg-graph (wikidata-plugins.md, modelled):
+Louise's own plan for wiki-gutenberg (wikidata-plugins.md, modelled):
 mentions over all of Gutenberg 2–5 days, relations ~1 week and
 communities 2–5 days for ~15 % of Gutenberg, on the B70 — Gemma 4 26B
 Q8_0 alone on the card, at night.
@@ -307,7 +307,7 @@ nothing public for the query half).
    quality is unknown — measure before removing, as every fusion change
    has been.
 2. **`ClaimIndex.graph` is dead code until step 3** — by design, recorded
-   (gutenberg-graph-amendments.md). A community's `state_of` is `unknown`
+   (wiki-gutenberg-amendments.md). A community's `state_of` is `unknown`
    and pins nothing, which is right for the specified shape but means a
    community summary cannot go `stale` when its members' text moves — a
    GraphRAG weakness Louise would inherit unless the claim pins its
@@ -385,7 +385,7 @@ touch hashed bytes (09 §9.5), so they are asked, never taken.*
 
 ### 9.1 The gap
 
-In the gutenberg-graph plan a mention is a span GLiNER finds, linked to a
+In the wiki-gutenberg plan a mention is a span GLiNER finds, linked to a
 Q-id by a search over wikidata's vectors and an LLM's pick "or none"
 (wikidata-plugins.md, step 2). A `mention` claim's object is a canonical
 id `wikidata:Q…` (09 §9.5, A-K1), so a span that resolves to nothing has
@@ -416,13 +416,13 @@ they become one, and the confidence says how sure.
 |---|---|---|---|
 | drop it (the plan today) | nothing | none | the graph is only as complete as Wikidata; novels mostly fall out |
 | **keep it as a span with no entity** | a `mention` whose object is null, carrying `surface`, `start`, `end` and GLiNER's type; searchable by surface, never traversable | 09 §9.5 amended (hashed bytes: ask first); no model work | spans do not merge: "Starbuck" and "the first mate" stay two things |
-| mint a local entity | the annotations collection registers its own namespace (`gutenberg-graph:<hash of type + normalised surface>`), as a reference source registers one (05 §5.2); spans the LLM judges to be one thing merge under it; relations may use it | the row above plus a namespace and a merge rule — what GraphRAG does, by name | the GraphRAG failure: one thing under three names; an id nobody outside can check against anything |
+| mint a local entity | the annotations collection registers its own namespace (`wiki-gutenberg:<hash of type + normalised surface>`), as a reference source registers one (05 §5.2); spans the LLM judges to be one thing merge under it; relations may use it | the row above plus a namespace and a merge rule — what GraphRAG does, by name | the GraphRAG failure: one thing under three names; an id nobody outside can check against anything |
 | anchor it to the book | an unlinked entity belongs to the work it appears in — `gutenberg:2701#Starbuck`, a character or place OF that record, never shared across books | the same amendment, narrower; the book is already a verifiable record | a person two chronicles mention, missing from Wikidata, is two entities |
 
 **Recommendation.** Keep unlinked spans (row 2) from the first run, so
 nothing GLiNER found is lost and the loss can be COUNTED: mentions
 resolved and unresolved, per LoC class, on the first 1,000 — the same
-sample the agreement floor is measured on (gutenberg-graph-amendments.md,
+sample the agreement floor is measured on (wiki-gutenberg-amendments.md,
 "Decided"). Choose between minting and anchoring from that count, not
 before. If the operator says nothing, the plan stands and unlinked
 mentions are dropped.
@@ -448,9 +448,10 @@ has a name (CLAUDE.md, "do not reinvent the wheel"):
    template goes through ONE pinned encoder run named in the method —
    templates are compared with templates, never with a collection's
    vectors, so this is a space of the method, not of gutenberg or
-   wikidata (invariant 1; the strategy note proposes jina-v3's passage
-   run, which linking needs anyway) — bit-exact like any other vector
-   (invariant 12, under torch's `LOUISE_TORCH_DETERMINISTIC=1`, measured);
+   wikidata (invariant 1; the strategy note proposes the passage side of
+   wikidata's own encoder — Nemotron-3-Embed-1B since 2026-11-06 — which
+   the linking needs anyway) — bit-exact like any other vector (invariant
+   12, under the stack's deterministic mode, measured at the gate);
    a Matching-the-Blanks encoder is the
    stronger choice if the plain one proves too coarse, and it is a stated
    run like any encoder's. The embedding only NARROWS: it finds the known
@@ -516,7 +517,7 @@ inventing identities.
 
 The per-category strategy that places this proposal in the whole plan —
 which tiers of Gutenberg get the reader, which only the exact layer — is
-[gutenberg-graph-strategy.md](gutenberg-graph-strategy.md).
+[wiki-gutenberg-strategy.md](wiki-gutenberg-strategy.md).
 
 Amendments, if approved: 09 §9.5 (`mention` with a null object and its
 keys; the `same-entity` type; a deterministic `method` kind for a scored

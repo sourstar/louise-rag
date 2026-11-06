@@ -1,4 +1,4 @@
-# gutenberg-graph — a strategy by category (proposal, 2026-10-24)
+# wiki-gutenberg — a strategy by category (proposal, 2026-10-24)
 
 *Operator: "Review, cleanup and organize the architectural proposal for
 wiki gutenberg: different approaches depending on the book category …
@@ -11,8 +11,8 @@ VRAM and in any case not exceeding 32 GB)."*
 
 *This note reorganises three earlier texts into one proposal: the
 operator's design in [wikidata-plugins.md](wikidata-plugins.md)
-("gutenberg-graph"), the byte-level amendments in
-[gutenberg-graph-amendments.md](gutenberg-graph-amendments.md) (A-K1..K4,
+("wiki-gutenberg"), the byte-level amendments in
+[wiki-gutenberg-amendments.md](wiki-gutenberg-amendments.md) (A-K1..K4,
 decided 2026-10-20, steps 1–2 written), and §5 and §9 of
 [graphrag-compliance.md](graphrag-compliance.md) (the LazyGraphRAG
 split; unlinked mentions and linking by relational context). Nothing
@@ -71,8 +71,8 @@ exists.
 | tool | does | size / device | exact? |
 |---|---|---|---|
 | **GLiNER 2.5** (`fastino/gliner2.5-multi-v1`, Apache-2.0; checkpoints 74M–287M, published) | mentions (NER with our own labels), and **joint entity–relation decoding** — relations as a schema we declare, without an LLM | < 1 GB f16; GPU or CPU | bit-exact per stated run (invariant 12; measure it as any encoder) |
-| **wikidata's QUERY encoder** (jina-embeddings-v3, `retrieval.query` adapter — `vega-jina-v3-query`, docs/notes/wikidata-recipe.toml; torch on louise-python behind VeGa) | linking a mention to Wikidata: the mention embedded as a QUERY of wikidata's space, searched against wikidata's vectors, top-10 Q-ids. **Invariant 1**: wikidata's space is jina-v3 at dim 512; a vector from gutenberg's encoder (Qwen3-Embedding-4B) searched against it is meaningless — the first draft of this note had that error (architecture session's review, 2026-10-25) | ~1.1 GB f16 (572M); resident on the node for the wikidata collection, an ADDITIONAL model on a 16 GB peer | bit-exact with `LOUISE_TORCH_DETERMINISTIC=1` — MEASURED for the document model (512/512, approved-encoders.md torch row); the query model's measurement is listed as following and is a precondition here |
-| the **masked relation embedding** (`[PERSON] met [PERSON] in [PLACE] in [DATE]`, graphrag-compliance §9.3) | templates compared with TEMPLATES — never against gutenberg's or wikidata's vectors — so it is a space of the METHOD, named in it: one pinned run embeds both sides. Proposed: jina-v3's `retrieval.passage` run (already required above), so one torch model serves linking and templates | no extra model | as the row above |
+| **wikidata's QUERY encoder, as its Codex states it** — since the 2026-11-06 creation Nemotron-3-Embed-1B on llama.cpp (`vega-nemotron-3-embed-1b`, f16 GGUF, 2,048 dims native; `query: ` before a question, `passage: ` before a document — Codex version 11's `space.document.instruction`; nemotron-embed.md "Production", operator 2026-11-02) | linking a mention to Wikidata: the mention sent as a QUERY of wikidata's space, searched against wikidata's vectors, top-10 Q-ids. **Invariant 1**: the mention is embedded by WIKIDATA's query side, never by gutenberg's encoder — the first draft of this note sent Qwen3 vectors against jina-v3's space (architecture session's review, 2026-10-25); the model has since changed twice (jina-v3 → bge-m3 on 2026-10-31 → Nemotron on 2026-11-02), which is why the rule names the Codex and not a model | ~2.3 GB f16; resident wherever wikidata is held, and the SAME weights gutenberg-nemo embeds with (operator, 2026-11-02: "when wikidata is over make a gutenberg-nemo with Nemotron"), so on a Nemotron node it is no additional model | bit-exact on SYCL with `GGML_SYCL_ENABLE_DNN=0`: the gate PASSED at wikidata's 2026-11-06 creation, exact over 3 fresh loads, 512 of 512 (München) |
+| the **masked relation embedding** (`[PERSON] met [PERSON] in [PLACE] in [DATE]`, graphrag-compliance §9.3) | templates compared with TEMPLATES — never against gutenberg's or wikidata's vectors — so it is a space of the METHOD, named in it: one pinned run embeds both sides. Proposed: the same Nemotron run, `passage: ` side, so one resident model serves the collections' queries, the linking and the templates | no extra model | as the row above |
 | a **reading LLM, 16 GB class** | relation extraction where GLiNER's schema is not enough; the Q-id pick among candidates "or none"; community summaries | Gemma 3 12B at Q6_K ≈ 10 GB + 8k context, or Qwen3 14B Q4_K_M ≈ 9 GB; the plan's own HHEM table ranks Gemma 3 12B (4.4 %) and Qwen3 8B (4.8 %) ABOVE Gemma 4 26B A4B (5.2 %) on hallucination (published, wikidata-plugins.md) | not bit-exact: `model` method, agreement floor measured (03 §3.2) |
 | a **reading LLM, 32 GB class** (the plan's Gemma 4 26B A4B Q8_0 ≈ 27 GB) | the same, better JSON and longer context, on peers that have the card | 32 GB cards only, alone, at night | as above; a DIFFERENT model is a different sibling (wikidata-plugins.md) |
 | **Leiden** (igraph or graspologic, pinned version, fixed seed) | communities over the graph | CPU, RAM ∝ edges | bit-exact given library version + seed (measure: two runs, byte compare) |
@@ -132,7 +132,8 @@ Two cross-cutting rules:
   block when a tier's claims change (the plan's rule), on the CPU, off
   the GPU loop.
 - **The 16 GB floor.** Every stated run in the first sibling fits 16 GB:
-  GLiNER (< 1 GB), jina-v3 for linking and templates (~1.1 GB), the 12B
+  GLiNER (< 1 GB), Nemotron for linking and templates (~2.3 GB f16, the
+  collections' own encoder once gutenberg-nemo exists), the 12B
   reader at Q6_K (~10 GB) — not at once with the peer's own encoders;
   the reader runs when nothing embeds, as the plan already says for the
   26B. A peer with 32 GB adds nothing to THIS sibling; it may produce the
@@ -146,8 +147,8 @@ Two cross-cutting rules:
   the claim (scheduling.md §12, amended 2026-10-25: embedding has the
   lower priority) — so a pass never slows a search, and its throughput is
   whatever the idle windows leave.
-- **The exact layer runs on torch, and torch is not yet checked by the
-  wrapper** (invariant 12, "Open"). GLiNER 2.5 is a transformers model,
+- **GLiNER runs on torch, and torch is not yet checked by the wrapper**
+  (invariant 12, "Open"; the Nemotron side is llama.cpp, gated as above). GLiNER 2.5 is a transformers model,
   so it runs on louise-python with `LOUISE_TORCH_DETERMINISTIC=1`
   (`torch.use_deterministic_algorithms(True)` + oneDNN deterministic
   primitives; on NVIDIA also `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
@@ -168,7 +169,7 @@ Two cross-cutting rules:
 | method | kind | check |
 |---|---|---|
 | GLiNER mentions and joint relations, deterministic linking, co-occurrence, Leiden, stylometry, Fellegi–Sunter | deterministic (a new `method.kind`, 09 §9.5: pinned library/model digest, seed, weights, threshold) | re-run a sample, byte compare — like a chunker; no floor |
-| the reader's relations, Q-id picks and summaries | `model` (09 §9.5 as decided 2026-10-20) | `model-agreement` (03 §3.2): re-run a sample, count agreement against the floor measured on the first 1,000 (gutenberg-graph-amendments.md "Decided") |
+| the reader's relations, Q-id picks and summaries | `model` (09 §9.5 as decided 2026-10-20) | `model-agreement` (03 §3.2): re-run a sample, count agreement against the floor measured on the first 1,000 (wiki-gutenberg-amendments.md "Decided") |
 | a `same-entity` candidate (§9.3) | deterministic given its inputs | recompute the score; the claim carries evidence and confidence, never merges records |
 
 A tier's claims collection may therefore be TWO collections: the exact
@@ -197,7 +198,7 @@ the claim beneath it, and §2.10's time rule is defined on records.
    `end`, `label`; an `anchor` end form `gutenberg:<id>#<surface>` for
    tier D; the `same-entity` claim type; a deterministic `method.kind`
    beside `model`. All inside hashed bytes — ask first (CLAUDE.md).
-2. The gutenberg-graph Codex: `tiers = [{name, rule, packets}]` with the
+2. The wiki-gutenberg Codex: `tiers = [{name, rule, packets}]` with the
    rule vocabulary of §1 (LCC letters, LCSH form subdivisions,
    `dcmi_type`), replacing the plan's `scope` by LoC class; inside
    `collection_id`.
@@ -224,8 +225,9 @@ the claim beneath it, and §2.10's time rule is defined on records.
    sample** (a linked count without its precision is not a number — the
    same rule §9.4 of graphrag-compliance.md sets for `same-entity`);
    joint relations emitted against the schema; bit-exactness of GLiNER
-   and of jina-v3's query run over several fresh loads and shuffled
-   orders under `LOUISE_TORCH_DETERMINISTIC=1` (invariant 12).
+   over several fresh loads and shuffled orders under
+   `LOUISE_TORCH_DETERMINISTIC=1` (invariant 12; Nemotron's query side was
+   gated at wikidata's creation).
 3. The 12B reader against the 26B on the same 200 chunks of A: relations
    agreed, JSON failures, tokens/s on a 16 GB and a 32 GB card — this
    decides whether the first sibling's reader is the 12B.
@@ -264,7 +266,7 @@ the loop, and the result flows back as the next snapshot.
   Wikidata item citing the Gutenberg passages — Wikidata's notability
   admits "a clearly identifiable entity described by serious and
   publicly available references" — the next wikidata snapshot carries
-  the Q-id, and the next gutenberg-graph update (annotation-collections.md
+  the Q-id, and the next wiki-gutenberg update (annotation-collections.md
   "Updating": claims re-checked, kept claims keeping their uids) links the
   spans to it. Louise produces the evidence for an identity; Wikidata
   grants it.
@@ -309,7 +311,7 @@ book another.
 
 The loop: discover → claim with evidence → a person proposes it to
 Wikidata → the review's outcome and reason recorded against the claim
-(rumors.md) → the wikidata snapshot → the gutenberg-graph update links to
+(rumors.md) → the wikidata snapshot → the wiki-gutenberg update links to
 it. Nothing
 in it is automatic past the claim, and nothing in it needs a Louise
 identity registry: Wikidata is the registry (CLAUDE.md, "do not reinvent
