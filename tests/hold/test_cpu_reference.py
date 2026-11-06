@@ -589,6 +589,20 @@ def test_the_key_is_what_fixes_the_inputs():
     k = {"weights": "w", "set_id": "s", "ctx": 1024, "instruction": "passage: ", "role": "document"}
     base = cpu_ref.node_directory(cpu_ref.node_key(**k))
     for change in ({"weights": "v"}, {"set_id": "t"}, {"ctx": 2048}, {"instruction": None},
-                   {"role": "query"}):
+                   {"role": "query"}, {"cut": "tokens"}):
         assert cpu_ref.node_directory(cpu_ref.node_key(**{**k, **change})) != base, change
     assert cpu_ref.node_directory(cpu_ref.node_key(**k)) == base
+
+
+def test_a_token_space_never_takes_a_characters_reference():
+    """2026-11-06, wikidata's gate: calibrate cut by characters, the space
+    cuts by tokens, and the key named no cut: `cpu-reference` took the
+    characters vectors, and 54 long items failed at 0.974831. The cut is in
+    the key; a characters key keeps the digest it had before, so the
+    entries made right are still found."""
+    k = {"weights": "w", "set_id": "s", "ctx": 8191, "instruction": "passage: ", "role": "document"}
+    assert cpu_ref.node_key(**k, cut="characters") == {
+        "weights": "w", "set": "s", "ctx": 8191, "instruction": "passage: ", "role": "document"}
+    assert cpu_ref.node_key(**k, cut="tokens")["cut"] == "tokens"
+    assert cpu_ref.node_directory(cpu_ref.node_key(**k, cut="tokens")) != \
+        cpu_ref.node_directory(cpu_ref.node_key(**k))

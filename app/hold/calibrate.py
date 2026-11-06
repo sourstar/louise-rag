@@ -150,7 +150,7 @@ Embed = Callable[[Endpoint, list], tuple[list[list[float]], set]]
 
 
 def http_embed(ctx: int, *, document_instruction: str | None = None,
-               set_id: str | None = None) -> Embed:
+               set_id: str | None = None, cut: str = "characters") -> Embed:
     """Embed through the existing client (invariant 7), the endpoint's own
     recipe, truncating at `ctx` as the gate does. Returns the vectors and
     the runs the answers stated (`Louise-Run`, 03 §3.3).
@@ -158,6 +158,13 @@ def http_embed(ctx: int, *, document_instruction: str | None = None,
     `document_instruction`: the space's `space.document.instruction` (09
     §9.3, Codex version 11), prepended by the client as to every document,
     so the tolerance is measured on the inputs the gate will send.
+
+    `cut`: how the space cuts an input longer than `ctx` (its recipe's
+    `cut`: `characters`, or `tokens`, cut by VeGa to exactly `ctx` tokens),
+    for the same reason. 2026-11-06, wikidata: calibrate cut by characters
+    (the recipe here named no cut) while the space cuts by tokens; both
+    lanes agreed at 0.999996 on inputs the gate never sends, and the CPU
+    reference kept from them failed the gate at 0.974831 on 54 long items.
 
     A CPU LANE IS THE NODE'S STORED CPU REFERENCE (operator, 2026-11-06: "I
     already asked to save the cpu reference values so that we don't have to
@@ -216,7 +223,7 @@ def http_embed(ctx: int, *, document_instruction: str | None = None,
         timeout = cpu_ref.request_timeout(ctx, config.EMBED_CONCURRENCY)
         store = cpu_ref.node_directory(cpu_ref.node_key(
             weights=stated.weights, set_id=set_id or "", ctx=ctx,
-            instruction=document_instruction, role="document"))
+            instruction=document_instruction, role="document", cut=cut))
         got = cpu_ref.obtain(store, "document", set_id=set_id or "", texts=texts,
                              run_id=stated.run_id,
                              run={"driver": stated.driver, "engine": stated.engine,
@@ -231,7 +238,7 @@ def http_embed(ctx: int, *, document_instruction: str | None = None,
         recipe = collections_mod.EmbedRecipe(
             url=ep.url, api=ep.api,
             model=ep.model or collections_mod.model_named_by(ep.url) or "",
-            dtype="f32", ctx=ctx, document_instruction=document_instruction)
+            dtype="f32", ctx=ctx, document_instruction=document_instruction, cut=cut)
         runs: set = set()
         try:
             # the calibration set in the space's form: texts, or a pair
