@@ -97,6 +97,9 @@ def test_a_wired_engine_passes_on_the_tool_template():
     assert got["passed"], _failed(got)
     assert got["template"]["which"] == "tool_use"
     assert not got["reference"]["head"].startswith("<s>"), "the BOS the tokenizer adds is not text"
+    asked = [k for k in got["answers"] if not k.startswith("tokenize")]
+    assert asked == ["chat_count", "raw", "chat", "raw_again"], \
+        "the count first; then raw, chat, raw from the same cached prompt"
 
 
 def test_an_engine_that_adds_to_the_prompt_is_caught_and_the_addition_can_be_tested():
@@ -120,7 +123,7 @@ def test_markers_left_in_the_answer_are_caught():
 
 def test_a_refused_request_fails_with_the_server_s_answer():
     got = run(lambda url, body: (500, "Unexpected error in RPC handling"))
-    assert not got["passed"] and "chat: 500: Unexpected error" in _failed(got)["every request answered"]
+    assert not got["passed"] and "chat_count: 500: Unexpected error" in _failed(got)["every request answered"]
 
 
 def test_the_templates_are_read_from_the_gguf_as_llama_cpp_carries_them(tmp_path):
