@@ -671,7 +671,8 @@ def cmd_collection_new(a) -> int:
             ("ctx", sp.ctx, ctx), ("cut", sp.cut or "characters", cut),
             ("document instruction", sp.document_instruction, instruction),
             ("calibration set", sp.calibration.set, set_id),
-            ("encoder weights", cx.encoder_field(codex)[1], enc["weights"]),
+            # the WEIGHTS (`cx.encoder_field` names the engine, not them)
+            ("encoder weights", getattr(sp.encoder, "weights", None), enc["weights"]),
             ("tolerance", decimal.Decimal(str(sp.tolerance)), decimal.Decimal(tolerance)))
             if got != want]
         if differs:
