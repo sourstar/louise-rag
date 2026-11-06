@@ -422,3 +422,72 @@ def test_a_caller_s_sampling_reaches_the_request_in_both_dialects(fake_chat, mon
     assert {k: fake_chat["body"]["options"][k] for k in arm} == arm
     with pytest.raises(ValueError, match="mirostat"):
         llm.chat_tools([{"role": "user", "content": "q"}], None, sampling={"mirostat": 2})
+
+
+def cohere_default_template(messages):
+    """Cohere's default template (Command R7B's GGUF, line 174): after the
+    system turn, user and assistant strictly alternate, user first, or it
+    raises — LocalAI's 500, measured on the node 2026-11-06."""
+    import httpx
+    turns = [m for m in messages if m["role"] != "system"]
+    for i, m in enumerate(turns):
+        if (m["role"] == "user") != (i % 2 == 0) or m["role"] not in ("user", "assistant"):
+            raise httpx.HTTPStatusError("500", request=httpx.Request("POST", "http://x"), response=httpx.Response(
+                500, text="Jinja Exception: Conversation roles must alternate user/assistant/user/assistant/..."))
+
+
+def test_the_answer_without_tools_is_asked_on_turns_a_template_without_tools_renders(chat_model):
+    """2026-11-06, Command R7B's pilots: 8 answers of 45 failed. Past the
+    bound, or after a tool round the engine refused, Ask asked again with
+    no tools on the conversation with its tool turns; with no tools the
+    engine renders the DEFAULT template, and Cohere's raises on a tool turn.
+    The tool answers now join the sources; the roles alternate."""
+    search = llm.ToolCall("c1", "louise_search", {"query": "Collier de la reine"})
+    seen = []
+
+    def model(messages, tools):
+        seen.append((messages, tools))
+        if tools:
+            return "", [search], {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {
+                "name": "louise_search", "arguments": {"query": "Collier de la reine"}}}]}
+        cohere_default_template(messages)
+        return "Le Collier de la reine [1].", [], {"role": "assistant", "content": "Le Collier de la reine [1]."}
+    out = chat.ask("Dumas, le collier?", call=lambda n, a: SEARCH_RESULT, model=model, max_rounds=2)
+    assert out["answer"] == "Le Collier de la reine [1]." and out["exhausted"]
+    last, tools = seen[-1]
+    assert tools is None and [m["role"] for m in last] == ["system", "user"]
+    assert last[1]["content"].count("Search: «") == 3, "Louise's search and the model's two, as sources"
+    assert last[1]["content"].endswith("Question: Dumas, le collier?")
+    assert [m["role"] for m in seen[-2][0]][-2:] == ["assistant", "tool"], "the loop's own turns are kept"
+
+
+def test_an_answer_now_follows_the_model_s_own_turn(chat_model):
+    """A model that answers with a tool call written as text is told to
+    answer now AFTER its own turn: two user turns in a row are refused by
+    Cohere's template too."""
+    import httpx
+    seen = []
+
+    def model(messages, tools):
+        seen.append(messages)
+        if tools:
+            raise httpx.HTTPStatusError("500", request=httpx.Request("POST", "http://x"),
+                                        response=httpx.Response(500, text="Unexpected error in RPC handling"))
+        cohere_default_template(messages)
+        if len(seen) == 2:
+            return '<tool_call>{"name": "louise_search"}</tool_call>', [], {}
+        return "From the sources: Moby Dick [1].", [], {}
+    out = chat.ask("q", call=lambda n, a: SEARCH_RESULT, model=model)
+    assert out["answer"] == "From the sources: Moby Dick [1]." and out["tools_failed"].startswith("500")
+    assert [m["role"] for m in seen[-1]] == ["system", "user", "assistant", "user"]
+    assert seen[-1][-1]["content"] == chat.ANSWER_NOW
+
+
+def test_without_tool_turns_leaves_the_conversation_as_it_was():
+    msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "Sources:\n\nA\n\nQuestion: q"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "tool_call_id": "1", "content": "B"}]
+    flat = chat.without_tool_turns(msgs)
+    assert flat == [{"role": "system", "content": "S"},
+                    {"role": "user", "content": "Sources:\n\nA\n\n---\n\nB\n\nQuestion: q"}]
+    assert len(msgs) == 4 and msgs[1]["content"] == "Sources:\n\nA\n\nQuestion: q"
