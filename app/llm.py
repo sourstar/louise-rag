@@ -29,10 +29,23 @@ def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
 
+#: the sampling values a caller may send with a request (`sampling`); both
+#: dialects name them alike (LocalAI's request fields, Ollama's options)
+SAMPLING_KEYS = frozenset({"temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                           "frequency_penalty", "repeat_penalty", "seed"})
+
+
 def _request(messages: list[dict], *, stream: bool, temperature: float | None,
-             max_tokens: int | None, num_ctx: int) -> tuple[str, dict]:
+             max_tokens: int | None, num_ctx: int,
+             sampling: dict | None = None) -> tuple[str, dict]:
     """(url, body) in the protocol CHAT_URL speaks. `temperature` None sends
-    none: the model's own file decides, with the rest of its sampling."""
+    none: the model's own file decides, with the rest of its sampling.
+    `sampling` overrides the file's values for this request only (the chat
+    benchmark's arms, tools/measure/chat_eval.py), `temperature` included;
+    a key outside SAMPLING_KEYS is refused, never sent to be ignored."""
+    unknown = set(sampling or ()) - SAMPLING_KEYS
+    if unknown:
+        raise ValueError(f"sampling: not a sampling value: {', '.join(sorted(unknown))}")
     if config.CHAT_API == "openai":
         body: dict = {"model": config.CHAT_MODEL, "messages": messages, "stream": stream,
                       "chat_template_kwargs": {"enable_thinking": False}}
@@ -40,12 +53,14 @@ def _request(messages: list[dict], *, stream: bool, temperature: float | None,
             body["temperature"] = temperature
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        body.update(sampling or {})
         return f"{config.CHAT_URL}/v1/chat/completions", body
     options: dict = {"num_ctx": num_ctx}
     if temperature is not None:
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = max_tokens
+    options.update(sampling or {})
     return f"{config.CHAT_URL}/api/chat", {
         "model": config.CHAT_MODEL, "messages": messages, "stream": stream,
         "think": False, "keep_alive": config.LLM_KEEP_ALIVE, "options": options}
@@ -194,7 +209,8 @@ def _arguments(raw) -> dict:
 
 def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float | None = None,
                max_tokens: int = 1500, num_ctx: int = 16384, *,
-               level: Level = Level.CHAT) -> tuple[str, list[ToolCall], dict]:
+               level: Level = Level.CHAT,
+               sampling: dict | None = None) -> tuple[str, list[ToolCall], dict]:
     """One round with function tools declared (`ask chat`, 05 §5.4):
     `(content, calls, assistant_message)` — the assistant message as the
     protocol wants it appended before the tool messages. `tools` None
@@ -204,10 +220,11 @@ def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: floa
     maker's sampling, from its own model file. This sent 0.2 to every
     model; Qwen3.6-35B-A3B's pilot looped ("Rouge-Profond ? Non, …" to the
     token bound) at that near-greedy setting, which Qwen's card warns
-    against, and the cards say 0.7. A caller that wants one passes it."""
+    against, and the cards say 0.7. A caller that wants one passes it;
+    `sampling` sets any of SAMPLING_KEYS for this request (`_request`)."""
     warm(level)
     url, body = _request(messages, stream=False, temperature=temperature,
-                         max_tokens=max_tokens, num_ctx=num_ctx)
+                         max_tokens=max_tokens, num_ctx=num_ctx, sampling=sampling)
     if tools:
         body["tools"] = tools
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \

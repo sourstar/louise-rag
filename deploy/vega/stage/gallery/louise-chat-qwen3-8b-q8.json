@@ -1,0 +1,54 @@
+{
+  "id": "localai@qwen3-8b",
+  "name": "louise-chat-qwen3-8b-q8",
+  "files": [
+    {
+      "filename": "llama-cpp/models/Qwen3-8B-Q8_0.gguf",
+      "uri": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q8_0.gguf"
+    }
+  ],
+  "overrides": {
+    "backend": "vega-louise-llama-cpp",
+    "context_size": 16384,
+    "env": {
+      "GGML_SYCL_ENABLE_DNN": "0",
+      "GGML_SYCL_FA_ONEDNN": "0",
+      "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "flash_attention": "on",
+    "draft_model": "",
+    "gpu_layers": 999,
+    "known_usecases": [
+      "chat"
+    ],
+    "mmap": true,
+    "mmproj": "",
+    "options": [
+      "parallel:1",
+      "cache_ram:0",
+      "ubatch:512",
+      "use_jinja:true"
+    ],
+    "parameters": {
+      "model": "llama-cpp/models/Qwen3-8B-Q8_0.gguf",
+      "batch": 2048,
+      "seed": 0,
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "repeat_penalty": 1,
+      "repeat_last_n": 64
+    },
+    "reasoning_effort": "none",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "template": {
+      "use_tokenizer_template": true
+    },
+    "threads": 6
+  }
+}

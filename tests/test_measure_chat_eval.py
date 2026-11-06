@@ -72,7 +72,7 @@ def test_an_answer_that_paid_a_load_is_cold_and_not_timed(tmp_path, capsys):
     assert s["cold"] == 2 and s["n"] == 4
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[9].strip() == "2", "the cold column"
+    assert row.split("|")[10].strip() == "2", "the cold column"
 
 
 def test_other_settings_under_the_same_name_are_refused(tmp_path):
@@ -173,7 +173,7 @@ def test_citations_are_counted_and_checked_against_what_the_tools_returned(tmp_p
     capsys.readouterr()
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[11:16] == [" 1 ", " 1.0 ", " 0.50 ", " 1 ", " 0 "]
+    assert row.split("|")[12:17] == [" 1 ", " 1.0 ", " 0.50 ", " 1 ", " 0 "]
 
 
 def test_an_answer_that_cites_nothing_though_results_came_back_is_counted():
@@ -198,7 +198,7 @@ def test_answers_whose_results_were_slimmed_are_counted(tmp_path, capsys):
     capsys.readouterr()
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[16] == " 1 "
+    assert row.split("|")[17] == " 1 "
 
 
 def test_the_operators_three_conveys_summarises_cites(tmp_path, capsys):
@@ -433,3 +433,58 @@ def test_a_whole_run_waits_for_a_pilot_read_one_by_one(tmp_path, monkeypatch, ca
     assert ev.main(base) == 0
     assert asked == ["secondo romanzo"], "the whole run resumes after the pilot's answers"
     assert len(ev._rows(out, "m")) == 4
+
+
+def test_an_arm_s_sampling_is_parsed_and_a_penalty_of_zero_refused():
+    """LocalAI reads a request's penalty of 0 as unset (2026-11-06): the model
+    file's value would apply without a word, so 0 is refused, not sent."""
+    assert ev.parse_sampling("temperature=0.1, top_p=0.8,top_k=20,min_p=0,presence_penalty=1.5") == \
+        {"temperature": 0.1, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}
+    assert isinstance(ev.parse_sampling("top_k=20")["top_k"], int)
+    assert ev.parse_sampling("") == {}
+    for bad, why in (("temp=0.1", "not one of"), ("top_p=high", "not a number"),
+                     ("presence_penalty=0", "unset"), ("repeat_penalty=0.0", "unset"),
+                     ("frequency_penalty=0", "unset"), ("temperature", "not one of")):
+        with pytest.raises(SystemExit, match=why):
+            ev.parse_sampling(bad)
+
+
+def test_an_arm_is_its_own_run_and_sends_its_sampling_every_round(tmp_path, monkeypatch, capsys):
+    """Operator, 2026-11-06: "optimize the results by changing their
+    parameters". The run is the arm: its settings hold the sampling, its rows
+    carry it, another sampling under its name is refused, and Ask's model
+    sends it with every request."""
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    ask = _fake_ask({"Dumas novel about the necklace": {"answer": "x", "turns": []}})
+    arm = {"temperature": 0.1, "presence_penalty": 1.5}
+    ev.run(tmp_path, "m.t01", model="m", queries=qs, ask=ask, guess=lambda t: "en", sampling=arm)
+    stated = json.loads((tmp_path / "runs" / "m.t01" / "settings.json").read_text())
+    assert stated["sampling"] == arm
+    assert ev._rows(tmp_path, "m.t01")[0]["sampling"] == arm
+    with pytest.raises(SystemExit, match="settings differ"):
+        ev.run(tmp_path, "m.t01", model="m", queries=qs, ask=ask, guess=lambda t: "en",
+               sampling={"temperature": 0.7})
+    ev.score(tmp_path)
+    assert "| m.t01 | presence_penalty=1.5, temperature=0.1 |" in capsys.readouterr().out
+    from app import llm
+    sent = []
+    monkeypatch.setattr(llm, "chat_tools", lambda m, t, **kw: sent.append(kw) or ("ok", [], {}))
+    assert ev.arm_model(None) is None, "no arm: the model file's own sampling"
+    ev.arm_model(arm)([{"role": "user", "content": "q"}], None)
+    assert sent == [{"sampling": arm}]
+
+
+def test_a_loop_is_a_span_repeated_back_to_back_and_a_list_is_not(tmp_path):
+    """The 35B pilot, 2026-11-03: "Rouge-Profond ? Non, …" to the token bound."""
+    assert ev.looped("Le titre est " + "Rouge-Profond ? Non, Rouge-Sombre. " * 6)
+    assert ev.looped("A [1] b c d e. " + "the book is held here [2] and also there [3] " * 3)
+    assert not ev.looped("Don Quijote de la Mancha — Miguel de Cervantes, 1605 [1]\n"
+                         "Don Quijote de la Mancha — Miguel de Cervantes, 1615 [2]\n"
+                         "Don Quijote de la Mancha — Miguel de Cervantes, 1780 [3]\n"), "editions differ"
+    assert not ev.looped("No no no."), "too short to be a loop"
+    assert not ev.looped("Moby-Dick is a novel by Herman Melville [1]. It tells of Ahab's hunt [2].")
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    ask = _fake_ask({"Dumas novel about the necklace": {"answer": "ok " * 30, "turns": []}})
+    ev.run(tmp_path, "m", model="m", queries=qs, ask=ask, guess=lambda t: "en")
+    assert ev._rows(tmp_path, "m")[0]["looped"] is True
+    assert ev.summary(ev._rows(tmp_path, "m"))["looped"] == 1

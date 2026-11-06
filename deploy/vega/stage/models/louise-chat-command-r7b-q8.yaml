@@ -10,14 +10,20 @@
 #   node pins its uri to the Hub's commit and writes its sha256 in at the
 #   install, as for the 9B Q8.
 # Ours on top: our llama.cpp package and the measured SYCL set, parallel 1, a
-# 16k context, seed 0. No thinking mode to switch off. Sampling: Ask sends its
-# own temperature per request; 0.3 here is Cohere's usual default (the
-# original card is gated and was not read).
+# 16k context, seed 0. No thinking mode to switch off. Sampling: Cohere's
+# chat API defaults (temperature 0.3, p 0.75, k 0 = off); the original card
+# is gated and was not read.
 # STOPWORDS <|END_OF_TURN_TOKEN|> (measured 2026-11-03): on our engine (llama.cpp
 #   ddf48f8, no dedicated Command-R parser) an answer asked WITHOUT tools ends
 #   with the end-of-turn marker as text; the stop word removes it (same request,
 #   finish_reason stop either way). With tools, R7B's tool calls are not placed
 #   by the auto-parser (HTTP 500): Ask answers that round without tools (#303).
+# SAMPLING, EVERY VALUE STATED (2026-11-06, docs/notes/nemotron-embed.md "Sampling, Q8
+# first"): an unset value gets LocalAI's generic default (temperature 0.9, top_p 0.95,
+# top_k 40), not the card's; the penalties are NEUTRAL here because a request cannot set
+# one back to 0 (LocalAI reads 0 as unset): the chat benchmark's arms send the penalty
+# they test; `repeat_last_n` 64 (llama.cpp's default) because LocalAI sends 0 when the
+# file names none, and 0 DISABLES every penalty in llama.cpp.
 {
   "name": "louise-chat-command-r7b-q8",
   "backend": "vega-louise-llama-cpp",
@@ -48,11 +54,17 @@
     "ubatch:512"
   ],
   "parameters": {
-    "seed": 0,
+    "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf",
     "batch": 2048,
+    "seed": 0,
     "temperature": 0.3,
+    "top_p": 0.75,
+    "top_k": 0,
+    "min_p": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
     "repeat_penalty": 1,
-    "model": "llama-cpp/models/c4ai-command-r7b-12-2024-Q8_0.gguf"
+    "repeat_last_n": 64
   },
   "stopwords": [
     "<|END_OF_TURN_TOKEN|>"
