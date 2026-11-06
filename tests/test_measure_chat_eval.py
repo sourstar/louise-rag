@@ -72,7 +72,7 @@ def test_an_answer_that_paid_a_load_is_cold_and_not_timed(tmp_path, capsys):
     assert s["cold"] == 2 and s["n"] == 4
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[10].strip() == "2", "the cold column"
+    assert row.split("|")[11].strip() == "2", "the cold column"
 
 
 def test_other_settings_under_the_same_name_are_refused(tmp_path):
@@ -173,7 +173,7 @@ def test_citations_are_counted_and_checked_against_what_the_tools_returned(tmp_p
     capsys.readouterr()
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[12:17] == [" 1 ", " 1.0 ", " 0.50 ", " 1 ", " 0 "]
+    assert row.split("|")[13:18] == [" 1 ", " 1.0 ", " 0.50 ", " 1 ", " 0 "]
 
 
 def test_an_answer_that_cites_nothing_though_results_came_back_is_counted():
@@ -198,7 +198,7 @@ def test_answers_whose_results_were_slimmed_are_counted(tmp_path, capsys):
     capsys.readouterr()
     ev.score(tmp_path)
     row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
-    assert row.split("|")[17] == " 1 "
+    assert row.split("|")[18] == " 1 "
 
 
 def test_the_operators_three_conveys_summarises_cites(tmp_path, capsys):
@@ -488,3 +488,19 @@ def test_a_loop_is_a_span_repeated_back_to_back_and_a_list_is_not(tmp_path):
     ev.run(tmp_path, "m", model="m", queries=qs, ask=ask, guess=lambda t: "en")
     assert ev._rows(tmp_path, "m")[0]["looped"] is True
     assert ev.summary(ev._rows(tmp_path, "m"))["looped"] == 1
+
+
+def test_an_answer_that_thinks_aloud_is_counted(tmp_path):
+    """The Q8 pilots, 2026-11-06: Qwen3.5-9B at 0.4 and 0.7 wrote its
+    reasoning into the answer, invented titles retracted in place."""
+    assert ev.self_talk("The novel is titled *La Dame de Monsoreau*? No, that's incorrect.")
+    assert ev.self_talk("known as *The Lady of the Camellias*? No, that's different. Actually, it's")
+    assert ev.self_talk("le titre est *La Reine Margot* ? Non, encore faux.")
+    assert not ev.self_talk("Is it in the collections? The sources [1] say it is *The Queen's Necklace*.")
+    assert not ev.self_talk("No source holds the work; the closest is [2].")
+    qs = ev.read_queries(_queries(tmp_path))[:2]
+    answers = {qs[0]["query"]: {"answer": "It is *Monsoreau*? No, that is incorrect. It is X [1].", "turns": []},
+               qs[1]["query"]: {"answer": "È X [1].", "turns": []}}
+    ev.run(tmp_path, "m", model="m", queries=qs, ask=lambda q, collections=None: answers[q],
+           guess=lambda t: "en")
+    assert ev.summary(ev._rows(tmp_path, "m"))["self_talk"] == 1
