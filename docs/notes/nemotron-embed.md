@@ -1053,6 +1053,25 @@ that penalty is no longer disabled.
 every value by its effect, on the node, through the body Ask sends. A run
 of a model whose probe has not passed is refused.
 
+**THE WIRING CHECK** (tools/measure/wire_check.py, `chat_eval wire`;
+operator, 2026-11-06: "Are you sure that the model input/output are
+correctly wired?"). The probe does not see what the model is given or what
+Ask gets back. Both come from the engine: llama.cpp renders the GGUF's own
+template, and a per-format handler parses the output (Command R7B's is P6).
+On Ask's real first request for a recorded question, the check:
+- renders the GGUF's template as transformers does, the reference;
+- sends that text raw to /v1/completions at greedy, twice;
+- sends Ask's own request at greedy.
+
+The model is wired when both requests count the same prompt tokens, generate
+the same number of tokens, the answer's text is inside the raw text, no tool
+call is lost and no marker is left in the answer. A run of a model not shown
+wired is refused.
+
+Why now: Command R7B's pilot searched a source's id as a query and searched
+again for titles it had already been given. Two answers failed both with
+and without tools. The Qwens never called a tool.
+
 **Searched online for open bugs, 2026-11-06:**
 - None is open on a penalty of 0 read as unset, `repeat_last_n` 0, or a
   family default filling a 0.
