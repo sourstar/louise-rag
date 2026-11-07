@@ -128,6 +128,7 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
     # status, 2026-11-07); `superseded` and `reembed` where they were counted
     stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason,
                **({"over": True} if s.over else {}),
+               **({"counted_at": int(s.counted_at)} if getattr(s, "counted_at", None) else {}),
                **({"errored": s.errored} if s.errored else {}),
                **({"superseded": s.superseded} if getattr(s, "superseded", None) is not None else {}),
                **({"reembed": s.reembed} if getattr(s, "reembed", None) else {})}

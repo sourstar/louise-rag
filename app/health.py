@@ -92,6 +92,12 @@ _withheld = status.license_says
 _copy_state = status.copy_says
 
 
+def _age(at: float) -> str:
+    """How long ago a stored count was made, as a person reads it."""
+    s = max(0, int(time.time() - at))
+    return f"{s // 3600} h {s % 3600 // 60} min" if s >= 3600 else f"{s // 60} min"
+
+
 @dataclass
 class Stage:
     name: str
@@ -110,11 +116,16 @@ class Stage:
     #: embed: done at an older EMBED_VERSION, re-embedded by the worker's
     #: version walk — from the last full count (status `bounded`); None: none stored
     reembed: int | None = None
+    #: `waiting` over the cap, taken from the last full count (the number the
+    #: card shows): that count's time; None: counted live
+    counted_at: float | None = None
 
     def line(self) -> str:
         mark = {IDLE: "  ", RUNNING: "->", HELD: "..", BLOCKED: "!!"}[self.state]
         n = f"over {self.waiting:,}" if self.over else f"{self.waiting:,}"
         got = f"{mark} {self.name:<7} {n:>17}  {self.state}"
+        if self.counted_at:
+            got += f"  (full count {_age(self.counted_at)} ago)"
         if self.errored:
             got += f"  ({self.errored:,} errored, not waiting)"
         if self.reembed:
@@ -207,7 +218,8 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None,
         work = int(st.waiting or 0) + (int(st.reembed or 0) if name == "embed" else 0)
         state, reason = status.judge(work, found)
         report.stages.append(Stage(name, st.waiting or 0, state, reason, st.over, st.errored or 0,
-                                   superseded=st.superseded, reembed=st.reembed))
+                                   superseded=st.superseded, reembed=st.reembed,
+                                   counted_at=st.from_scan.get("waiting")))
     return report
 
 
