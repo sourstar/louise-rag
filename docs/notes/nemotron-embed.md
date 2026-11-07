@@ -1175,6 +1175,8 @@ arms loop and presence 1.5 costs quality.
 
 ## Several texts in one pass (`parallel`) on wikidata's chunks (München, 2026-11-07) — MEASURED, NOT ADOPTED
 
+**NOT THE DEPLOYED ENGINE (found the same day).** These rows are louise-sycl-f16-llama-cpp-16acc89's. The node runs louise-sycl-f16-llama-cpp-ea2417d91dcc (vega-louise-llama-cpp/vega.json, the running backends), against measuring.md's "measure the DEPLOYED flags". The same run on ea2417d91dcc replaces this table; until then its conclusion stands only for 16acc89.
+
 The question: wikidata's Nemotron embedding runs at ~34 chunks/s with the card
 at 100 %, after the request-side levers (batch 16, 4 lanes, requests filled
 across documents). Under VeGa, llama.cpp runs one sequence at a time
