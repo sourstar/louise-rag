@@ -17,7 +17,11 @@ from app import collections as collections_mod, config, cpu_limit, db, discovery
 from app.node_profile import Active, GpuLevel, Profile
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-EIGHT = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+def _eight() -> datetime:
+    """08:00 TODAY, read when a test uses it: a constant read at import was
+    "yesterday" for a suite that crossed midnight (the deploy gate of
+    2026-11-07, 00:5x: "paused until Fri 08:00" != "paused until 08:00")."""
+    return datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
 
 
 def _active(cores, name=None, until=None):
@@ -129,7 +133,7 @@ def test_the_cache_ends_at_the_profile_s_own_boundary(monkeypatch):
 
 
 def test_each_change_is_said_once_naming_the_profile(monkeypatch, fast):
-    _script(monkeypatch, _active(0, until=EIGHT), _active(0, until=EIGHT), _active(8), _active(8), _active("none"))
+    _script(monkeypatch, _active(0, until=_eight()), _active(0, until=_eight()), _active(8), _active(8), _active("none"))
     said: list[str] = []
     w = cpu_limit.Watch(said.append)
     for _ in range(5):
@@ -226,7 +230,7 @@ def test_a_pause_submits_nothing_finishes_what_is_in_flight_and_resumes(
     rows = [dict(r) for r in (rows * 40)[:120]]
     pages = [rows[i:i + 24] for i in range(0, 120, 24)]
     truth = [parallel.compute("chunks", c, p) for p in pages]
-    s = _script(monkeypatch, _active(3), _active(3), *[_active(0, until=EIGHT)] * 6, _active(3))
+    s = _script(monkeypatch, _active(3), _active(3), *[_active(0, until=_eight())] * 6, _active(3))
     pool = TimedPool(s)
     monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
     monkeypatch.setattr(parallel, "pool", lambda: pool)
@@ -290,7 +294,7 @@ def test_the_pipeline_pauses_its_parse_stages_and_resumes(tmp_path, monkeypatch)
     con = db.connect(c)
     discovery.sync_collection(con, c)
     state = {"cores": 0}
-    monkeypatch.setattr(node_profile, "active", lambda now=None: _active(state["cores"], until=EIGHT))
+    monkeypatch.setattr(node_profile, "active", lambda now=None: _active(state["cores"], until=_eight()))
     gone = threading.Event()
     thread = threading.Thread(target=worker._pipeline_worker, args=(c, gone))
     thread.start()
@@ -325,7 +329,7 @@ def test_the_main_loop_step_embeds_only_while_paused(tmp_path, monkeypatch):
         lance_dir=tmp_path / "alpha" / "lancedb")
     con = db.connect(c)
     discovery.sync_collection(con, c)
-    _script(monkeypatch, _active(0, until=EIGHT))
+    _script(monkeypatch, _active(0, until=_eight()))
     assert worker._run_one_step(con, c, {}, pipeline_active=False) is False
     assert con.execute("SELECT COALESCE(SUM(rdf_done),0) FROM documents").fetchone()[0] == 0
     said = [r[0] for r in con.execute("SELECT message FROM events ORDER BY id")]
