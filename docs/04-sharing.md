@@ -446,9 +446,10 @@ removal may be mandatory and must leave no trace. Sharing cannot
 un-publish: once a part is served, no later snapshot reaches the peers
 who hold it. So `erasure: erasable` requires `privacy: never-share`, and
 a SHARD build refuses the pair otherwise; every collection that travels
-is append-only or retractable, and a tombstoned record stays in its
-closed part until that part is re-issued (02 §2.2), excluded from search
-and embedding (01, promise 7).
+is append-only or retractable, and a tombstoned record leaves its part
+in the snapshot that tombstones it, the version that held it kept as
+`origin_versions` says (02 §2.2, §2.3, *amended 2026-11-07*, operator: B),
+so no peer searches or embeds it (01, promise 7).
 What "no trace" means in bytes is 02 §2.9.
 
 **The web sources of a deposit collection.** A deposit collection may

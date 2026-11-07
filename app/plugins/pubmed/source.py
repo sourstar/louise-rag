@@ -4,14 +4,33 @@ files (baseline + updatefiles are the same code path; see architecture-v2.md
 many records, so DocRef.locator names the container and
 DocRef.extra["record_index"] names the record's position within it.
 
-DeleteCitation entries are discovered as DocRefs with `error` set to
-DELETE_MARKER — the generic orchestrator (app/discovery.py) already skips
-fetch()/parse() for any errored ref and upserts a manifest row carrying that
-error, which is exactly a tombstone: the row exists (so a later re-add is
-detected as a real change, not a phantom insert) but is permanently excluded
-from further stage processing by the existing `WHERE error IS NULL` gates —
-no manifest schema change needed. A later baseline/updatefile pass over the
-same files re-derives the identical tombstone (idempotent).
+DeleteCitation entries are discovered as DocRefs with `deleted` set (06
+§6.1's deletion signal; reason `retracted`, 09 §9.4: "the origin says the
+record should not have existed") and `error` set to DELETE_MARKER — the
+generic orchestrator (app/discovery.py) skips fetch()/parse() for any
+errored ref, takes a deleted one out of every index it is in
+(app/unindexable.py), and upserts a manifest row carrying that error, which
+is exactly a tombstone: the row exists (so a later re-add is detected as a
+real change, not a phantom insert) but is permanently excluded from further
+stage processing by the existing `WHERE error IS NULL` gates — no manifest
+schema change needed. A later baseline/updatefile pass over the same files
+re-derives the identical tombstone (idempotent).
+
+UPDATE FILES APPLY IN THE ORIGIN'S ORDER (docs/notes/pubmed-updatefiles.md).
+NLM numbers its files in one sequence per baseline year — the baseline
+pubmed26n0001…n1334 in `baseline/`, the daily files from pubmed26n1335 in
+`updatefiles/`, which acquisition lands under `updatefiles/` in the corpus
+(09 §9.17 `updatefiles-dir`) — and a later file's record supersedes an
+earlier one's. Two rules make the manifest the origin's state whatever
+order files land or are scanned in:
+  - an update file is enumerated only once its predecessor in the sequence
+    is held (a baseline file, or an update file enumerated before it) and
+    its own `.md5` beside it checks out; until then it is reported once per
+    scan and waits, and every later file of its year waits behind it;
+  - `origin_order` gives discovery each locator's place in the sequence
+    (year, number, member), and a ref from an EARLIER place than the one a
+    row holds is superseded and changes nothing (app/discovery.py) — so a
+    cleared cursor or a re-fetched old file re-opens no revised record.
 
 THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
 plugin (06 §6.4). NLM serves the citations as the annual BASELINE and the
@@ -21,9 +40,15 @@ containers, read as published (`PUBMED_SPEC`) — the archival form the
 origin itself versions and checksums, and the only one that carries the
 `DeleteCitation` tombstones. The API returns the same records paginated,
 unversioned and with no checksum a verifier could re-fetch against.
-docs/notes/pack-format.md, "Which origin form, and why".
+Both directories are one form: the baseline at the Codex's `url`
+(`pubmed/baseline`), the update files in `delta.subdir` resolved against it
+(`pubmed/updatefiles`), applied after the baseline in NLM's numbering; a
+record parsed from an update file is located `updatefiles/<file>#<member>`
+(09 §9.5's own example). docs/notes/pack-format.md, "Which origin form, and
+why"; docs/notes/pubmed-updatefiles.md for the update files.
 """
 import hashlib
+import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -36,7 +61,46 @@ from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, Issue, License
 from . import medline, pack
 
 DELETE_MARKER = "deleted (DeleteCitation)"
+#: 09 §9.4's tombstone reason for a DeleteCitation: the origin says the
+#: citation should not have existed (a duplicate, one made in error) — not
+#: `withdrawn`, an origin that merely stops supplying a record
+DELETE_REASON = "retracted"
 _MD5_SIDECAR = ChecksumSource(kind="sidecar", sidecar_suffix=".md5", sidecar_algo="md5")
+#: where acquisition lands the update files inside the corpus: the spec's
+#: `delta.subdir` (PUBMED_SPEC, and the Codex's `origin.spec.delta`), which
+#: tests/test_pubmed_updatefiles.py holds equal
+UPDATES_SUBDIR = "updatefiles"
+#: NLM's container names: `pubmed<YY>n<NNNN>.xml[.gz]` — one sequence per
+#: baseline year, the update files numbered on from the baseline's last
+_CONTAINER_NAME = re.compile(r"^pubmed(\d+)n(\d+)\.xml(?:\.gz)?$")
+
+
+def sequence_of(container: Path) -> tuple[int, int] | None:
+    """(baseline year, number) of an NLM container, or None for a name that
+    is not NLM's."""
+    m = _CONTAINER_NAME.match(container.name)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _is_container(p: Path) -> bool:
+    return p.is_file() and (p.name.endswith(".xml") or p.name.endswith(".xml.gz"))
+
+
+def ordered_containers(root: Path) -> list[tuple[Path, bool]]:
+    """Every container of the corpus as `(path, is_update)`, in the ORIGIN's
+    order: by NLM's (year, number), the baseline (the corpus root) before
+    the update files (`updatefiles/`) where one number were ever in both;
+    names NLM does not use first, by name, as before."""
+    found = [(p, False) for p in root.iterdir() if _is_container(p)]
+    updates = root / UPDATES_SUBDIR
+    if updates.is_dir():
+        found += [(p, True) for p in updates.iterdir() if _is_container(p)]
+
+    def key(item):
+        path, is_update = item
+        seq = sequence_of(path)
+        return ((0, -1, -1) if seq is None else (1, *seq)), is_update, path.name
+    return sorted(found, key=key)
 
 # Locator format: "<container path>::<record index>". §2 makes the locator
 # opaque outside the owning plugin, and the manifest persists it — so the
@@ -76,6 +140,22 @@ def _verify_md5_sidecar(container: Path) -> None:
     verify_sidecar(container, _MD5_SIDECAR)
     with _cache_lock:
         _verified_cache.add(key)
+
+
+def _update_unverified(container: Path) -> str | None:
+    """Why an update file may not be applied yet, or None: its `.md5` must
+    be beside it and agree. Acquisition renames a file into place before it
+    hashes it (app/acquire/engine.py), and a file placed by hand was never
+    checked at all — an update applied from unchecked bytes and then
+    re-fetched would be applied again after its successors."""
+    sidecar = Path(str(container) + _MD5_SIDECAR.sidecar_suffix)
+    if not sidecar.is_file():
+        return f"no {sidecar.name} beside it"
+    try:
+        _verify_md5_sidecar(container)
+    except Exception as e:  # noqa: BLE001 — TransportError (a mismatch), OSError: not applied
+        return f"{type(e).__name__}: {e}"[:200]
+    return None
 
 
 #: The origin's inconsistencies this plugin's parse reports (06 §6.1,
@@ -171,15 +251,80 @@ class PubmedSource:
          "authority": {"name": "MeSH"}},
     ]
 
+    #: 06 §6.2 (amended 2026-11-07, operator: C): NLM keeps every published
+    #: file — the baseline and each update file — at its own path for the
+    #: life of its baseline year, and removes the year's files when it
+    #: publishes the next baseline. So a superseded part version is kept
+    #: while the files that verify it are at the origin, and dropped at the
+    #: rollover (docs/notes/pubmed-updatefiles.md §5; app/hold/shard.py
+    #: `drop_past_period`), by `origin_period`.
+    origin_versions = "history-until-baseline"
+
+    @staticmethod
+    def origin_period(origin: str) -> int | None:
+        """The baseline year of the NLM container a record's `origin` names
+        (`pubmed26n0001.xml.gz#3`, `updatefiles/pubmed26n1401.xml.gz#17`:
+        26), or None for an origin NLM did not name. A later year's
+        baseline replaces every earlier year's files at the origin."""
+        seq = sequence_of(Path(str(origin).split("#", 1)[0]))
+        return seq[0] if seq else None
+
+    @staticmethod
+    def tombstone_reason(error: str | None) -> str | None:
+        """09 §9.4's tombstone reason for a manifest row carrying `error`:
+        `retracted` for a DeleteCitation, None for any other error (a
+        document that is merely broken is not tombstoned for it)."""
+        return DELETE_REASON if error == DELETE_MARKER else None
+
+    def origin_order(self, locator: str) -> tuple[int, int, int] | None:
+        """A locator's place in the origin's sequence: (baseline year, file
+        number, member index) — what app/discovery.py compares, so that a
+        ref from an earlier place than a row holds is superseded. None for
+        a locator this plugin cannot place (a container NLM did not name)."""
+        container, index = split_locator(str(locator))
+        seq = sequence_of(container)
+        if seq is None or index is None:
+            return None
+        return (seq[0], seq[1], index)
+
     def discover(self, state: DiscoverState):
         root = state.corpus_root
         if not root.is_dir():
             return
-        containers = sorted(
-            p for p in root.iterdir()
-            if p.is_file() and (p.name.endswith(".xml") or p.name.endswith(".xml.gz")))
         progress = cursor.Progress(state, self.source_id)
-        for container in containers:
+        # the places in NLM's sequence held here: every baseline container,
+        # and each update file once its predecessor is held and it checks out
+        ready: set[tuple[int, int]] = set()
+        waiting: set[int] = set()          # years whose update files wait behind a gap
+        for container, is_update in ordered_containers(root):
+            seq = sequence_of(container)
+            if is_update:
+                why = None
+                if seq is None:
+                    why = "not an NLM container name"
+                elif seq[0] in waiting:
+                    continue                # behind the file already reported
+                elif progress.unchanged(container):
+                    ready.add(seq)          # it was applied in order when it was applied
+                    continue
+                elif (seq[0], seq[1] - 1) not in ready:
+                    why = f"its predecessor pubmed{seq[0]:02d}n{seq[1] - 1:04d} is not held yet"
+                else:
+                    why = _update_unverified(container)
+                if why is not None:
+                    if seq is not None:
+                        waiting.add(seq[0])
+                    # a scan REPORT, never a document (DocRef.scope): logged, and
+                    # healed by a later scan that no longer reports it
+                    yield DocRef(source_id=self.source_id, native_id=container.name,
+                                 locator=str(container), scope="container",
+                                 error=(f"update file {container.name} waits: {why} — update "
+                                        f"files apply in NLM's order, each checked "
+                                        f"(docs/notes/pubmed-updatefiles.md)")[:300])
+                    continue
+                ready.add(seq)
+            elif seq is not None:
+                ready.add(seq)
             if progress.unchanged(container):
                 continue     # already enumerated at this (mtime, size)
             st = container.stat()
@@ -211,8 +356,9 @@ class PubmedSource:
                         yield DocRef(source_id=self.source_id, native_id=pmid,
                                      locator=f"{container}{_LOCATOR_SEP}{i}",
                                      mtime=int(st.st_mtime), size=st.st_size,
-                                     error=DELETE_MARKER,
-                                     extra={"record_index": i, "kind": "delete"})
+                                     error=DELETE_MARKER, deleted=True,
+                                     extra={"record_index": i, "kind": "delete",
+                                            "reason": DELETE_REASON})
             # enumerated cleanly at this signature — unless the container
             # landed WHILE we were scanning, in which case marking it would
             # store a signature that already includes the arrival and we

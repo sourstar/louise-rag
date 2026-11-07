@@ -157,7 +157,16 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
     # scan resumable: rows written so far stand, and the plugin's cursor is
     # only advanced past containers whose rows are committed.
     counts = {"seen": 0, "added": 0, "changed": 0, "missing": 0,
-              "container_errors": 0, "relocated": 0, "resigned": 0}
+              "container_errors": 0, "relocated": 0, "resigned": 0,
+              "superseded": 0, "withdrawn": 0}
+
+    def withdraw(c, uids) -> None:
+        """06 §6.1's deletion signal: what the origin retracted leaves every
+        index it is in (app/unindexable.py) — before the batch writing its
+        tombstone commits, so a stop in between re-enumerates and withdraws
+        it again, never leaves one marked that still answers."""
+        from . import unindexable
+        unindexable.withdraw_many(c, collection, uids)
     interrupted = False
     applied = 0                 # refs durably written so far
     batch: list[DocRef] = []
@@ -176,7 +185,8 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
         # would both plan as new. Flushing first keeps last-write-wins by
         # arrival order exact: the later ref sees the earlier one committed.
         if batch and (uid in batch_uids or len(batch) >= DISCOVER_BATCH_REFS):
-            if not _apply_batch(con, plugin, batch, counts, stop, wait=True, adopt=adopt):
+            if not _apply_batch(con, plugin, batch, counts, stop, wait=True, adopt=adopt,
+                                withdraw=withdraw):
                 interrupted = True      # stop arrived while the manifest was contended
                 batch = []
                 break
@@ -190,9 +200,12 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
         # the tail (or the batch a stop request cut short): one attempt if
         # stopping — a contended manifest must not hold SIGTERM past its
         # grace; what is not committed is simply re-enumerated next scan
-        if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted, adopt=adopt):
+        if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted, adopt=adopt,
+                        withdraw=withdraw):
             applied += len(batch)
             _signal_committed(state, applied)
+        else:
+            interrupted = True          # not committed: the next scan re-enumerates it
     if not interrupted and (counts["added"] or counts["changed"]
                             or counts["relocated"] or counts["missing"]):
         # a pure stat pass changed nothing in_scope could depend on; scope
@@ -207,6 +220,10 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
         stats["resigned"] = counts["resigned"]
     if counts["container_errors"]:
         stats["container_errors"] = counts["container_errors"]
+    if counts["superseded"]:
+        stats["superseded"] = counts["superseded"]
+    if counts["withdrawn"]:
+        stats["withdrawn"] = counts["withdrawn"]
     if interrupted:
         stats["interrupted"] = True
         db.log_event(con, "info", "discover",
@@ -223,8 +240,35 @@ def _signal_committed(state, n: int) -> None:
         hook()
 
 
+def _superseded(order, ref, row) -> bool:
+    """LAST WRITE WINS BY THE ORIGIN'S ORDER, not by arrival. A plugin whose
+    origin supersedes a document by a later unit (PubMed: a revision in a
+    later update file, 06 §6.2) declares `origin_order(locator)`; a ref from
+    an EARLIER place than the unit the row holds is superseded and changes
+    nothing. Without it a cleared cursor — a relocation, the Library's
+    rescan, a new manifest — re-applied every baseline record over its
+    revision and then the revision over it again: two changes and a re-embed
+    for every revised document, the old text served in between."""
+    if order is None or row is None or not row["path"]:
+        return False
+    here, held = order(ref.locator), order(row["path"])
+    return here is not None and held is not None and here < held
+
+
+def _other_unit(order, ref, row) -> bool:
+    """The ref names ANOTHER origin unit than the row (a PubMed record in a
+    later update file), which is a content question whatever the two
+    containers' (mtime, size) — equal by chance, they read as a relocation
+    and the revision was never hashed. A moved corpus keeps every unit's
+    place, so it is not this."""
+    if order is None or row is None or not row["path"]:
+        return False
+    here, held = order(ref.locator), order(row["path"])
+    return here is not None and held is not None and here != held
+
+
 def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
-                 adopt: bool = False) -> bool:
+                 adopt: bool = False, withdraw=None) -> bool:
     """Apply one batch of refs to the manifest. Two phases, so the write
     lock is held only for the writes:
 
@@ -241,12 +285,21 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
        failure is retried (with `wait`) until it succeeds or `stop` says
        otherwise; `counts` are merged only on commit.
 
+    A ref the origin's order supersedes (`_superseded`) is counted and
+    changes nothing. A DELETION (`DocRef.deleted`, 06 §6.1) of a document
+    the indexes hold is withdrawn from them by `withdraw` in the decide
+    phase, before its tombstone is written, and its stage marks are reset so
+    that a later re-add is indexed again.
+
     Returns False only when the batch could not be committed (stop while
-    contended, or `wait=False`); the caller then treats the scan as
-    interrupted — nothing half-applied, nothing in the cursor past it."""
+    contended, `wait=False`, or a withdrawal the indexes refused); the
+    caller then treats the scan as interrupted — nothing half-applied,
+    nothing in the cursor past it."""
     now = int(time.time())
     local = {k: 0 for k in counts}
     writes: list[tuple[str, tuple]] = []
+    order = getattr(plugin, "origin_order", None)
+    to_withdraw: list[str] = []
     for ref in batch:
         uid = f"{ref.source_id}:{ref.native_id}"
         if ref.scope == "container":
@@ -263,7 +316,33 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
             continue      # a scan report is not a document, so it is not "seen"
         local["seen"] += 1
         if ref.error:
+            held = None
+            if order is not None or getattr(ref, "deleted", False):
+                held = con.execute(
+                    "SELECT path,error,rdf_done,fts_done,embed_done FROM documents WHERE uid=?",
+                    (uid,)).fetchone()
+            if _superseded(order, ref, held):
+                local["superseded"] += 1
+                continue
             local["missing"] += 1
+            if getattr(ref, "deleted", False):
+                # the origin retracted it: out of every index it is in, and
+                # its marks reset (a re-add is a new document to index). The
+                # row keeps its locator — the last unit that supplied the
+                # record, which its line in a part still names (02 §2.2)
+                if held is not None and held["error"] is None and (
+                        held["rdf_done"] or held["fts_done"] or held["embed_done"]):
+                    to_withdraw.append(uid)
+                elif held is not None and held["error"] == ref.error and not (
+                        held["rdf_done"] or held["fts_done"] or held["embed_done"]):
+                    continue                # tombstoned already: applied twice, nothing changes
+                writes.append((
+                    "INSERT INTO documents(uid,source,native_id,path,error,updated_at) "
+                    "VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(uid) DO UPDATE SET error=excluded.error,rdf_done=0,fts_done=0,"
+                    "embed_done=0,summary_done=0,updated_at=excluded.updated_at",
+                    (uid, ref.source_id, ref.native_id, ref.locator, ref.error, now)))
+                continue
             writes.append((
                 "INSERT INTO documents(uid,source,native_id,path,error,updated_at) "
                 "VALUES(?,?,?,?,?,?) "
@@ -286,6 +365,9 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
         row = con.execute(
             "SELECT path,mtime,size,txt_hash FROM documents WHERE uid=?",
             (uid,)).fetchone()
+        if _superseded(order, ref, row):
+            local["superseded"] += 1
+            continue
         if row is None:
             writes.append((
                 "INSERT INTO documents(uid,source,native_id,path,txt_name,lang,"
@@ -303,7 +385,8 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
                 "mtime=?,size=?,txt_hash=NULL,updated_at=? WHERE uid=?",
                 (ref.locator, txt_name, lang, ref.mtime, ref.size, now, uid)))
             local["resigned"] += 1
-        elif row["mtime"] != ref.mtime or row["size"] != ref.size:
+        elif (row["mtime"] != ref.mtime or row["size"] != ref.size
+              or _other_unit(order, ref, row)):
             raw = plugin.fetch(ref)                 # no lock held here
             if raw.raw_hash != row["txt_hash"]:
                 writes.append((
@@ -352,6 +435,20 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
                 (ref.locator, txt_name, now, uid)))
             local["relocated"] += 1
 
+    if to_withdraw and withdraw is not None:
+        # BEFORE the tombstones commit (app/unindexable.py's order): a stop or
+        # a crash in between leaves the batch uncommitted, the cursor short of
+        # it, and the next scan withdraws again — idempotent — never a
+        # tombstoned document that still answers a search
+        try:
+            withdraw(con, to_withdraw)
+        except Exception as e:  # noqa: BLE001 — an index busy or broken: deferred, nothing written
+            db.log_event(con, "warn", "discover",
+                         f"{len(to_withdraw)} retracted document(s) could not leave the "
+                         f"indexes yet ({type(e).__name__}: {e}); the batch is deferred "
+                         f"and retried next scan"[:400])
+            return False
+        local["withdrawn"] += len(to_withdraw)
     waited = False
     while True:
         try:

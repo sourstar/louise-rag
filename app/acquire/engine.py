@@ -31,6 +31,7 @@ from . import claim as claim_mod
 from . import export_job
 from . import mirrors
 from . import transport_https
+from . import updatefiles
 from .transport_https import RangeUnsupported
 from .spec import (AcquisitionPlan, AcquisitionSpec, ChecksumSource, DiskPreflightError,
                     Endpoint, Filter, LicenseAckRequiredError, RemoteFile, TransferAborted,
@@ -183,7 +184,9 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
             _stop_check(stop, f"before listing {endpoint.url}")
             try:
                 with _listing_bound(stop, priority):
-                    candidates = list(transport.list_files(endpoint, spec))
+                    # the base directory, then (09 §9.17 `updatefiles-dir`)
+                    # the update directory beside it
+                    candidates = list(updatefiles.listing(transport, endpoint, spec))
                 break
             except TransferAborted:
                 # the STOP, not the mirror. TransferAborted IS a
@@ -200,7 +203,7 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         for endpoint in spec.endpoints:
             _stop_check(stop, f"before listing {endpoint.url}")
             with _listing_bound(stop, priority):
-                candidates.extend(transport.list_files(endpoint, spec))
+                candidates.extend(updatefiles.listing(transport, endpoint, spec))
     for f in candidates:
         if f.rel_path not in seen:
             seen.add(f.rel_path)
@@ -329,6 +332,16 @@ def effective_spec(collection, spec: AcquisitionSpec,
     pinned_filters = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("filters")
     if pinned_filters:
         spec = replace(spec, filters=tuple(pinned_filters))
+    # and BY ITS CODEX'S UPDATE DIRECTORY: `delta` is in the identifying half
+    # too (09 §9.17), so the update files a collection takes are in the
+    # directory its Codex names, never one a plugin's spec has moved to since.
+    # Only for `updatefiles-dir`, where the Codex's subdir is what is fetched:
+    # every other mode stays the plugin's, as it was (a Codex older than a
+    # mode — normattiva's before `zip-directory` — must not lose it)
+    pinned_delta = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("delta")
+    if isinstance(pinned_delta, dict) and pinned_delta.get("mode") == updatefiles.MODE \
+            and spec.delta.mode == updatefiles.MODE and pinned_delta.get("subdir"):
+        spec = replace(spec, delta=replace(spec.delta, updatefiles_subdir=pinned_delta["subdir"]))
     peers = peer_sources(collection)
     if not peers:
         return spec
@@ -692,6 +705,16 @@ def _staging_target(collection, f: RemoteFile, dest: Path) -> Path:
     return target
 
 
+def _verified(land: Path, dest: Path, spec: AcquisitionSpec) -> str:
+    """The landed file's digest, its origin sidecar checked. A file landed
+    in the STAGING area is checked against the sidecar at its corpus
+    destination, where the sidecar's own fetch promoted it: looked up beside
+    the staged copy it was never there, and a corrupt file passed."""
+    if land == dest:
+        return checksum.digest_and_verify(land, spec.checksums)
+    return checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
+
+
 def _promote(land: Path, dest: Path) -> None:
     """Move a verified file from the staging area into the corpus — one
     sequential copy across volumes, then the staging copy is gone."""
@@ -818,6 +841,10 @@ def _export_fetch(endpoint, f: RemoteFile, collection, spec: AcquisitionSpec,
 
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
+    # a file listed in the update directory is requested from it (09 §9.17
+    # `updatefiles-dir`); the slot, the etiquette and the budget are the
+    # endpoint's own — the same host
+    endpoint = updatefiles.request_endpoint(endpoint, spec, f)
     dest = collection.corpus_dir / f.rel_path
     land = _staging_target(collection, f, dest)
     part = land.with_name(land.name + ".part")
@@ -855,7 +882,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                 size = transport.fetch_segments(endpoint, f, land, segments)
                 elapsed = time.monotonic() - started
                 manager.record_throughput(endpoint_key, size, elapsed)
-                digest = checksum.digest_and_verify(land, spec.checksums)
+                digest = _verified(land, dest, spec)
                 if land != dest:
                     _promote(land, dest)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
@@ -895,7 +922,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                         raise
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
-        digest = checksum.digest_and_verify(land, spec.checksums)
+        digest = _verified(land, dest, spec)
         if land != dest:
             _promote(land, dest)
         elapsed = time.monotonic() - started

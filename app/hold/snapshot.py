@@ -592,7 +592,8 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         existing = None
     delta = (existing.delta if existing is not None else
              _first_delta(shard_dir, shards) if previous is None else
-             _later_delta(shard_dir, previous, shards, name=name, snapshot_id=snapshot_id))
+             _later_delta(shard_dir, previous, shards, name=name, snapshot_id=snapshot_id,
+                          reasons=build_tombstone_reasons(db_path)))
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,
         previous=previous.hash if previous else None,
@@ -610,6 +611,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
                 f"identical bytes")
             mark_frozen(db_path, snapshot_id)
             drop_replaced(shard_dir, previous, snap)
+            _say_past_baseline(name, drop_past_baseline(shard_dir, previous, snap), log)
             return snap
         raise CodexError(
             f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
@@ -626,6 +628,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     if dropped:
         log(f"[snapshot create] {name}: {dropped} replaced version(s) of {previous.snapshot_id} "
             f"dropped (the origin replaces in place, 01 promise 7)")
+    _say_past_baseline(name, drop_past_baseline(shard_dir, previous, snap), log)
     log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
         f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
     return snap
@@ -765,8 +768,30 @@ def _previous(shard_dir, snapshot_id: str) -> "Snapshot | None":
     return load(d / f"{ids[-1]}.json")
 
 
+def build_tombstone_reasons(db_path) -> dict[str, str]:
+    """uid -> 09 §9.4 tombstone reason, for the documents the build found
+    the origin RETRACTED (app/pack/build.py records them in its `skipped`
+    table: 06 §6.1's deletion signal as the manifest holds it). A uid gone
+    from the parts and not named here was merely not supplied: `withdrawn`."""
+    import sqlite3
+    from pathlib import Path
+    from app.pack.build import TOMBSTONE_PREFIX
+    if not Path(db_path).is_file():
+        return {}
+    con = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)   # a read
+    try:
+        rows = con.execute("SELECT uid, reason FROM skipped WHERE reason LIKE ?",
+                           (TOMBSTONE_PREFIX + "%",)).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    out = {uid: reason[len(TOMBSTONE_PREFIX):] for uid, reason in rows}
+    return {uid: why for uid, why in out.items() if why in REASONS}
+
+
 def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
-                 snapshot_id: str) -> Delta:
+                 snapshot_id: str, reasons: dict[str, str] | None = None) -> Delta:
     """A later snapshot's delta: `compute_delta` over the previous
     snapshot's records and this one's — computed from the parts whose bytes
     changed alone, each side as an Arrow table, by Arrow's hash join.
@@ -844,7 +869,7 @@ def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
             raise CodexError(f"{name}: {c.path}: its records_root is not the build's "
                              f"({c.records_root[:16]}…)")
         new.append(got)
-    return _join_delta(old, new, name=name)
+    return _join_delta(old, new, name=name, reasons=reasons)
 
 
 def _first_pairs(paths: list[str], records_root: str):
@@ -871,7 +896,7 @@ def _pairs(path, records_root: str):
                      "h": pa.array([bytes.fromhex(h) for h in hashes], pa.binary(16))})
 
 
-def _join_delta(old: list, new: list, *, name: str) -> Delta:
+def _join_delta(old: list, new: list, *, name: str, reasons: dict[str, str] | None = None) -> Delta:
     """`compute_delta` over two Arrow sides: a full outer hash join on the
     uid (Arrow's Acero join — the named, proven algorithm, no Python object
     per record until the lists of what changed are made)."""
@@ -892,7 +917,7 @@ def _join_delta(old: list, new: list, *, name: str) -> Delta:
     changed = both.filter(pc.not_equal(both["old"], both["new"]))["uid"].to_pylist()
     del j, both
     return Delta(tuple(sorted(added)), tuple(sorted(changed)),
-                 tuple(Tombstone(u, "withdrawn") for u in sorted(gone)))
+                 tuple(Tombstone(u, (reasons or {}).get(u, "withdrawn")) for u in sorted(gone)))
 
 
 def drop_replaced(shard_dir, previous: "Snapshot | None", current: "Snapshot") -> int:
@@ -916,6 +941,47 @@ def drop_replaced(shard_dir, previous: "Snapshot | None", current: "Snapshot") -
             kept.unlink()
             n += 1
     return n
+
+
+def drop_past_baseline(shard_dir, previous: "Snapshot | None", current: "Snapshot") -> int:
+    """Where the origin keeps its history until its next period
+    (`history-until-baseline`, 06 §6.2, amended 2026-11-07, operator: C —
+    PubMed's baseline year), the superseded versions every record of which
+    names a period before the current version's go once this snapshot is
+    frozen: the origin removed the files that verified them
+    (`shard.drop_past_period`, 01 promise 7, 02 §2.3). Only the parts this
+    snapshot re-issued are judged: a part it did not re-issue has the same
+    current version as at the last freeze, which judged it, so the cost
+    follows the work. Run again on an identical re-freeze, which finishes a
+    stopped one; the parts in the parse pool, one task each. The files
+    dropped (relations and figures with their parts)."""
+    from pathlib import Path
+    from app import parallel
+    from . import shard as shard_mod
+    shard_dir = Path(shard_dir)
+    if previous is None or shard_mod.period_rule(shard_dir) is None:
+        return 0
+    before = {e.path: e.root for e in previous.shards}
+    tasks = [(str(shard_dir / e.path), str(shard_dir)) for e in current.shards
+             if before.get(e.path) != e.root]
+    return sum(parallel.each_part(_drop_past_period_at, tasks))
+
+
+def _drop_past_period_at(target: str, shard_dir: str) -> int:
+    """One part of `drop_past_baseline`, in a child of the parse pool."""
+    from pathlib import Path
+    from . import shard as shard_mod
+    rule = shard_mod.period_rule(Path(shard_dir))
+    if rule is None:
+        return 0
+    return len(shard_mod.drop_past_period(Path(target), Path(shard_dir), rule))
+
+
+def _say_past_baseline(name: str, dropped: int, log) -> None:
+    if dropped:
+        log(f"[snapshot create] {name}: {dropped} superseded version file(s) of an earlier origin "
+            f"period dropped (the origin removed the files that verified them, 06 §6.2 "
+            f"history-until-baseline)")
 
 
 #: codex.json path -> (mtime_ns, container): the container read beside a
