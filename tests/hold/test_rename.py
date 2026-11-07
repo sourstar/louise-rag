@@ -66,6 +66,17 @@ def test_a_rename_moves_everything_that_carries_the_name(node):
     assert not (root / "new" / "state" / rn.MARKER).exists()
 
 
+def test_a_rename_carries_the_freeze_as_it_carries_the_pause(node):
+    """07 §7.3 `node freeze`: runtime state keyed on the name. A renamed
+    frozen collection must not come back following its origin."""
+    tmp, root, cfg, codex = node
+    node_state.set_frozen("old", True, by="louise node freeze old")
+    out = rn.rename(root, "old", "new")
+    assert out["done"]["frozen"] is True
+    assert "new" in node_state.frozen_collections() and "old" not in node_state.frozen_collections()
+    assert node_state.frozen_since("new")["by"] == "rename old -> new"
+
+
 def test_an_origin_another_collection_links_stays_where_it_is(node):
     tmp, root, cfg, codex = node
     (root / "sister").mkdir()

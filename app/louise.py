@@ -2052,6 +2052,37 @@ def cmd_node_resume(a) -> int:
     return 0
 
 
+def cmd_node_freeze(a) -> int:
+    """`node freeze <collection>` (07 §7.3; docs/notes/collection-freeze.md):
+    the collection keeps the version it holds — nothing is fetched from its
+    origin, its origin is not scanned, nothing is taken in from peers — and
+    everything else runs on that version; shared, only its aligned parts are
+    offered. A runtime override that survives a restart (07 §7.8). Exit 2
+    for a name this node does not hold: a typo would freeze nothing and say
+    it had."""
+    from app import collections as collections_mod, node_state
+    if not collections_mod.config_toml_path(a.collection).is_file():
+        print(f"louise node freeze: no collection {a.collection!r} is held here "
+              f"({collections_mod.config_toml_path(a.collection)} does not exist)", file=sys.stderr)
+        return 2
+    names = node_state.set_frozen(a.collection, True,
+                                  by=f"louise node freeze {a.collection} ({node_state.invoker()})")
+    _print({"frozen": sorted(names), "store": str(node_state.path()),
+            "says": f"{a.collection} keeps the version it holds: nothing is fetched or taken in; "
+                    f"it is parsed, indexed, embedded here and searched as it is"})
+    return 0
+
+
+def cmd_node_unfreeze(a) -> int:
+    """`node unfreeze <collection>`: everything resumes and catches up — the
+    worker asks a fetch and a scan, the newer snapshot and its members follow."""
+    from app import node_state
+    names = node_state.set_frozen(a.collection, False,
+                                  by=f"louise node unfreeze {a.collection} ({node_state.invoker()})")
+    _print({"frozen": sorted(names), "store": str(node_state.path())})
+    return 0
+
+
 #: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
 _SHARE_VERBS = ("collection", "serve", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
 
@@ -5062,6 +5093,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = nverbs.add_parser("resume", help="the node, or one collection")
     p.add_argument("collection", nargs="?", default=None)
     p.set_defaults(fn=cmd_node_resume)
+    p = nverbs.add_parser("freeze", help="ONE collection keeps the version it holds: nothing fetched, "
+                                        "scanned or taken in from peers; parsed, indexed, embedded here "
+                                        "and searched as it is; shared, only its parts still current "
+                                        "upstream; until unfreeze, across restarts")
+    p.add_argument("collection")
+    p.set_defaults(fn=cmd_node_freeze)
+    p = nverbs.add_parser("unfreeze", help="the collection follows its origin and its peers again, "
+                                          "and catches up")
+    p.add_argument("collection")
+    p.set_defaults(fn=cmd_node_unfreeze)
     p = nverbs.add_parser("health", help="every stage's state per collection; exit 1 when a stage has "
                                         "work it cannot start")
     p.add_argument("collection", nargs="?", default=None)

@@ -49,13 +49,15 @@ def pending(node_con, type_: str = "bundle") -> list[dict[str, Any]]:
 
 def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None, own_key=None,
                     stop=None, now: float | None = None,
-                    log: Callable[[str], None] | None = None) -> dict[str, int]:
+                    log: Callable[[str], None] | None = None, frozen=frozenset()) -> dict[str, int]:
     """`snapshot` events (09 §9.9): a snapshot newer than the one held here,
     announced by a peer whose address a digest gave, is pulled from that
     peer with its chain and promoted when signed (app/share/fetch.py); the
     members then follow at the next beat. An announcer with no known
     address leaves the event waiting for its digest; a snapshot held
-    already, or older, is acted on by being noted."""
+    already, or older, is acted on by being noted. For a FROZEN collection
+    (`frozen`, 07 §7.3 `node freeze`) the event waits, unacted, for the
+    unfreeze."""
     from app.share import fetch as fetch_mod, peers, seeder
     now = time.time() if now is None else now
     out = {"pulled": 0, "known": 0, "ignored": 0, "waiting": 0, "failed": 0}
@@ -74,6 +76,9 @@ def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None,
         if c is None or not sid:
             out["ignored"] += 1
             attest.mark_acted(node_con, ev["id"])
+            continue
+        if c.name in frozen:
+            out["waiting"] += 1                     # frozen: kept for the unfreeze, not acted on
             continue
         current = seeder.current_snapshot(col.shard_dir_of(Path(root), c.name))
         if current is not None and (sid <= current.snapshot_id or sid in fetch_mod.held_snapshots(Path(root), cid)):
@@ -927,10 +932,17 @@ def _current_snapshot_shards(root: Path, name: str):
 
 def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
          now: float | None = None, log: Callable[[str], None] | None = None, client=None,
-         key=None, own_key=None) -> dict[str, Any]:
+         key=None, own_key=None, frozen=frozenset()) -> dict[str, Any]:
     """Every pending `codex`, `flag` and `snapshot` event, then every
     pending `bundle` event, acted on once: taken in for a collection held
-    here and in use, left where it is not."""
+    here and in use, left where it is not.
+
+    A FROZEN collection (`frozen`; 07 §7.3 `node freeze`, docs/notes/
+    collection-freeze.md) takes nothing in: its snapshot and bundle events
+    wait UNACTED for the unfreeze (a deferral, never an error), and the
+    bundles the digests offer are not read for it. A producer's withdrawal
+    and a deprecated copy's expiry still apply: removals the network asks
+    for, not intake."""
     from app import copy_state, licensing
     now = time.time() if now is None else now
     out: dict[str, Any] = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0}
@@ -942,7 +954,8 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
                      ("claims", lambda: reproduce_claims(root, collections, node_con, own_key=own_key,
                                                          now=now, log=log)),
                      ("snapshots", lambda: newer_snapshots(root, collections, node_con, client=client, key=key,
-                                                           own_key=own_key, stop=stop, now=now, log=log))):
+                                                           own_key=own_key, stop=stop, now=now, log=log,
+                                                           frozen=frozen))):
         try:
             out[name] = fn()
         except Exception as e:   # noqa: BLE001 — the other kinds still get their turn
@@ -995,6 +1008,9 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
             out["ignored"] += 1
             attest.mark_acted(node_con, ev["id"])
             continue
+        if c.name in frozen:
+            out["deferred"] += 1                    # frozen: left unacted for the unfreeze
+            continue
         if not usable(c):
             out["deferred"] += 1                    # left unacted: the gate may clear
             continue
@@ -1018,7 +1034,8 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
     # the bundles the digests offer and no event brought (04 §4.5, amended 2026-10-19)
     if not (stop is not None and stop.is_set()):
         try:
-            got = from_digests(collections, cons, node_con, session_factory=session_factory, root=root,
+            got = from_digests([c for c in collections if c.name not in frozen], cons, node_con,
+                               session_factory=session_factory, root=root,
                                usable=usable, stop=stop, now=now, log=log, key=key, own_key=own_key)
             for k in ("accepted", "refused", "held"):
                 out[k] += got[k]

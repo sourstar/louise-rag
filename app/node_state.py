@@ -552,6 +552,114 @@ def pause_history() -> list[dict]:
         return []
 
 
+# ---- one collection frozen (07 §7.3 `node freeze <collection>`) --------------
+#
+# Operator, 2026-11-07: "no updated are fetched and it stays as it is (you
+# can still embed locally) … but you can still share … the parts that are
+# still aligned with the non frozen state" (docs/notes/collection-freeze.md).
+# A frozen collection is RUN — parsed, indexed, embedded, searched, checked —
+# on the version it holds; what stops is its updates: the origin fetch, the
+# scan of its origin, and every intake from peers. Not a pause (that runs
+# nothing), not a daughter (no new collection_id, 02 §2.7).
+#
+# Runtime state like the pause, and it survives a restart for the same
+# reason (invariant 10's exception, 07 §7.8): no file sets it, so there is
+# nothing to reset it to, and an expiry would let a restart fetch the very
+# updates the operator froze out.
+FROZEN_KEY = "frozen_collections"
+#: every freeze and unfreeze, newest last: when, which, and who
+FROZEN_HISTORY_KEY = "frozen_collections_history"
+FROZEN_HISTORY_KEEP = 200
+
+
+def _names(c: sqlite3.Connection, key: str) -> set[str]:
+    import json
+    raw = db.get_control(c, key, "[]")
+    try:
+        names = json.loads(raw)
+    except (TypeError, ValueError):
+        return set()
+    return {n for n in names if isinstance(n, str)} if isinstance(names, list) else set()
+
+
+def frozen_collections(con: sqlite3.Connection | None = None) -> set[str]:
+    """The collections frozen now. `con` is a `connect()` the caller holds;
+    without one a connection is opened for the read and closed."""
+    if con is not None:
+        return _names(con, FROZEN_KEY)
+    with closing(connect()) as c:
+        return _names(c, FROZEN_KEY)
+
+
+def set_frozen(name: str, frozen: bool, *, by: str = "") -> set[str]:
+    """Freeze or unfreeze one collection; the set as it is after. The write
+    is recorded with `by` — the command or the route and its caller."""
+    import json
+    with closing(connect()) as c:
+        c.execute("BEGIN IMMEDIATE")           # a read, then a write: never a lost update
+        try:
+            names = _names(c, FROZEN_KEY)
+            (names.add if frozen else names.discard)(name)
+            db.set_control(c, FROZEN_KEY, json.dumps(sorted(names)))
+            try:
+                hist = json.loads(db.get_control(c, FROZEN_HISTORY_KEY) or "[]")
+            except ValueError:
+                hist = []
+            if not isinstance(hist, list):
+                hist = []
+            hist = (hist + [{"at": time.time(), "collection": name, "frozen": bool(frozen),
+                             "by": by or "unnamed"}])[-FROZEN_HISTORY_KEEP:]
+            db.set_control(c, FROZEN_HISTORY_KEY, json.dumps(hist))
+            c.execute("COMMIT")
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        return names
+
+
+def freeze_history() -> list[dict]:
+    """The recorded freezes and unfreezes, oldest first; [] when none."""
+    import json
+    try:
+        with closing(connect()) as c:
+            got = json.loads(db.get_control(c, FROZEN_HISTORY_KEY) or "[]")
+            return got if isinstance(got, list) else []
+    except (ValueError, sqlite3.Error):
+        return []
+
+
+def _freeze_entry(c: sqlite3.Connection, name: str) -> dict | None:
+    """Collection `name`'s freeze — `{"by", "at", "when"}` from the latest
+    history entry for it, each None where nothing recorded it — or None
+    when it is not frozen."""
+    import json
+    if name not in _names(c, FROZEN_KEY):
+        return None
+    try:
+        hist = json.loads(db.get_control(c, FROZEN_HISTORY_KEY) or "[]")
+    except (TypeError, ValueError):
+        hist = []
+    latest = next((h for h in reversed(hist if isinstance(hist, list) else [])
+                   if isinstance(h, dict) and h.get("collection") == name), None)
+    if latest is None or not latest.get("frozen"):
+        return {"by": None, "at": None, "when": None}     # the history cut short
+    return {"by": latest.get("by") or None, "at": latest.get("at"), "when": _when(latest.get("at"))}
+
+
+def frozen_since(name: str, con: sqlite3.Connection | None = None) -> dict | None:
+    """Who froze collection `name` and when — `{"by", "at", "when"}`, `when`
+    as the Library writes times — or None when it is not frozen. For the
+    Library card and the status display (docs/notes/collection-freeze.md
+    §11). Without `con` the store is read creating nothing (`peek`); a
+    store that cannot be read is None. Never raises."""
+    try:
+        if con is not None:
+            return _freeze_entry(con, name)
+        return peek(lambda c: _freeze_entry(c, name), None)
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        return None
+
+
 # ---- what stops one collection from embedding (CLAUDE.md RULE 2) ------------
 #
 # 2026-11-06: wikidata's embedding was turned on in the Library and nothing

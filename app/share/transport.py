@@ -554,12 +554,27 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
     # twelve "taken again" bundles between the re-pin's carry and rename
     try:
         paused = node_state.paused_collections(node_con) if node_con is not None else node_state.paused_collections()
+        # A FROZEN collection keeps the version it holds (07 §7.3 `node
+        # freeze`; docs/notes/collection-freeze.md): no member, no newer
+        # snapshot, no bundle is taken in — each a deferral, owed to the
+        # unfreeze, never an error. Read with the pause: unreadable, nothing
+        # is taken this beat
+        frozen = node_state.frozen_collections(node_con) if node_con is not None \
+            else node_state.frozen_collections()
     except Exception:   # noqa: BLE001 — unreadable: nothing is taken this beat
         return out
     if paused:
         collections = [c for c in collections if getattr(c, "name", None) not in paused]
     root = Path(root) if root is not None else collections_mod.louise_root() / "collections"
+    from app.share import frozen as frozen_mod
     for c in collections:
+        if c.name not in frozen and frozen_mod.clear(root, c.name) and log:
+            log(f"[{c.name}] share: unfrozen; what was read aside to judge its alignment is dropped, "
+                f"and the newer snapshot is taken in")
+        if c.name in frozen:
+            _say_frozen(c, log)
+            continue
+        _frozen_said.discard(c.name)
         if not wants_fetching(c):
             continue
         if _next_try.get(c.name, 0.0) > now:
@@ -648,25 +663,56 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         # an annotations collection is updated, not replaced (2026-10-23);
         # its members follow at the next beat
         try:
-            newer = accept.newer_from_digests(root, collections, node_con, stop=stop, now=now, log=log)
+            newer = accept.newer_from_digests(root, [c for c in collections if c.name not in frozen],
+                                              node_con, stop=stop, now=now, log=log)
             if newer.get("pulled") or newer.get("failed"):
                 out["snapshots"] = newer
         except Exception as e:   # noqa: BLE001 — one beat, not the thread
             if log:
                 log(f"[warn:share] newer snapshots: {type(e).__name__}: {e}"[:400])
+        if frozen:
+            # a FROZEN collection reads the newer snapshot a neighbour lists
+            # ASIDE, never into the copy: what it still shares is judged
+            # against it (04 §4.3, amended 2026-11-07; app/share/frozen.py)
+            try:
+                read = frozen_mod.track(root, [c for c in collections if c.name in frozen], node_con,
+                                        stop=stop, now=now, log=log)
+                if read.get("read") or read.get("failed"):
+                    out["frozen"] = read
+            except Exception as e:   # noqa: BLE001 — one beat, not the thread
+                if log:
+                    log(f"[warn:share] frozen alignment: {type(e).__name__}: {e}"[:400])
         try:
             # bundles, flags and forgeries are about vectors: an annotations
             # collection has none (02 §2.10)
             vectored = [c for c in collections
                         if getattr(getattr(c, "codex", None), "annotates", None) is None]
             taken = accept.beat(vectored, cons, node_con, session_factory=session_factory,
-                                root=root, stop=stop, now=now, log=log)
+                                root=root, stop=stop, now=now, log=log, frozen=frozen)
             if any(taken.get(k) for k in ("accepted", "refused", "ignored", "held")):
                 out["bundles"] = taken
         except Exception as e:   # noqa: BLE001 — one beat, not the thread
             if log:
                 log(f"[warn:share] bundles: {type(e).__name__}: {e}"[:400])
     return out
+
+
+#: the frozen collections whose standing-down this thread has said, once per freeze
+_frozen_said: set[str] = set()
+
+
+def _say_frozen(c, log: Callable[[str], None] | None) -> None:
+    """Once per freeze: a frozen collection takes nothing in (a deferral)."""
+    if c.name in _frozen_said:
+        return
+    _frozen_said.add(c.name)
+    if log:
+        from app import node_state
+        since = node_state.frozen_since(c.name) or {}
+        by = f" by {since['by']!r}" if since.get("by") else ""
+        when = f" since {since['when']}" if since.get("when") else ""
+        log(f"[{c.name}] share: frozen{when}{by} — no member, no newer snapshot, no bundle is taken in; "
+            f"it catches up when unfrozen (`louise node unfreeze {c.name}`)")
 
 
 def _attest_landed(root: Path, c, snap, landed: list, *, log: Callable[[str], None] | None = None) -> dict | None:
