@@ -2634,8 +2634,28 @@ def cmd_show(a) -> int:
     # 06 §6.1 (amended 2026-10-25): the origin's inconsistencies the last
     # parse of each document met, counted per code (`hold issues list`)
     out["issues"] = _issues_summary(a.root, name, codex)
+    # 07 §7.3 (2026-11-07, one status): the copy's stages as `node show`
+    # counts them and with what holds each — app/status.py, live and bounded
+    out["status"] = _collection_status(a.root, name, codex)
     _print(out)
     return 0
+
+
+def _collection_status(root, name: str, codex) -> dict:
+    """The stages of the manifest under `root` (app/status.py `view`): the
+    node's own collection when it is this one — the license, the copy's
+    state and the disk judged too — else the manifest alone."""
+    from types import SimpleNamespace
+    from app import collections as collections_mod, status
+    from app.hold import records as rec
+    manifest = rec._paths(root, name)[1] / "manifest.sqlite"
+    try:
+        held = collections_mod.by_name(name)
+    except Exception:   # noqa: BLE001 — no node here: the manifest alone
+        held = None
+    if held is not None and Path(held.manifest_path).resolve() == manifest.resolve():
+        return status.view(held)
+    return status.view(SimpleNamespace(name=name, manifest_path=manifest), gates=False)
 
 
 def _issues_summary(root, name: str, codex) -> dict:

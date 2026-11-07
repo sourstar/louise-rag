@@ -197,22 +197,18 @@ def healthz():
 def status():
     con = _con()
     scope = db.get_scope(con)
-    counts = con.execute("""
-        SELECT COUNT(*) total,
-          SUM(in_scope) in_scope,
-          SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
-          SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
-          SUM(CASE WHEN in_scope=1 AND summary_done=1 THEN 1 ELSE 0 END) summaries,
-          SUM(CASE WHEN in_scope=1 AND error IS NOT NULL THEN 1 ELSE 0 END) errors,
-          SUM(CASE WHEN in_scope=1 THEN chunks ELSE 0 END) chunks,
-          SUM(CASE WHEN in_scope=1 THEN tokens ELSE 0 END) tokens
-        FROM documents""").fetchone()
+    # ONE STATUS (2026-11-07): the counts are the Library card's — the one
+    # scan (app/status.py `full_scan_sql`), cached with its TTL and stored
+    # row, the same numbers the card shows — where this route ran its own
+    # SQL, a full scan on every request (56 s on pubmed). The shape is as it
+    # was; `errors` is blocked plus unindexable (status `api_counts`).
+    from . import status as status_mod
+    counts, _age = web.document_counts_now(_collection())
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
     return {
         "worker_state": node_state.worker_state(),
         "scope": scope,
-        "counts": {k: counts[k] or 0 for k in counts.keys()},
+        "counts": status_mod.api_counts(counts),
         "embed_queue": queue,
         "vectors": _safe_vectors(),
         "config": {
