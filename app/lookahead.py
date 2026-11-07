@@ -35,6 +35,7 @@ look-ahead is ever wanted.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 
@@ -89,9 +90,111 @@ class Ahead:
         self._future.cancel()
 
 
+class Chain:
+    """The rows a stage will take next, in their order, as a chain of
+    `Ahead`s: each link holds the rows that were ready at one moment — the
+    carry of the batch before, the rows a commit upstream just made ready,
+    the next rows after the cursor — and starts computing the moment it is
+    added. The stage takes whole links from the head.
+
+    WHY (2026-11-07, after #346: München's pool held 5.8-6.5 of its 11
+    slots in flight). One `Ahead` per batch, started once the batch before
+    was in hand, fed the pool in two ways it could not use:
+    - batch k+1 went to the pool only after ALL of batch k's results were
+      back, so nothing was queued behind batch k's last parts and the
+      children that finished early idled through its tail;
+    - while rdf and fts interleave (wikipedia: 11 M documents still to
+      extract), the rows the next batch needs do not exist yet when the
+      batch before ends — rdf makes them ready later — so the look-ahead
+      held only the carry past the chunk cap: the next round wrote that
+      carry as a small batch of its own, and the full batch after it was
+      parsed while the pipeline thread waited, as before #346.
+    A chain feeds both: the next link is added (and computing) while the
+    current one is, so its parts queue behind the current one's and fill
+    its tail; and a commit upstream adds its rows at once.
+
+    The links are `Ahead`s, unchanged: their computation, its bounds and its
+    fall-back are `parallel.compute`'s. Only the stage's own thread adds,
+    takes and re-heads a chain (one per manifest, `Held`); the daemon threads
+    only compute, and a chain is written from by nobody.
+
+    THE STANDARD ALTERNATIVE: a work queue with a bounded number of tasks in
+    flight across batches (`parallel.compute_pages`, an `imap` in the
+    standard library's sense), fed by a page source. Its source is pulled
+    by the stream itself, so it must have the next page ready the moment it
+    is asked: it suits a records build, whose pages exist from the start,
+    and not a stage whose next rows appear only as the stage upstream
+    commits them. It would also move the selection off the writer's thread
+    (the docstring above)."""
+
+    def __init__(self, cursor: int) -> None:
+        #: the highest key (a rowid) ever held: the next rows are after it
+        self.cursor = cursor
+        #: set when a link was abandoned out of the middle: the rows after it
+        #: are not all held, so the chain must not be extended from its cursor
+        self.broken = False
+        self._links: list[Ahead] = []
+
+    def add(self, ahead: Ahead, cursor: int) -> None:
+        """A link after the others, its rows the ones after `self.cursor`."""
+        self._links.append(ahead)
+        self.cursor = max(self.cursor, cursor)
+
+    def prepend(self, ahead: Ahead) -> None:
+        """A link before the others: the rows of the batch just cut that it
+        did not write, which come first in the order."""
+        self._links.insert(0, ahead)
+
+    def head(self):
+        """The first row held, or None."""
+        for link in self._links:
+            if link.rows:
+                return link.rows[0]
+        return None
+
+    def held(self) -> int:
+        """Rows held, computed or computing."""
+        return sum(len(link.rows) for link in self._links)
+
+    def computing(self) -> int:
+        """Links whose computation has not answered yet: the batches queued
+        in the pool at once (a count, for the stage's tests and its log)."""
+        return sum(1 for link in self._links if link.computing and not link.done())
+
+    def take(self, want: int, enough: Callable[[list], bool], timeout: float) -> list | None:
+        """Whole links from the head, each waited for within ONE bound of
+        `timeout` seconds for them all, until `want` rows are in hand or
+        `enough(pairs)` says so: [(row, result)], in order. None when the
+        first link did not answer within the bound (or raised): the chain is
+        then abandoned whole. A later link that did not answer ends the take
+        with what came; the rest of the chain is abandoned and it is
+        `broken`."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        out: list = []
+        while self._links and len(out) < want and not enough(out):
+            link = self._links[0]
+            got = link.results(timeout=deadline - time.monotonic())
+            if got is None:
+                if not out:
+                    self.abandon()
+                    return None
+                self.abandon()
+                self.broken = True
+                break
+            self._links.pop(0)
+            out.extend(zip(link.rows, got))
+        return out
+
+    def abandon(self) -> None:
+        links, self._links = self._links, []
+        for link in links:
+            link.abandon()
+
+
 class Held:
-    """At most one `Ahead` per key — a PHYSICAL identity, the manifest's path
-    (scheduling.md §5 pitfall 12), never a collection's name."""
+    """At most one `Ahead` (or `Chain`) per key — a PHYSICAL identity, the
+    manifest's path (scheduling.md §5 pitfall 12), never a collection's
+    name."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -107,6 +210,11 @@ class Held:
     def take(self, key: str) -> Ahead | None:
         with self._lock:
             return self._held.pop(key, None)
+
+    def get(self, key: str):
+        """What is held for `key`, left held."""
+        with self._lock:
+            return self._held.get(key)
 
     def drop(self, key: str) -> None:
         got = self.take(key)
