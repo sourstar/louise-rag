@@ -37,7 +37,7 @@ import threading
 from bisect import bisect_right
 from pathlib import Path
 
-from app.backend import GroupCache
+from app.backend import read_cache
 from app.container_pack import ContainerPack, signature
 
 PACK_VERSION = 1
@@ -236,8 +236,9 @@ _lock = threading.Lock()
 #: (props, where) -> (signature, version, pack path) of the pack found fresh
 _fresh = _PACK.fresh
 _bounds: dict[str, list[int]] = {}             # pack path -> first page of each row group
-#: (pack path, group) -> {page: (start, end, rows)}: 64 MiB (app/backend.py); it held 4 groups
-_groups = GroupCache(64 << 20)
+#: (pack path, group) -> {page: (start, end, rows)}, in the process's one read
+#: budget (app/backend.py `READ_CACHE`); it held 4 groups, then 64 MiB of its own
+_groups = read_cache("wikipedia page_props")
 
 
 def ensure(props: Path) -> Path:

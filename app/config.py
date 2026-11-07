@@ -472,6 +472,17 @@ PARSE_MAX_FAILURES = int(os.getenv("PARSE_MAX_FAILURES", "3"))
 # parse starts a fresh pool. 0 keeps the pool for the process's life. loky's
 # reusable executor does the same with its `timeout` (300 s by default).
 PARSE_IDLE_RELEASE_S = float(os.getenv("PARSE_IDLE_RELEASE_S", "600"))
+# THE READ CACHE's budget, in bytes, PER PROCESS (app/backend.py `READ_CACHE`):
+# ONE budget for every reader's decoded units — wikipedia's archive row
+# groups, wikidata's pack lines, pubmed's and page-props' pack groups, the
+# records' frames. They kept five budgets (256 + 256 + 64 + 64 + 64 = 704
+# MiB a process), and a parse child serves several collections: eleven
+# children at ~1.05 GB RssAnon each and the worker OOM-killed at its 24 GiB
+# cap (München, 2026-11-07). 256 MiB is the largest budget one reader had,
+# so a child working for one collection keeps the working set it had; the
+# unit just read is always kept, whatever the budget. Read at import, so a
+# spawned child takes it from the environment it inherits.
+READ_CACHE_BYTES = int(os.getenv("READ_CACHE_BYTES", str(256 << 20)))
 
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —

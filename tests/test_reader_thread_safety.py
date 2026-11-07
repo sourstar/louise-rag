@@ -19,6 +19,7 @@ import pyarrow.parquet as pq
 
 from app import db, discovery, plugin_io
 from app import collections as collections_mod
+from app.backend import GroupCache
 from app.plugins.normattiva import source as normattiva_source
 from app.plugins.wikipedia import archive
 
@@ -78,7 +79,8 @@ def test_wikipedia_archive_reads(tmp_path, monkeypatch):
     pq.write_table(table, shard, row_group_size=3)          # 12 groups > the LRU's 8
     expected = table.to_pylist()
     monkeypatch.setattr(archive, "_layouts", type(archive._layouts)())
-    monkeypatch.setattr(archive, "_groups", type(archive._groups)())
+    # an empty cache of the test's own: the archive's handle on a fresh one
+    monkeypatch.setattr(archive, "_groups", GroupCache().reader(archive._groups.name))
     shared = _watch(monkeypatch, pq, "ParquetFile", ("read_row_group", "read"))
     wrong: list[int] = []
 

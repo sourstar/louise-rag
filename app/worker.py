@@ -35,7 +35,7 @@ from typing import Callable
 
 import httpx
 
-from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
+from . import (backend, catalog, chunking, collections as collections_mod, config, cpu_limit, db,
                discovery, embed_select, layers as layers_mod, parallel, embeddings,
                encoder_timeouts, entities,
                fts, issues as issues_mod, lookahead, model_load, model_pins, origin_missing,
@@ -4974,6 +4974,20 @@ def _sizing_label(key: str) -> str:
     return f"{stage} {name}".strip()
 
 
+def read_cache_line(stats: dict) -> str | None:
+    """`backend.READ_CACHE.stats()` as one log line, or None when no reader
+    has used it in this process."""
+    readers = {n: r for n, r in stats["readers"].items() if r["units"] or r["hits"] or r["misses"]}
+    if not readers:
+        return None
+    mib = 1 << 20
+    return (f"read cache (this process) — {stats['bytes'] / mib:.1f} of {stats['budget'] / mib:.0f} MiB, "
+            f"{stats['units']} units, {stats['evictions']} evictions, {stats['releases']} Arrow releases; "
+            + "; ".join(f"{n}: {r['bytes'] / mib:.1f} MiB in {r['units']} units, "
+                        f"{r['hits']:,} hits / {r['misses']:,} misses since start"
+                        for n, r in sorted(readers.items())))
+
+
 def _log_shares(con, live_paths=None) -> None:
     """Publish what each collection actually GOT from each contended
     resource. Without this the fair share is an assertion; with it, a
@@ -5021,6 +5035,15 @@ def _log_shares(con, live_paths=None) -> None:
                      f"parse pool — {pool['slots_in_flight']:.1f} of "
                      f"{pool['processes']} slots in flight "
                      f"({pool['utilisation']:.0%}) over {pool['elapsed_s']:.0f}s")
+    # THE READ CACHE of THIS process (app/backend.py `READ_CACHE`): one byte
+    # budget for every reader, what each holds, and its hits and misses
+    # since start. The parse children's caches are their own, and their
+    # numbers do not reach this process: a part answers with its rows'
+    # results and nothing else, and no channel is built for this. A child
+    # is read from outside: `grep RssAnon /proc/<pid>/status`.
+    cache_line = read_cache_line(backend.READ_CACHE.stats())
+    if cache_line:
+        db.log_event(con, "info", "sched", cache_line)
     # ...and what the units themselves now cost, which is what the sizes
     # above are derived from (app/sizing.py). A batch that drifts away from
     # BATCH_TARGET_S is visible here before it is visible as unfairness.

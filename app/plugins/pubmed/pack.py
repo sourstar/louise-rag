@@ -40,7 +40,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ... import config
-from ...backend import GroupCache
+from ...backend import read_cache
 from ...container_pack import ContainerPack, signature
 from . import medline
 
@@ -65,9 +65,10 @@ SCHEMA = pa.schema([
 ])
 
 _files_lock = threading.Lock()              # guards the dict caches below
-#: (pack path, row group) -> {index: xml}: 64 MiB of XML (app/backend.py);
-#: it held 4 groups, ~10 MB each
-_groups = GroupCache(64 << 20)
+#: (pack path, row group) -> {index: xml}, in the process's one read budget
+#: (app/backend.py `READ_CACHE`); it held 4 groups, ~10 MB each, then 64 MiB
+#: of its own
+_groups = read_cache("pubmed pack")
 
 
 def open_container(path: Path):

@@ -55,7 +55,7 @@ from typing import Iterable, Iterator, Sequence
 
 import pyarrow as pa
 
-from app.backend import GroupCache
+from app.backend import read_cache
 
 FRAME_RECORDS = 1000
 ZSTD_LEVEL = 9
@@ -527,8 +527,9 @@ def iter_records(path: Path) -> Iterator[dict]:
 
 _lock = threading.Lock()
 _indexes: OrderedDict = OrderedDict()      # path -> ShardIndex
-#: (path, k) -> list[bytes]: 64 MiB of lines (app/backend.py); it held 16 frames
-_frames = GroupCache(64 << 20)
+#: (path, k) -> list[bytes], in the process's one read budget (app/backend.py
+#: `READ_CACHE`); it held 16 frames, then 64 MiB of its own
+_frames = read_cache("records frames")
 _MAX_INDEXES = 64
 
 
