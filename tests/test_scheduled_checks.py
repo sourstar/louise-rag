@@ -2,15 +2,34 @@
 app/scheduled_checks.py): due when a snapshot has no scheduled check or one
 cadence has passed since; run as a child process, its report kept; a stop
 ends the child and records nothing; a timed-out run is recorded as such;
-nothing runs in a mode that does not parse; one collection per turn."""
+nothing runs in a mode that does not parse; one collection per turn. And
+(2026-11-07, the check → OOM kill → restart → check loop): a run the worker
+died under is recorded as interrupted from its started marker, and after
+CHECK_MAX_INTERRUPTS waits a cadence; a stop is no interruption; a check is
+admitted only when the worker's cgroup has room for its last peak; a child
+that writes more than a pipe buffer finishes."""
 import inspect
+import os
+import signal
 import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from app import scheduled_checks as sc
 
 NOW = 1_800_000_000.0
+MIB = 2 ** 20
+GIB = 2 ** 30
+
+
+@pytest.fixture(autouse=True)
+def _no_cgroup_here(tmp_path, monkeypatch):
+    """The host running the suite has its own cgroup: unread, so a turn is
+    admitted wherever the tests run; the admission tests write their own."""
+    monkeypatch.setattr(sc, "CGROUP_DIR", str(tmp_path / "no-cgroup"))
+    monkeypatch.setattr(sc, "_deferred_said", {})
 
 
 def test_due_by_snapshot_and_by_cadence(tmp_path):
@@ -174,3 +193,277 @@ def test_a_stop_ends_the_check_s_own_children_too(tmp_path):
         time.sleep(0.1)
     else:
         raise AssertionError("the check's own child outlived the stop")
+
+
+# ---- 2026-11-07: check → OOM kill → restart → the same check from zero ------------
+
+def posix_only(fn):
+    """A worker's death is a fork killed (POSIX). The fork is of a process
+    with threads; its child runs one turn and is killed, so the warning is
+    not this test's subject."""
+    fn = pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")(fn)
+    return pytest.mark.skipif(not hasattr(os, "fork"), reason="a worker's death is a fork killed (POSIX)")(fn)
+
+
+def _until(cond, timeout: float = 20.0) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _script(tmp_path, name: str, code: str) -> list[str]:
+    p = tmp_path / f"{name}.py"
+    p.write_text(code, encoding="utf-8")
+    return [sys.executable, str(p)]
+
+
+def _kill_group_of(pidfile) -> None:
+    """The check leads its own session, so its worker's death leaves it."""
+    try:
+        os.killpg(int(pidfile.read_text()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+
+
+def _killed_mid_check(root, name: str, *, run=None, ready=lambda m: True) -> None:
+    """A worker that runs a turn and dies under its check as the kernel's
+    OOM kill ends it — SIGKILL: no handler, no `finally`. A forked process,
+    killed once the check's started marker satisfies `ready`."""
+    pid = os.fork()
+    if pid == 0:                                       # the worker
+        try:
+            sc.turn(stop=lambda: False, log=lambda m: None, now=NOW, run=run)
+        finally:
+            os._exit(0)
+    try:
+        assert _until(lambda: (m := sc.started(root, name)) is not None and ready(m)), "the check never started"
+    finally:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+
+
+def _running_with_a_snapshot(monkeypatch):
+    from app import collections as collections_mod, node_state
+    from app.share import seeder
+    monkeypatch.setattr(seeder, "current_snapshot",
+                        lambda d: SimpleNamespace(snapshot_id="2026-09", hash="sha256:aa"))
+    monkeypatch.setattr(node_state, "peek_worker_state", lambda: "running")
+    return collections_mod.louise_root() / "collections"
+
+
+def _passes(ran):
+    def fake(c, stop):
+        ran.append(c.name)
+        return {"exit": 0, "outcome": "pass", "secs": 1.0, "report": None}
+    return fake
+
+
+@posix_only
+def test_a_run_the_worker_died_under_is_interrupted_counted_and_bounded(isolated_config, monkeypatch, tmp_path):
+    """München, 2026-11-07: the kernel killed the worker at 06:17 with
+    wikidata's check running; `turn` had recorded nothing, as for a stop, so
+    the restarted worker began the same check from zero at 06:18:01 — check,
+    kill, restart, check. The marker the dead worker leaves is now an
+    interruption, counted per snapshot with the peak the check had reached;
+    the third start waits a cadence (or a new snapshot)."""
+    from app.hold import collection as col
+    root = _running_with_a_snapshot(monkeypatch)
+    pidfile = tmp_path / "check.pid"
+    # the first start: the real runner, its check at ~160 MiB when the worker dies
+    argv = _script(tmp_path, "check", f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+                                      f"x = b'x' * (160 * {MIB})\ntime.sleep(120)\n")
+    monkeypatch.setattr(sc, "argv_for", lambda c: argv)
+    try:
+        _killed_mid_check(root, "gutenberg", ready=lambda m: m.get("peak_rss", 0) >= 150 * MIB)
+    finally:
+        _kill_group_of(pidfile)
+    m = sc.started(root, "gutenberg")
+    assert m["snapshot_id"] == "2026-09" and m["snapshot_hash"] == "sha256:aa" and m["pid"] != os.getpid()
+    assert sc.last(root, "gutenberg") is None, "the dead worker recorded nothing"
+    # the second start: the interruption recorded, the check retried — and the worker dies again
+    _killed_mid_check(root, "gutenberg", run=lambda c, stop: time.sleep(120) or {},
+                      ready=lambda now: now["run"] != m["run"])
+    first = sc.last(root, "gutenberg")
+    assert first["outcome"] == "interrupted" and first["interrupts"] == 1
+    assert first["peak_rss"] >= 150 * MIB, "the peak the killed check had reached is kept"
+    # the third start is refused until the cadence
+    ran, lines = [], []
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + 60, run=_passes(ran)) is None and ran == []
+    got = sc.last(root, "gutenberg")
+    assert got["interrupts"] == 2 and got["peak_rss"] == first["peak_rss"] and sc.started(root, "gutenberg") is None
+    assert any(m.startswith("gutenberg: ") and "never ended" in m and "interrupted 2 time(s)" in m
+               and "not retried before" in m for m in lines), lines
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + 120, run=_passes(ran)) is None and ran == []
+    from app import louise
+    codex = col.read(root, "gutenberg")
+    shown = louise._scheduled_check(root, "gutenberg", codex)       # what `hold collection show` displays
+    assert shown["outcome"] == "interrupted" and shown["interrupts"] == 2
+    assert shown["retry_at"] == NOW + sc.period_of(codex)
+    assert "interrupted 2 times" in shown["note"] and "retried at " in shown["note"]
+    # a new snapshot is due at once; the same one a cadence after the last start
+    assert sc.due(root, "gutenberg", codex, "2026-10", now=NOW + 120, snapshot_hash="sha256:bb")
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + sc.period_of(codex),
+                   run=_passes(ran)) == "gutenberg"
+    assert ran == ["gutenberg"] and sc.last(root, "gutenberg")["outcome"] == "pass"
+
+
+def test_a_marker_is_counted_once_and_per_cadence(tmp_path):
+    """A worker that died between the record and the marker's removal ran its
+    check to the end: no interruption. A count starts again a cadence on
+    (systemd's StartLimitIntervalSec), and with another snapshot."""
+    month = sc.PERIOD_S["monthly"]
+    (tmp_path / "c").mkdir()
+    sc.mark_started(tmp_path, "c", "2026-09", now=NOW)
+    sc.record(tmp_path, "c", "2026-09", {"outcome": "pass"}, now=NOW)
+    assert sc.settle_interrupted(tmp_path, "c", period=month) is None
+    assert sc.started(tmp_path, "c") is None and sc.last(tmp_path, "c")["outcome"] == "pass"
+    for k, t in enumerate((NOW + 10, NOW + 20), start=1):
+        sc.mark_started(tmp_path, "c", "2026-09", now=t)
+        assert sc.settle_interrupted(tmp_path, "c", period=month)["interrupts"] == k
+    assert sc.held_back(sc.last(tmp_path, "c"), now=NOW + 30, period=month)
+    sc.mark_started(tmp_path, "c", "2026-09", now=NOW + 20 + month)
+    assert sc.settle_interrupted(tmp_path, "c", period=month)["interrupts"] == 1, "a cadence on: counted afresh"
+    sc.mark_started(tmp_path, "c", "2026-10", now=NOW + 30 + month)
+    assert sc.settle_interrupted(tmp_path, "c", period=month)["interrupts"] == 1, "another snapshot"
+    assert sc.settle_interrupted(tmp_path, "c", period=month) is None, "no marker: nothing"
+    with pytest.raises(FileNotFoundError):
+        sc.mark_started(tmp_path, "gone", "2026-09", now=NOW)
+    assert not (tmp_path / "gone").exists(), "a marker never re-creates a collection by name"
+
+
+@posix_only
+def test_a_stop_is_not_an_interruption(isolated_config, monkeypatch, tmp_path):
+    """`node stop` and SIGTERM set the worker's stop. The run's marker goes
+    the moment the check sees it, BEFORE its child is ended: a worker that
+    exits during the child's grace (or is killed then) leaves no
+    interruption, and the check is due again as at any start. The worker
+    waits for the check's thread on its way out."""
+    root = _running_with_a_snapshot(monkeypatch)
+    # in hand: the stop ends the child, nothing is recorded, no marker is left
+    monkeypatch.setattr(sc, "argv_for", lambda c: _py("import time; time.sleep(60)"))
+    t0 = time.time()
+    assert sc.turn(stop=lambda: time.time() - t0 > 1.5, log=lambda m: None, now=NOW) == "gutenberg"
+    assert time.time() - t0 < 30 and sc.last(root, "gutenberg") is None and sc.started(root, "gutenberg") is None
+    # the worker gone while its check, deaf to SIGTERM, is in its grace
+    pidfile, flag = tmp_path / "check.pid", tmp_path / "stop"
+    argv = _script(tmp_path, "deaf", "import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                                     f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(120)\n")
+    monkeypatch.setattr(sc, "argv_for", lambda c: argv)
+    pid = os.fork()
+    if pid == 0:                                       # the worker
+        try:
+            sc.turn(stop=flag.exists, log=lambda m: None, now=NOW)
+        finally:
+            os._exit(0)
+    try:
+        assert _until(lambda: sc.started(root, "gutenberg") is not None and pidfile.exists())
+        flag.touch()                                   # the stop
+        assert _until(lambda: sc.started(root, "gutenberg") is None, 10.0), "the stop removes the marker at once"
+        assert os.waitpid(pid, os.WNOHANG) == (0, 0), "the check is still in its grace"
+    finally:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        _kill_group_of(pidfile)
+    ran, lines = [], []
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + 60, run=_passes(ran)) == "gutenberg"
+    assert not any("never ended" in m for m in lines) and sc.last(root, "gutenberg")["outcome"] == "pass"
+    from app import worker
+    assert "check_thread.join(timeout=CHECK_STOP_WAIT_S)" in inspect.getsource(worker)
+    assert worker.CHECK_STOP_WAIT_S > sc.STOP_GRACE_S
+
+
+def _cgroup(d, *, limit, current, inactive_file=0) -> str:
+    d.mkdir(exist_ok=True)
+    (d / "memory.max").write_text(f"{limit}\n")
+    (d / "memory.current").write_text(f"{current}\n")
+    (d / "memory.stat").write_text(f"anon {current - inactive_file}\nfile {inactive_file}\n"
+                                   f"active_file 0\ninactive_file {inactive_file}\n")
+    return str(d)
+
+
+def test_a_check_is_admitted_only_when_the_worker_has_room_for_its_peak(tmp_path):
+    """wikidata's check peaked at ~6.4 GB beside a worker at ~17 GB in a
+    24 GiB cgroup. (limit − in use) ≥ the last peak × 1.2, or ≥ 4 GiB when
+    no peak is known; the page cache the kernel reclaims first is room."""
+    cg = tmp_path / "cg"
+    (tmp_path / "c").mkdir()
+    sc.record(tmp_path, "c", "2026-09", {"outcome": "pass", "peak_rss": 6 * GIB}, now=NOW)
+    ok, why = sc.admission(tmp_path, "c", cgroup=_cgroup(cg, limit=24 * GIB, current=17 * GIB))
+    assert not ok and "7.0 GiB free" in why and "needs 7.2 GiB" in why and "last peak, 6.0 GiB" in why, why
+    assert sc.admission(tmp_path, "c", cgroup=_cgroup(cg, limit=24 * GIB, current=16 * GIB))[0]
+    assert sc.admission(tmp_path, "c", cgroup=_cgroup(cg, limit=24 * GIB, current=23 * GIB,
+                                                      inactive_file=7 * GIB))[0], "inactive page cache is room"
+    (tmp_path / "d").mkdir()                          # never measured: the default
+    ok, why = sc.admission(tmp_path, "d", cgroup=_cgroup(cg, limit=24 * GIB, current=21 * GIB))
+    assert not ok and "the default" in why and sc.ADMIT_DEFAULT_BYTES == 4 * GIB
+    assert sc.admission(tmp_path, "d", cgroup=_cgroup(cg, limit=24 * GIB, current=20 * GIB))[0]
+
+
+def test_a_check_with_no_room_is_deferred_and_said_every_ten_minutes(isolated_config, monkeypatch, tmp_path):
+    """Deferral is not failure: nothing recorded, nothing started, one line
+    at most every 10 min naming the collection and the numbers."""
+    root = _running_with_a_snapshot(monkeypatch)
+    sc.record(root, "gutenberg", "2026-08", {"outcome": "pass", "peak_rss": 6 * GIB}, now=NOW - 86400)
+    full = _cgroup(tmp_path / "cg", limit=24 * GIB, current=17 * GIB)
+    ran, lines = [], []
+    for t in (NOW, NOW + 60, NOW + 601):
+        assert sc.turn(stop=lambda: False, log=lines.append, now=t, run=_passes(ran), cgroup=full) is None
+    assert ran == [] and sc.started(root, "gutenberg") is None
+    assert sc.last(root, "gutenberg")["snapshot_id"] == "2026-08", "nothing recorded"
+    said = [m for m in lines if "deferred" in m]
+    assert len(said) == 2 and all(m.startswith("gutenberg: ") and "7.0 GiB free" in m for m in said), lines
+    roomy = _cgroup(tmp_path / "cg", limit=24 * GIB, current=16 * GIB)
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + 700, run=_passes(ran), cgroup=roomy) == "gutenberg"
+    assert ran == ["gutenberg"]
+
+
+def test_an_unreadable_cgroup_admits(tmp_path):
+    (tmp_path / "c").mkdir()
+    none = str(tmp_path / "none")
+    assert sc.cgroup_memory(none) is None and sc.admission(tmp_path, "c", cgroup=none)[0]
+    cg = tmp_path / "cg"
+    cg.mkdir()
+    (cg / "memory.current").write_text(f"{30 * GIB}\n")
+    for limit in ("max", "garbage"):
+        (cg / "memory.max").write_text(f"{limit}\n")
+        assert sc.cgroup_memory(str(cg)) is None and sc.admission(tmp_path, "c", cgroup=str(cg))[0], limit
+    (cg / "memory.max").write_text(f"{24 * GIB}\n")
+    (cg / "memory.current").unlink()
+    assert sc.admission(tmp_path, "c", cgroup=str(cg))[0]
+    (cg / "memory.current").write_text(f"{10 * GIB}\n")
+    assert sc.cgroup_memory(str(cg)) == (24 * GIB, 10 * GIB), "no memory.stat: memory.current alone"
+
+
+def test_a_check_that_writes_more_than_a_pipe_buffer_finishes(tmp_path):
+    """Read only at the end, a pipe holds 64 KiB and the child blocked on its
+    write for ever. To files: the report (1 MiB here) read whole, the stderr
+    (1 MiB) kept whole in the state directory and its last lines recorded."""
+    argv = _script(tmp_path, "loud", "import json, sys\nsys.stderr.write(('x' * 1023 + '\\n') * 1024)\n"
+                                     "print('last line', file=sys.stderr)\n"
+                                     "print(json.dumps({'outcomes': ['y' * 1024] * 1024}))\n")
+    c = SimpleNamespace(name="c")
+    got = sc.run_one(c, stop=lambda: False, timeout_s=20.0, argv=argv)
+    assert got["outcome"] == "pass" and got["stderr_tail"][-1] == "last line"
+    assert len(got["report"]["outcomes"]) == 1024
+    state = tmp_path / "state"
+    state.mkdir()
+    got = sc.run_one(c, stop=lambda: False, timeout_s=20.0, argv=argv, log_dir=state)
+    assert got["outcome"] == "pass" and len(got["report"]["outcomes"]) == 1024
+    assert (state / sc.STDERR_FILE).stat().st_size > MIB
+    assert [p.name for p in state.iterdir()] == [sc.STDERR_FILE], "the report's file has no name"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="sessions are POSIX")
+def test_the_peak_is_the_check_s_whole_session(tmp_path):
+    """The check and its pool's children, each at ~96 MiB: their sum."""
+    child = _script(tmp_path, "pool", f"import time\nx = b'x' * (96 * {MIB})\ntime.sleep(3)\n")
+    argv = _script(tmp_path, "check", f"import subprocess, time\ng = subprocess.Popen({child!r})\n"
+                                      f"x = b'x' * (96 * {MIB})\ntime.sleep(3)\ng.wait()\n")
+    heard: list[int] = []
+    got = sc.run_one(SimpleNamespace(name="c"), stop=lambda: False, argv=argv, on_peak=heard.append)
+    assert got["outcome"] == "pass" and got["peak_rss"] >= 192 * MIB, got.get("peak_rss")
+    assert heard and heard == sorted(heard) and heard[-1] <= got["peak_rss"]
+    assert sc.session_rss(os.getpid() + 10 ** 7) is None, "no such session"

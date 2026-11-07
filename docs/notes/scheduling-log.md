@@ -2479,3 +2479,57 @@ decides. If it falls, or the archive's misses climb in the parent's line, the fi
 |---|---|---|---|---|---|
 | BEFORE (live, 2026-11-07) | ~1.05 GB × 11 | — | ~528 | ~18 | 1 (03:23) |
 | AFTER | | | | | |
+
+## 2026-11-07 — the scheduled check: a crash-loop bound, admission by memory, its output to files — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, the live node).** The worker container's cgroup is 24 GiB. In it: the worker's main at
+**7.1 GB**, its 11 parse children at **~0.87 GB** each (~9.6 GB), and wikidata's scheduled check (75.9 M records),
+`louise hold check wikidata` as a child in its own session, at **~6.4 GB**: its main ~4.8 GB and 2 pool children at
+~0.78 GB each (`CHECK_SHARE` = 4). The sum passed the cap. The kernel killed the worker at **06:17**, with the check
+running. `turn` recorded nothing for a run that ended "stopped", by design ("it runs again at the next start"), and
+it recorded nothing for a run its worker died under. The worker came back by itself, and at **06:18:01** it began the
+same check from zero. Check → OOM kill → restart → check: it never completes, and each round costs the whole node a
+restart.
+
+**The change (one deploy, `app/scheduled_checks.py`).**
+1. **A crash-loop bound** (systemd's StartLimitBurst within StartLimitIntervalSec; Kubernetes' CrashLoopBackOff).
+   Before a run, `state/scheduled-check.started.json` is written atomically: the snapshot id and hash, the time, the
+   pid and a run id. The run removes it when it ends, and removes it at a stop as soon as the run sees the stop, before
+   the child is ended. The worker joins the check thread at exit (`CHECK_STOP_WAIT_S` = 35 s, inside the 120 s
+   grace). If a turn finds a marker, the worker died under that run. The turn records it `interrupted`, counted per
+   snapshot. After `CHECK_MAX_INTERRUPTS` = 2, `due` is False until a cadence after the last start, or until a new
+   snapshot. `hold collection show` says "interrupted 2 times: … retried at <UTC>, or sooner for a new snapshot".
+2. **Admission by memory.** A check starts only if the cgroup has room for it. Room is `memory.max` less the working
+   set: `memory.current` − `memory.stat` `inactive_file`, the figure kubelet evicts on. Page cache alone would block
+   every check. The check needs its last peak × 1.2, or **4 GiB** when no peak is known. That default is gutenberg's
+   2.6 GB, the largest check measured to its end (2026-10-08), × 1.2 = 3.1 GB, rounded up. If no limit can be read,
+   the check is admitted, as before. A check with no room is deferred, never failed, with one line at most every
+   10 min that names the collection and the numbers. The peak is the sum of VmRSS over the check's session, sampled
+   each second in `run_one`'s loop (0.57 ms a sample at 76 processes, measured in the dev container). It is written
+   into the marker as it grows, so a run the kernel kills leaves its peak, and the next start asks for it.
+3. **stdout and stderr go to files, not pipes.** With `communicate()` only at the end, a check that wrote more than
+   64 KiB to stderr blocked for ever. Measured in the dev container with 1 MiB of stderr: the old runner gave "timed
+   out" at its 5 s timeout, the new one passed in 1 s. stderr is kept whole in `state/scheduled-check.stderr`, with
+   its last lines in the record. The report goes to an unnamed file in the state directory, on /data. A tmpfs there
+   would be charged to the cgroup.
+
+Not changed: the cadence, `CHECK_SHARE`, the timeout, what a check runs.
+
+**What to expect.** wikidata's next start after the deploy has no record, so it needs the 4 GiB default, and it is
+admitted. Its peak (~6.4 GB) lands in the marker. If the kernel kills the worker again, the next start records
+interruption 1 and needs 6.4 × 1.2 ≈ 7.7 GB free in the cgroup's own working set. That is not the RSS sums above,
+which count shared pages more than once. A second kill holds the check back for a month. Admission alone does not
+promise there is no OOM: the parse pool can grow after the check starts. The bound is what ends the loop. If the
+check never finds the room, it stays deferred and says so every 10 min. That is the honest outcome: this check does
+not fit beside the parse pool, and the operator decides.
+
+**AFTER (München, to fill on the node).**
+- `louise hold collection show wikidata`: the `scheduled_check` block (outcome, `peak_rss`, `interrupts`, `note`).
+- The worker log's `[node info:check]` lines: admitted or deferred, with the numbers.
+- OOM kills with a check running (`dmesg`, the container's restart count).
+- The cgroup's working set while the check runs: `memory.current` and `inactive_file` from `/sys/fs/cgroup/`.
+
+| | check peak | worker main + parse children | OOM kills with a check running | check restarts from zero |
+|---|---|---|---|---|
+| BEFORE (live, 2026-11-07) | ~6.4 GB (4.8 + 2 × 0.78) | 7.1 + 11 × ~0.87 GB | 1 (06:17) | 06:18:01, unbounded |
+| AFTER | | | | |

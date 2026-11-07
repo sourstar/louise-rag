@@ -2684,15 +2684,14 @@ def _show_shard(root, name: str) -> dict:
             # non-empty, the copy is integrity violated on this peer
             "integrity_violated": list(_integrity_violations(Path(root), name, codex)),
             # 03 §3.2: the last plan the worker ran in the background
-            "scheduled_check": _scheduled_check(Path(root), name)}
+            "scheduled_check": _scheduled_check(Path(root), name, codex)}
 
 
-def _scheduled_check(root, name):
+def _scheduled_check(root, name, codex=None):
+    """The last scheduled check; one the worker died under says so in plain
+    words, with when it is retried (app/scheduled_checks.py `summary`)."""
     from app import scheduled_checks
-    got = scheduled_checks.last(root, name)
-    if got is None:
-        return None
-    return {k: got.get(k) for k in ("time", "snapshot_id", "outcome", "exit", "secs")}
+    return scheduled_checks.summary(root, name, codex)
 
 
 def _integrity_violations(root, name, codex):
