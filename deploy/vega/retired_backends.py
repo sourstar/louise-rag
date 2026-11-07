@@ -51,10 +51,17 @@ A retired engine — a backend directory, or one moved into a retired directory 
 is NAMED by a Codex whose engine `name` is `localai/<its name>` or whose
 `image` is its tree digest, alone or with a retired wrapper's code
 (`engine_manifest`, 09 §9.3 amended 2026-10-31). The listing says, per entry,
-which collections name it and whether `<--archive>/<tree hex>.tar.zst` exists.
-`--delete` refuses a named engine unless that archive unpacks to its tree digest
-(tools/archive_backend.py `verify`), and an engine whose tree has no digest; a
-Codex that cannot be read refuses the deletion whole.
+which collections name it and whether `<--archive>/<tree hex>.tar.zst` exists;
+for a named engine, whether it verified and how: "verified (unpacked)" — it
+unpacks here to the tree digest (tools/archive_backend.py `verify`) — or, where
+this host reads no zstd, "verified (sidecar, sha256 matches)": the archive's
+`.verified` sidecar, which archive_backend writes only after an unpack proved
+the tree, names that digest, and the file's sha256 (hashlib) is the one it
+records. A failed unpack never falls back to the sidecar. `--delete` refuses a
+named engine whose archive did not verify, and an engine whose tree has no
+digest; a Codex that cannot be read refuses the deletion whole. A Codex with no
+engine (an annotations Codex: `space` null) is read and names none: the count
+says how many of each.
 
 THE STANDARD ALTERNATIVES, and why not (CLAUDE.md, do not reinvent the wheel):
 - LocalAI's own `POST /backends/delete/<name>` (louise-python-rebuild.md §2)
@@ -71,8 +78,11 @@ It runs on the node's host, as root, from a checkout (the deployed tree,
 /mnt/ssd4/apps/louise-rag/src) or the staged source: the standard library, and
 the repository's tools/archive_backend.py and vega_wrapper.py, which import
 nothing else (an archive is unpacked with zstandard, pyarrow or the `zstd`
-program, archive_backend's order). Python 3.11 or later. It hashes every
-retired engine's files, and unpacks each named engine's archive.
+program, archive_backend's order; the node's host has none of them, so there
+its sidecar is checked instead — the sidecars are written in the worker image,
+`python -m tools.archive_backend --sidecar`). Python 3.11 or later. It hashes
+every retired engine's files, and unpacks (or hashes) each named engine's
+archive, once per run.
 Exit 0: listed, or every retired entry removed; 1: one was refused (in use,
 or a Codex's engine not archived) or could not be removed; 2: nothing decided
 (an unreadable models path, /proc or Codex, a wrapper without vega.json).
@@ -157,6 +167,8 @@ class Unit:
     images: set[str] = field(default_factory=set)     # the tree, and with each wrapper naming it
     error: str | None = None                          # why the tree has no digest
     codexes: list[str] = field(default_factory=list)  # the collections whose Codex names it
+    kept: bool = False                                # its archive verified (09 §9.3)
+    archive: str = ""                                 # how it verified, or why not
 
 
 @dataclass
@@ -384,16 +396,32 @@ def codex_files(collections: Path, shards: Path, container_shards: str) -> list[
     return sorted((name, d / CODEX_FILE) for name, d in found.values())
 
 
-def codex_engines(collections: Path, shards: Path, container_shards: str) -> list[CodexEngine]:
-    out = []
+def codex_engines(collections: Path, shards: Path,
+                  container_shards: str) -> tuple[list[CodexEngine], list[str]]:
+    """Every engine the node's Codexes name, and the collections whose Codex
+    was read. A Codex with no engine object is read and names none: an
+    annotations Codex, whose `space` is null (09 §9.3, versions 7 and 9;
+    gutenberg-book-editions, München's 7th, 2026-11-07), or a version-2 one,
+    whose encoder carries a container image's digest alone — neither can
+    name a backend's tree."""
+    out, read = [], []
     for name, path in codex_files(collections, shards, container_shards):
         try:
             doc = json.loads(path.read_bytes())
         except (OSError, ValueError) as e:
             raise Undecidable(f"cannot read the Codex {path} ({type(e).__name__}: {e}); "
                               f"what it names is not known") from None
+        read.append(name)
         out += [CodexEngine(name, str(e.get("name", "")), e["image"]) for e in _engines_in(doc)]
-    return out
+    return out, read
+
+
+def codex_count(engines: list[CodexEngine], read: list[str]) -> str:
+    """`7 read (6 with an engine, 1 without: gutenberg-book-editions)`."""
+    named = {c.collection for c in engines}
+    without = [name for name in read if name not in named]
+    return (f"{len(read)} read ({len(read) - len(without)} with an engine, {len(without)} without"
+            + (f": {_namers(without, 5)}" if without else "") + ")")
 
 
 def _is_backend(path: Path) -> bool:
@@ -460,31 +488,55 @@ def archive_of(archive: Path, tree: str) -> Path:
     return archive / f"{tree.split(':', 1)[1]}.tar.zst"
 
 
-def unkept(r: Retired, archive: Path) -> list[str]:
+def archive_verdict(kept: Path, tree: str, scratch: Path) -> tuple[bool, str]:
+    """Whether `kept` is the archive of `tree`, and how that is known:
+    unpacked here and its tree digest recomputed (tools/archive_backend.py
+    `verify`); or, where nothing here reads zstd (the node's host: no
+    zstandard, no pyarrow, no `zstd` program, München 2026-11-07), by the
+    sidecar archive_backend wrote when the archive verified — its tree is
+    `tree` and the file's sha256 is still the one recorded. A failed unpack
+    never falls back to the sidecar: the sidecar stands in for the unpack
+    only where no unpack can be done."""
+    if not kept.is_file():
+        return False, f"{kept} does not exist (tools/archive_backend.py makes it)"
+    ab = _repository()
+    try:
+        got = ab.verify(kept, tree, scratch)
+    except ab.NoZstd as no:
+        try:
+            why = ab.check_sidecar(kept, tree)
+        except OSError as err:
+            why = f"its sha256 cannot be read ({err.strerror or err})"
+        return (True, "verified (sidecar, sha256 matches)") if why is None else (
+            False, f"{kept} cannot be unpacked here ({no}), and {why}")
+    except Exception as err:                         # noqa: BLE001 — refused, with the reason
+        got = f"nothing ({type(err).__name__}: {err})"
+    if got == tree:
+        return True, "verified (unpacked)"
+    return False, f"{kept} unpacks to {got}, not {tree}"
+
+
+def check_archives(items: list[Retired], archive: Path) -> None:
+    """Each engine a Codex names: its archive's verdict, once per run, for the
+    listing and for `--delete` alike."""
+    for r in items:
+        for u in r.units:
+            if u.tree and u.codexes:
+                u.kept, u.archive = archive_verdict(archive_of(archive, u.tree), u.tree, archive)
+
+
+def unkept(r: Retired) -> list[str]:
     """Why removing `r` would lose an engine a Codex names (09 §9.3), or a
     tree no digest was computed for; [] when nothing would be lost. An
-    archive counts only once it unpacks to the tree's digest."""
+    archive counts only once it verified (`archive_verdict`)."""
     why = []
     for u in r.units:
         if u.error:
             why.append(f"{u.path.name}: its tree has no digest ({u.error}), so no Codex can "
                        f"be ruled out")
-            continue
-        if not u.codexes:
-            continue
-        kept = archive_of(archive, u.tree)
-        if not kept.is_file():
+        elif u.codexes and not u.kept:
             why.append(f"{u.path.name}: named by the Codex of {', '.join(u.codexes)}, and "
-                       f"{kept} does not exist (tools/archive_backend.py makes it)")
-        else:
-            ab = _repository()
-            try:
-                got = ab.verify(kept, u.tree, archive)
-            except Exception as err:                 # noqa: BLE001 — refused, with the reason
-                got = f"nothing ({type(err).__name__}: {err})"
-            if got != u.tree:
-                why.append(f"{u.path.name}: named by the Codex of {', '.join(u.codexes)}, and "
-                           f"{kept} unpacks to {got}, not {u.tree}")
+                       f"{u.archive}")
     return why
 
 
@@ -500,7 +552,11 @@ def _codex_line(r: Retired, archive: Path, codexes_read: bool) -> list[str]:
             lines.append(f"{label}: no tree digest ({u.error}); --delete refuses it")
             continue
         named = (", ".join(u.codexes) or "no Codex") if codexes_read else "not known"
-        archived = "yes" if archive_of(archive, u.tree).is_file() else "no"
+        exists = archive_of(archive, u.tree).is_file()
+        if not u.codexes or not exists:
+            archived = "yes" if exists else "no"
+        else:
+            archived = u.archive if u.kept else f"NOT verified ({u.archive}); --delete refuses it"
         lines.append(f"{label}: named by {named}; archived: {archived}")
     return lines
 
@@ -631,11 +687,12 @@ def run(backends: Path, models: Path, container_backends: str, proc: Path,
     codexes: list[CodexEngine] | None = None
     if any(r.units for r in items):
         try:
-            codexes = codex_engines(codex.collections, codex.shards, codex.container_shards)
+            codexes, read = codex_engines(codex.collections, codex.shards, codex.container_shards)
             name_codexes(items, codexes)
-            say(f"codexes: {len({c.collection for c in codexes})} read under {codex.collections}"
+            say(f"codexes: {codex_count(codexes, read)} under {codex.collections}"
                 f" and {codex.shards}{'' if codex.shards.is_dir() else ' (absent)'}; "
                 f"archives in {codex.archive}")
+            check_archives(items, codex.archive)
         except Undecidable as e:
             if delete:
                 raise
@@ -673,7 +730,7 @@ def run(backends: Path, models: Path, container_backends: str, proc: Path,
             say(f"refused  {r.entry.name}: in use by {', '.join(busy[r.entry.name])}")
             failed += 1
             continue
-        lost = unkept(r, codex.archive)
+        lost = unkept(r)
         if lost:
             say(f"refused  {r.entry.name}: {'; '.join(lost)} (09 §9.3)")
             failed += 1

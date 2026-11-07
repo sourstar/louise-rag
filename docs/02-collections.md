@@ -1296,6 +1296,14 @@ kin.
 Taking a part of a collection — one slice, one kind — is none of these.
 It is the same collection with fewer members.
 
+Freezing one is none of these either (*amended 2026-11-07*, operator: "in
+freeze you only decide that you want to keep that version in time"). A peer
+that freezes a collection keeps the version it holds and stops following
+it: no new Codex, no new `collection_id`, nothing published about the
+collection. It is the same collection, held at an earlier snapshot by
+choice, and unfrozen it catches up as any peer that fell behind (07 §7.3
+`node freeze`; 04 §4.3).
+
 ## 2.8 Open and certified
 
 A collection is **open** or **certified**; nothing else.

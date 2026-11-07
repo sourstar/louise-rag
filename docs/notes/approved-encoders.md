@@ -47,18 +47,45 @@ A swap (a new engine or wrapper in place of an old one) ends like this:
    the old one is unloaded (`POST /backend/shutdown`, measuring.md §9).
 3. If a Codex names the retired engine, its archive is made first:
    `python -m tools.archive_backend <engine dir> <archive dir>` (09 §9.3: the
-   node keeps a Codex's backend engine for the Codex's life).
+   node keeps a Codex's backend engine for the Codex's life), where zstd is:
+   in the worker image, which has pyarrow. Once the unpacked tree is the
+   engine's digest it also writes `<tree hex>.tar.zst.verified` beside it (the
+   tree digest, the .tar.zst's sha256 as `sha256sum` prints it, its size,
+   when, the tool's version), rewritten at each re-verification, removed if
+   one fails. **The node's host has no zstd** (no zstandard, no pyarrow, no
+   `zstd` program; München, 2026-11-07), so step 4 checks that sidecar there.
+   An archive made before 2026-11-07 has none. Write it once, in the worker
+   image, with the deployed tree mounted over /srv (the image has no deploy/)
+   and the archive directory at its own path:
+
+       docker run --rm -w /srv -e PYTHONDONTWRITEBYTECODE=1 \
+         -v /mnt/ssd4/apps/louise-rag/src:/srv:ro \
+         -v /mnt/tank/apps/louise-platform-images/backends:/mnt/tank/apps/louise-platform-images/backends \
+         louise-rag:local python -m tools.archive_backend --sidecar \
+         /mnt/tank/apps/louise-platform-images/backends/*.tar.zst
+
+   It unpacks each archive against the tree digest its name states and prints
+   one JSON line per archive. Exit 1: one unpacked to another tree and got no
+   sidecar. Exit 2: no zstd there either.
 4. On the node, as root, from the deployed tree (`/mnt/ssd4/apps/louise-rag/src`):
    `python3 -I deploy/vega/retired_backends.py` lists every backend, wrapper
    and directory of the backends path that no model file names, directly or
    through a wrapper's vega.json, with its size. For each retired engine it
    also says which collections' Codexes name it and whether its archive
    exists. `--delete` removes exactly those and prints what it removed and the
-   bytes freed. It refuses:
+   bytes freed. Its `codexes:` line counts the Codexes it read and how many
+   name an engine (`7 read (6 with an engine, 1 without:
+   gutenberg-book-editions)`): an annotations Codex has `space` null and
+   names none. It refuses:
    - one that a running process uses;
    - an engine a Codex names (by `localai/<name>`, or by an image of its tree,
      alone or with a wrapper's code), unless `<tree hex>.tar.zst` under
-     `--archive` unpacks to the engine's tree digest;
+     `--archive` verified. The listing says how: `verified (unpacked)`, where
+     the tool can unpack it to the engine's tree digest, or, on the host
+     without zstd, `verified (sidecar, sha256 matches)`: the sidecar names
+     that digest and the file still hashes to its sha256. A missing sidecar,
+     another tree or another sha256 refuses. A failed unpack never falls back
+     to the sidecar;
    - everything, if /proc or any Codex cannot be read.
 
    A twin (the CPU engine a `-cpu` wrapper names) is kept, because something

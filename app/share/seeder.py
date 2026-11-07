@@ -177,7 +177,7 @@ def serves(collection, member_name: str) -> bool:
 
 
 def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path, con,
-            log: Callable[[str], None] | None = None) -> list[dict[str, Any]]:
+            log: Callable[[str], None] | None = None, *, alignment=None) -> list[dict[str, Any]]:
     """Every member of `snapshot` whose files the SHARD holds, as the
     entries the worker's seeder serves (app/acquire/seeding.py
     `record_published`'s shape, plus the member, its path, the snapshot).
@@ -191,7 +191,13 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     Until then `sync` published only on a snapshot or selection change,
     and every bundle made after that was offered and announced but never
     seeded: 331 of the node's, each a 120 s wait for whoever asked
-    (p2p-review-open-issues.md §8)."""
+    (p2p-review-open-issues.md §8).
+
+    `alignment` (app/share/frozen.py) is a FROZEN collection's: a file whose
+    torrent is not that file's in the newest snapshot read is not served,
+    nor a bundle whose part is not (04 §4.3, amended 2026-11-07). Each file
+    is its own torrent (09 §9.16), so a member partly aligned serves its
+    aligned files."""
     from app.acquire import seeding
     share_root = Path(state_dir) / SHARE_DIR
     torrents_dir = share_root / TORRENTS_DIR
@@ -216,13 +222,22 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
         if k not in previous or e.get("snapshot_id") == snapshot.snapshot_id:
             previous[k] = e
     kept = 0
+    withheld = 0
     for member in members:
         if not serves(collection, member.name):
             continue                                     # narrowed out (`share --slices/--kinds`)
         base = Path(member.base) if member.base is not None else Path(shard_dir)
         if not all((base / f.path).is_file() for f in member.files):
             continue                                     # a slice this copy does not hold
+        if alignment is not None and member.name.startswith("bundle-") \
+                and not alignment.bundle_dir(member.base):
+            withheld += len(member.files)                # frozen: its part changed upstream
+            continue
         for t in member.torrents():
+            if alignment is not None and member.listed_by_a_snapshot \
+                    and not alignment.file(t.path, t.root, t.length):
+                withheld += 1                            # frozen: this file changed upstream
+                continue
             old = previous.get((member.name, t.path))
             if old is not None and old.get("info_hash") == t.infohash[7:] \
                     and Path(str(old.get("torrent_path"))).is_file():
@@ -280,16 +295,32 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
         if old.name not in roots:
             old.unlink(missing_ok=True)
     db.set_control(con, seeding.TORRENT_PUBLISHED_KEY, json.dumps(entries))
-    db.set_control(con, CONTROL_KEY, json.dumps({
+    record = {
         "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,
         "selection": selection(collection),
         "bundles": bundles_fingerprint(state_dir, contribute.segments_of(codex) or None),
-        "torrents": len(entries), "refused": refused, "at": time.time()}))
+        "torrents": len(entries), "refused": refused, "at": time.time()}
+    if alignment is not None:
+        # what the served set was judged against, for `sync` to see it move
+        # (a newer snapshot read, the freeze lifted) and for a display
+        record.update({"aligned_with": aligned_stamp(alignment), "withheld": withheld})
+    db.set_control(con, CONTROL_KEY, json.dumps(record))
     if log is not None:
         log(f"[{collection.name}] share: {len(entries)} torrent(s) of snapshot "
             f"{snapshot.snapshot_id} served ({len(entries) - kept} new)"
-            + (f"; {len(refused)} file(s) refused, not what the snapshot says: {refused}" if refused else ""))
+            + (f"; {len(refused)} file(s) refused, not what the snapshot says: {refused}" if refused else "")
+            + (f"; frozen: {withheld} file(s) changed upstream in snapshot {alignment.newest_id} "
+               f"not served" if alignment is not None and withheld else ""))
     return entries
+
+
+def aligned_stamp(alignment) -> str | None:
+    """What a frozen collection's served set is judged against — `frozen:`
+    and the newest snapshot read, or `frozen:own` — and None when it is not
+    frozen: kept in `share_served` beside the snapshot id."""
+    if alignment is None:
+        return None
+    return "frozen:own" if alignment.everything else f"frozen:{alignment.stamp}"
 
 
 def served(con) -> dict[str, Any] | None:
@@ -491,6 +522,8 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
     out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0, "swarm": 0,
                            "pointers": 0}
     seeds = node_state.runs(worker_state, node_state.SEED)
+    from app.share import frozen as frozen_mod
+    frozen = frozen_mod.frozen_names()
     for c in collections:
         con = cons.get(c.name)
         if con is None:
@@ -521,12 +554,25 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
             if t - _last_bundle_scan.get(c.name, 0.0) >= BUNDLE_SCAN_S:
                 _last_bundle_scan[c.name] = t
                 held_bundles = bundles_fingerprint(state_dir, space)
+        # A FROZEN COLLECTION serves what is aligned (04 §4.3, amended
+        # 2026-11-07): served again when what it is judged against moves — a
+        # newer snapshot read aside, the freeze set or lifted. One stat of the
+        # aside directory a beat; the alignment is loaded only on a change
+        is_frozen = c.name in frozen
+        ref = frozen_mod.reference_stamp(root, c.name) if is_frozen else None
+        was_frozen = (now_served or {}).get("aligned_with") is not None
+        moved = was_frozen != is_frozen or (is_frozen and (now_served or {}).get("aligned_ref") != ref)
         if now_served is None or now_served.get("snapshot_id") != snap.snapshot_id \
                 or now_served.get("selection", selection(c)) != selection(c) \
-                or (held_bundles is not None and now_served.get("bundles") != held_bundles):
+                or (held_bundles is not None and now_served.get("bundles") != held_bundles) or moved:
             # a narrowing or the held bundles changed while the snapshot did not: served again
-            publish(c, snap, shard_dir, state_dir, con, log)
+            aligned = frozen_mod.alignment_for(root, c, snap, frozen=frozen) if is_frozen else None
+            publish(c, snap, shard_dir, state_dir, con, log, alignment=aligned)
+            if is_frozen:
+                db.set_control(con, CONTROL_KEY, json.dumps({**(served(con) or {}), "aligned_ref": ref}))
             out["published"].append(c.name)
+        if is_frozen and not (served(con) or {}).get("torrents"):
+            continue                       # frozen with nothing aligned: nothing to announce (04 §4.2)
         if seeds and session is not None and port:
             keys = keys_for(c.codex, snap, col.resolver(root))
             out["announced"] += announce(session, keys, port, now=now)

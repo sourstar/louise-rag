@@ -124,10 +124,15 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
         from pathlib import Path
         shard_tree = Path(collection.corpus_dir)
         violated = list(integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, codex))
+    # the numbers and the reasons are app/status.py's, through health (one
+    # status, 2026-11-07); `superseded` and `reembed` where they were counted
     stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason,
                **({"over": True} if s.over else {}),
-               **({"errored": s.errored} if s.errored else {})}
-              for s in (report.stages if report else []) if s.state != "idle" or s.waiting or s.errored]
+               **({"errored": s.errored} if s.errored else {}),
+               **({"superseded": s.superseded} if getattr(s, "superseded", None) is not None else {}),
+               **({"reembed": s.reembed} if getattr(s, "reembed", None) else {})}
+              for s in (report.stages if report else [])
+              if s.state != "idle" or s.waiting or s.errored or getattr(s, "superseded", None)]
     doing = next((s["stage"] for s in stages if s["state"] == "running"), None)
     return {"name": collection.name,
             "collection_id": codex.collection_id if codex is not None else None,
