@@ -2292,3 +2292,50 @@ windows, and gutenberg fts had work in both (123.9 and 93.6 ms/doc). Neither win
   rate over 17–19 min is the number here.
 - Next: take the encoder warm-up and the genesis read off the pipeline thread (A's 39 %), and find why a batch
   keeps only ~6 of 11 slots in flight. py-spy A: /root/measure/spy-A-overlap0.raw, B: spy-B-overlap1.raw.
+
+## 2026-11-07 — a reranked list holds one claim, from its warm to its last variant — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, 2026-11-07).** Searches beside wikidata's Nemotron embedding (on the card, ~2 s a
+request, 4 in flight), against searches with no corpus embedding. `timings.rerank` of the live searches:
+
+| | n | median | p95 |
+|---|---|---|---|
+| with wikidata embedding | 50 | 8,475 ms | 13,762 ms |
+| without embedding | 320 | 5,359 ms | 7,913 ms |
+
+The p95 with embedding is over the rerank's 12.8 s bound, so about 1 search in 20 loses its rerank.
+
+**The defect.** `_rerank_list` calls the reranker once per language variant, 9–37 ms apart (2026-10-25's
+timing). Each call held the claim alone (`dispatch.call`), so it cleared between two variants. A corpus request
+standing aside polls every GATE_POLL_S (0.1 s). One that polled in that gap went out and shared the card with the
+next variant. Before the fix, `tests/test_rerank_claim.py` read the claim inactive at the warm, the cut and before
+each call, and recorded a clear (`0.0`) between the two variants' calls.
+
+**The change (web; `retrieval._rerank_list`).** One claim per reranked list, at RERANK, from `_warm_reranker`
+through the cut (`fit_to_window`'s tokenizer calls) to the last variant's call. Each call's own `dispatch.call`
+nests in it. The plan, the legs, the attach and Ask's prompt (gaps (a), (b), (c) of 2026-10-25) are unchanged:
+corpus still fills them, as the operator decided that day.
+
+**The idle this adds** is the card idle inside a list that corpus could have filled:
+- the spacing between variants: at most 5 × 37 ms = 185 ms a list, for the 6 calls 2026-10-25 measured;
+- a 5xx retried once: its 0.25 s pause (0.21 % of calls on 2026-10-28);
+- the tokenizer calls, which 2026-10-25 counted in gap (b). They are made only for a candidate over 4,096 bytes at
+  the default window of 2,048, so usually there are none.
+
+**Deploy unit.** The web, for the claim (and any `chat_eval` process, which searches in its own process). The
+worker, for the stand-aside counter of 46008b7. Its line is `[sched] stood aside for a person's query (since
+start) — <collection>: N requests, S s[, D deferred]`.
+
+**AFTER (München, to fill).** The same `timings.rerank` median and p95 with wikidata embedding, and the stand-aside
+line over the same window.
+
+| | n | median | p95 | stood aside (wikidata) |
+|---|---|---|---|---|
+| BEFORE, with embedding | 50 | 8,475 ms | 13,762 ms | — (not counted then) |
+| AFTER, with embedding | | | | |
+
+**Open, NOT decided here: gap (b).** The 2026-10-25 trade assumed a corpus request of 0.43 s with 2 in flight
+(gutenberg on demand, batch 1). Today wikidata's are ~2 s with 4 in flight. Gap (b) is the dense search, fusion,
+attach and tokenize before the first rerank, 0.7–1.1 s. A corpus request sent there now shares the card with the
+first rerank call for up to ~2 s, against ~0.43 s then. Whether the claim should cover it is the operator's
+question. The AFTER row shows how much of BEFORE's +3.1 s median is left once the gaps between variants are closed.

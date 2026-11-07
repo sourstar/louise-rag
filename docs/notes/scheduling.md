@@ -1073,6 +1073,13 @@ the previous steps."**
   search and fusion, Ask's prompt — totalled 3.4–4.1 s of 11.6–16.7 s, and
   a corpus request then took 0.43 s, so corpus fills the gaps. Changing it
   is the operator's decision, not a fix (scheduling-log.md, 2026-10-25).
+- **A reranked list is ONE step (2026-11-07).** Its warm, its cut (the
+  tokenizer calls) and every language variant's call hold one claim, at
+  RERANK (`retrieval._rerank_list`); each call's own claim nests in it.
+  Per call, the claim cleared in the 9–37 ms between two variants, and a
+  corpus request standing aside could go there. The idle it adds is the
+  variants' spacing: at most 5 × 37 ms a list for the 6 calls measured.
+  Gaps (a), (b) and (c) are unchanged (scheduling-log.md, 2026-11-07).
 
 ### What was measured first
 
@@ -1185,6 +1192,7 @@ claim is live, which was its behaviour before any of this.
 | levels, gates, the claim | `app/rage/dispatch.py` | `tests/test_dispatch.py` |
 | every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
 | the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
+| a reranked list, one claim from its warm to its last variant | `retrieval._rerank_list` | `tests/test_rerank_claim.py` |
 | producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
