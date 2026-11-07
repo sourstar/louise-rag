@@ -19,8 +19,8 @@ Each question has a known work it is about.
 | sentences citing | sentences that carry a citation [n]; a count, not a score | — |
 | supported | share of citing sentences whose names, numbers and quoted spans are all found in the sources they cite (ALCE's citation precision, at the level of names and numbers) | higher |
 | spans found | share of quoted spans ("…") found word for word in the cited source | higher |
-| answers w/ unsupported | answers with at least one citing sentence its source does not support | lower |
-| uncited unsupported | answers stating, without a citation, something no source says | lower |
+| answers w/ unsupported | answers (of the run's 50) with at least one citing sentence its source does not support | lower |
+| uncited unsupported | answers (of the run's 50) stating, without a citation, something no source says | lower |
 | median s | median answer time with the model warm | lower |
 
 Above every row, the run's search line: "every search found the work" is
@@ -34,7 +34,8 @@ of one setting beat both runs of the other.
 
 ## 2026-11-07, night b (search on every leg)
 
-Ran 23:16–01:53, beside wikidata's Nemotron embedding. The "new" prompt
+Ran 23:16–01:53, beside wikidata's Nemotron embedding. Every run answered
+the same 50 questions (n = 50 in every run, score-nightb.md lines 186–198). The "new" prompt
 adds two rules to Ask's SYSTEM (ec21999): cite each source on its own, and
 quote a title exactly as its source gives it. Search, on every run: every
 search found the work **0.86**, MRR 0.479 (0.67 on the earlier search file,
@@ -57,7 +58,11 @@ column that is 0 in every other run.
 **Reading.**
 - On qwen3.5-9b-q4 the new prompt lifts "supported" from 0.73 / 0.76 to
   0.82 / 0.85. It lowers answers with an unsupported sentence from 40 / 35
-  to 32 / 29, and raises spans found from 0.58 / 0.69 to 0.74 / 0.71.
+  of 50 (80 % / 70 %) to 32 / 29 (64 % / 58 %), and raises spans found from
+  0.58 / 0.69 to 0.74 / 0.71. Per answer it still trails qwen3-8b
+  (24–28 of 50) because it writes about twice as many citing sentences, so
+  each answer has more chances to hold one unsupported sentence. Per
+  sentence ("supported") it is ahead: 0.82–0.85 against 0.72–0.74.
   Both new runs beat both old ones on "supported", so it counts.
 - On qwen3-8b the new prompt changes nothing beyond the seeds' spread.
 - qwen3.5-9b writes about twice as many citing sentences (292–391 against
