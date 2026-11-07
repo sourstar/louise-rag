@@ -2213,3 +2213,65 @@ mode. Beside it: the chat_eval whole runs on the card, and from 00:24 the wikida
 - At ~500 docs/s, the 11.13 M unparsed documents take ~6 h, against ~5 days before.
 - The pool now has free slots (51 % in flight). The limit has moved to the commit: "indexed 3,392 documents /
   20,004 chunks in one commit (7.8 s)". That is the next thing to read if this pace matters.
+
+## 2026-11-07 — wikipedia fts: the marks in one statement by rowid, the next batch parsed while this one is written — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, on the live node after #340).** wikipedia fts at ~503 docs/s wall; batches stop at the
+20,000-chunk cap (244 batches in 20 min: a median 20,002 chunks, 3,392 documents; "commit (Xs)" median 3.2 s, max
+48.1 s). py-spy, pipeline-wikipedia, 60 s, 1,197 samples: **52.4 % waiting on the parse pool** (`stage_fts` <
+`fts_for_rows` < `parallel.compute`), **37.6 % in `_mark_indexed`** (one `UPDATE … WHERE uid=?` per document, ~0.75 ms
+each on the 53 M-row manifest), **7.0 % in `entities.write_tags`**, 1.5 % in the tantivy add and commit. One after the
+other: the children idle while the thread writes.
+
+**The change (one deploy, `FTS_OVERLAP=0` turns the second half off without a redeploy).**
+1. The marks: one `executemany`, `WHERE rowid=? AND +uid=?` (the peer queries now select `rowid AS rid`), sorted by
+   rowid, marks before tags; the tags: one delete and one insert statement for the batch (`entities.write_tags_many`).
+   The same columns and values (tests/test_fts_overlap.py holds main's per-document writes as the oracle).
+2. The look-ahead (app/lookahead.py): once batch k's parse is in hand, batch k+1 — k's unwritten rows (the peers past
+   the chunk cap, their parse CARRIED instead of thrown away; failed peers, parsed again) and then the pending rows
+   after k's last rowid (`_FTS_NEXT`) — goes to the pool on a daemon thread, before k's index commit and marks. The
+   next round takes it only if it starts at the round's own row, after re-reading its rows by rowid; a changed row is
+   parsed again, never written from the old parse. Only on a pipeline thread, with a pool and no binding profile, not
+   after a stop or under a mode that holds parsing.
+
+**Synthetic, measured here** (4 vCPU VM, idle; real schema, 4 M wikipedia-shaped rows, 2.25 GiB; SQLite 3.45.1, the
+default 2 MiB page cache; medians of 7 batches of 3,400). *ms per mark* is the whole write of one document, tags + mark.
+Page fetches are SQLite's own counters (`sqlite3_db_status` CACHE_HIT + CACHE_MISS), a count that carries to the node.
+
+| layout, OS cache | ms/mark before → after | page fetches/mark | pager misses/mark |
+|---|---|---|---|
+| pending after the done prefix, warm | 0.0120 → **0.0093** | 21.45 → **17.59** | 0.55 → 0.36 |
+| the same, evicted before each batch | 0.0288 → **0.0227** | 21.44 → **17.58** | 0.47 → 0.36 |
+| 1 row in 5 pending across the table, warm | 0.0145 → **0.0118** | 21.45 → **17.45** | 1.14 → 1.11 |
+| the same, evicted | 0.0374 → **0.0324** | 21.44 → **17.45** | 1.13 → 1.11 |
+
+- The ~4 fetches saved are the uid index's descent. The SQLite COMMIT (38–74 ms a batch) does not move. A 64 MiB cache
+  for the transaction removed the spills (1,169 → 0 pages) but moved the WAL volume 1 %: not adopted.
+- This VM's marks cost ~1/60 of the node's 0.75 ms, so the node's per-page cost is elsewhere (its storage, its WAL);
+  the counts are what transfer, not the milliseconds.
+
+**Batch wall, synthetic, measured here**: the real `stage_fts` of main (1f83b70) and of this branch on the same
+manifest, real SQLite and tantivy, the pool modelled as a GIL-free wait of 1.04 ms a document (München's 52.4 % of a
+3,392-document batch), `want` pinned at the sizer's ceiling (4,000) as on the node; two runs each, alternated, 8 timed
+batches after 2.
+
+| | median batch wall | documents / chunks a batch | docs/s | documents parsed for 30,780 written |
+|---|---|---|---|---|
+| main | 4.642 / 4.601 s | 3,078 / 20,007 | 664 / 667 | 40,000 |
+| **this branch** | **3.328 / 3.324 s** | 3,078 / 20,007 | **926 / 926** | 31,702 (the last batch, parsed ahead) |
+
+- The branch's batch is now the pool's time for its own documents (3,078 × 1.04 ms = 3.2 s): the writes are hidden.
+  Here the carry is the larger half (main re-parsed the 922 rows past the cap each batch, 0.96 s); the writes this VM
+  hides are ~0.4 s. On the node the writes are ~3 s a batch, so there the overlap is the larger half.
+- *Modelled* for the node, not measured: ~3.0 s of pool for 3,392 documents against ~2.6–3.1 s of writes → ~3.1–3.3 s a
+  batch, ~1,000–1,100 docs/s. If the writes are then the longer of the two, the next lever is the marks' own cost on
+  the node's storage (its WAL, its cache), read from the AFTER profile.
+
+**AFTER (München, to fill on the node).** Same commands as BEFORE: wall docs/s, chunks/s, chunks/doc, `unit costs`
+ms/doc, the "parse pool" line, and py-spy on pipeline-wikipedia (the share waiting in `_fts_take_ahead` on the
+look-ahead, and in `_mark_indexed_many` / `write_tags_many`); the fts lines now end "parsed ahead" when a batch was.
+
+| | fts docs/s (wall) | chunks/s | chunks/doc | fts ms/doc (`unit costs`) | py-spy: waiting on pool / marks / tags |
+|---|---|---|---|---|---|
+| BEFORE (live, 2026-11-07) | ~503 | — | 5.9 (batch medians) | — | 52.4 % / 37.6 % / 7.0 % |
+| AFTER (this branch) | _ | _ | _ | _ | _ |
