@@ -1066,6 +1066,20 @@ the previous steps."**
 - The device-wide yield removed on 2026-09-20 returns, because the GPU
   governor now holds the clock that its absence cost chat.
 - Why: the night of 2026-10-24 (scheduling-log.md).
+- **The claim is a STEP's, not the whole query's** (operator, the same
+  day: "subsequent steps first does not mean keep the gpu unloaded for a
+  long time"). A whole-query claim (04b4f50) was reverted the same morning
+  (1b8d8cc): a query's gaps between steps — the text legs, the dense
+  search and fusion, Ask's prompt — totalled 3.4–4.1 s of 11.6–16.7 s, and
+  a corpus request then took 0.43 s, so corpus fills the gaps. Changing it
+  is the operator's decision, not a fix (scheduling-log.md, 2026-10-25).
+- **A reranked list is ONE step (2026-11-07).** Its warm, its cut (the
+  tokenizer calls) and every language variant's call hold one claim, at
+  RERANK (`retrieval._rerank_list`); each call's own claim nests in it.
+  Per call, the claim cleared in the 9–37 ms between two variants, and a
+  corpus request standing aside could go there. The idle it adds is the
+  variants' spacing: at most 5 × 37 ms a list for the 6 calls measured.
+  Gaps (a), (b) and (c) are unchanged (scheduling-log.md, 2026-11-07).
 
 ### What was measured first
 
@@ -1178,10 +1192,12 @@ claim is live, which was its behaviour before any of this.
 | levels, gates, the claim | `app/rage/dispatch.py` | `tests/test_dispatch.py` |
 | every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
 | the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
+| a reranked list, one claim from its warm to its last variant | `retrieval._rerank_list` | `tests/test_rerank_claim.py` |
 | producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
 | the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
+| corpus's stand-aside in the log (2026-11-07) | `[sched] stood aside for a person's query (since start) — <collection>: N requests, S s[, D deferred]`, from `dispatch.stood_aside` by the worker's beat | `tests/test_dispatch.py` |
 | the clock held while a person waits | `app/gpu_governor.py`, its own TrueNAS app (`deploy/truenas-gpu-governor.yaml`); the System tab's GPU panel | `tests/test_gpu_governor.py` |
 
 ### What to measure after deploying

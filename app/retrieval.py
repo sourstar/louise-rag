@@ -420,9 +420,24 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     "Al polo australe in velocipede" (Italian) 0.817 first; against the
     query's English translation Moby-Dick scored +1.204, first. A cross-
     language pair scores far below a same-language one on bge-reranker-v2-m3,
-    so the reranker demoted every hit not in the query's language."""
+    so the reranker demoted every hit not in the query's language.
+
+    ONE LIST, ONE STEP, ONE CLAIM (2026-11-07). The warm, the cut and every
+    variant's call hold the node's claim from the first to the last, at
+    RERANK; each call's own `dispatch.call` nests inside it. Claimed per
+    call, the claim cleared in the 9–37 ms between two variants (scheduling-
+    log 2026-10-25), and a corpus request standing aside could go out there
+    and share the card with the next variant. The gaps between a query's
+    STEPS stay corpus's to fill (operator, 2026-10-25); a list is one step."""
     if recipe is None or not hits:
         return hits, False
+    with dispatch.interactive(dispatch.Level.RERANK):
+        return _rerank_held(query, hits, recipe, budget_s, depth, queries)
+
+
+def _rerank_held(query: str, hits: list[dict], recipe, budget_s: float, depth: int,
+                 queries: dict[str, str] | None) -> tuple[list[dict], bool]:
+    """`_rerank_list`'s work, inside the list's one claim."""
     head, tail = hits[:depth], hits[depth:]
     texts: list[str] = []
     owner: list[tuple[int, dict]] = []        # text index -> (its record's index, the chunk)

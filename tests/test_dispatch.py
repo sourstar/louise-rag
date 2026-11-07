@@ -162,6 +162,64 @@ def test_standing_aside_is_bounded_and_a_deferral_and_wakes_on_stop(monkeypatch)
     assert got == ["deferred"], "SIGTERM wakes a corpus request standing aside"
 
 
+def test_a_stand_aside_is_counted_only_when_it_waited(monkeypatch):
+    """München, 2026-11-07: no line said whether wikidata's embedding stood
+    aside at all while a person searched — the wait happens before the gate,
+    so the gate's own counters never saw it. Now each collection's waits,
+    their seconds and the deferrals among them are counted."""
+    claim_until = 0.0
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: time.monotonic() < claim_until)
+    g = dispatch.gate("http://gpu-enc", 1)
+    with g.admit(Level.CORPUS, "wikidata", timeout=5):
+        pass
+    assert dispatch.stood_aside() == {}, "no claim, no wait: nothing is counted"
+
+    claim_until = time.monotonic() + 0.3
+    with g.admit(Level.CORPUS, "wikidata", timeout=5):
+        pass
+    got = dispatch.stood_aside()["wikidata"]
+    assert got["waits"] == 1 and got["deferred"] == 0
+    assert 0.25 <= got["seconds"] < 2, got
+
+    claim_until = time.monotonic() + 60
+    with pytest.raises(dispatch.GateTimeout):
+        with g.admit(Level.CORPUS, "wikidata", timeout=0.2):
+            pass
+    got = dispatch.stood_aside()["wikidata"]
+    assert got["waits"] == 2 and got["deferred"] == 1, "the deadline's deferral is counted"
+    with g.admit(Level.RERANK, "", timeout=1):
+        pass
+    assert set(dispatch.stood_aside()) == {"wikidata"}, "a query's step never stands aside"
+
+    dispatch.reset()
+    assert dispatch.stood_aside() == {}
+
+
+def test_the_warm_s_stand_aside_is_counted_for_its_collection(monkeypatch):
+    claim_until = time.monotonic() + 0.2
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: time.monotonic() < claim_until)
+    with dispatch.working_as(Level.CORPUS, "normattiva"):
+        dispatch.stand_aside("http://gpu-enc", 5)
+    assert dispatch.stood_aside()["normattiva"]["waits"] == 1
+
+
+def test_the_stats_beat_publishes_the_stand_aside_naming_each_collection(
+        isolated_config, monkeypatch):
+    """Published by the worker's beat (`_log_shares`), not by the thread that
+    waited: one cumulative line naming every collection that stood aside."""
+    from app import db
+    claim_until = time.monotonic() + 0.15
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: time.monotonic() < claim_until)
+    with dispatch.gate("http://gpu-enc", 1).admit(Level.CORPUS, "wikidata", timeout=5):
+        pass
+    con = db.connect()
+    worker._log_shares(con)
+    lines = [r[0] for r in con.execute(
+        "SELECT message FROM events WHERE stage='sched' AND message LIKE 'stood aside%'")]
+    assert len(lines) == 1, lines
+    assert "wikidata: 1 requests" in lines[0] and "deferred" not in lines[0], lines[0]
+
+
 def test_a_query_s_later_step_goes_first_at_a_shared_gate():
     """"The subsequent steps of a query in process shall be processed first
     to avoid wasting the effort spent for the previous steps": its answer,

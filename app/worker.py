@@ -5152,6 +5152,16 @@ def _log_shares(con, live_paths=None) -> None:
             db.log_event(con, "info", "sched", f"gate {name} — " + "; ".join(
                 f"{lvl}: {s['admitted']} admitted, waited {s['waited_s']:.0f}s, "
                 f"served {s['served_s']:.0f}s" for lvl, s in g["levels"].items()))
+    # ...and what corpus work's stand-aside for a person's query cost each
+    # collection (dispatch.stood_aside, §12), cumulative since start: the
+    # requests that waited, how long, and how many of them it deferred. The
+    # wait happens BEFORE a gate, so the gate lines above never showed it.
+    stood = dispatch.stood_aside()
+    if stood:
+        db.log_event(con, "info", "sched", "stood aside for a person's query (since start) — "
+                     + "; ".join(f"{p or '(unnamed)'}: {s['waits']} requests, {s['seconds']:.1f}s"
+                                 + (f", {s['deferred']} deferred" if s["deferred"] else "")
+                                 for p, s in stood.items()))
 
 
 #: set while run_forever's loop runs. The stats beat acts on the node state
