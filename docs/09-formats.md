@@ -729,9 +729,9 @@ under its number, and open a new number only once it is full. Having
 held that many closes it for good: dropping a tombstoned record at a
 later re-issue leaves it short and it is never refilled, so "open" is
 a part that has never been full, not one that is not full now; a
-tombstoned record stays in
-its closed part until that part is next re-issued and is excluded from
-search and embedding by the tombstone alone. The set of parts re-issued
+tombstoned record leaves its part in the snapshot that tombstones it,
+re-issuing the part (02 §2.2, *amended 2026-11-07*, operator: B). The set
+of parts re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
 in `previous`; nothing lists it separately.
 
@@ -799,7 +799,12 @@ Its sidecar after two peers computed it and a third signed it later:
 part `n` of the slice. When a snapshot re-issues the part, the file it
 supersedes is renamed `records/<slice>/<NNNNN>.<last snapshot id>.jsonl.zst`
 — the last snapshot in which those bytes were current — and kept, so
-that snapshot can still be served and checked (01, promise 7).
+that snapshot can still be served and checked (01, promise 7), for as long
+as the plugin's `origin_versions` keeps it: always under `"history"`, not
+past the next snapshot under `"replaces"`, and under
+`"history-until-baseline"` until every record of it names an earlier
+`origin_period` than the part's current version (06 §6.2, 02 §2.3;
+*amended 2026-11-07*, operator: C).
 
 **The record line.** One record is one line: a JSON object with exactly
 these keys, written in this order, compact (no whitespace outside
@@ -2254,7 +2259,7 @@ half never leaves the plugin and the peer.
 | `files` | list of `{rel_path, size or null, checksum or null}` or null | yes | the declared list when `listing` is `"static"`; for a dated-dump origin the dump pinned |
 | `filters` | list of strings | yes | the base include patterns |
 | `checksums` | `{kind: "sidecar" · "manifest" · "none", suffix, algo}` | yes | |
-| `delta` | `{mode: "updatefiles-dir" · "dated-dumps" · "full-resync" · "zip-directory", subdir: string or null}` | yes | `zip-directory` (*amended 2026-10-12*, docs/notes/normattiva-multivigenza-review.md §3.10): a zip the origin rebuilds in place is brought up to date by its own central directory — read by Range, compared member by member on CRC-32 and size — and one Range request per changed member; the local copy is rebuilt from the members it holds and the ones fetched, raw bytes copied, never recompressed. The members decompress to the origin's bytes, which is what `origin_hash` covers; the file itself is not byte-identical to the origin's, which no checksum declares. An origin that will not serve ranges, a member that does not check out, or a delta that would move more than half the file falls back to the whole fetch |
+| `delta` | `{mode: "updatefiles-dir" · "dated-dumps" · "full-resync" · "zip-directory", subdir: string or null}` | yes | `zip-directory` (*amended 2026-10-12*, docs/notes/normattiva-multivigenza-review.md §3.10): a zip the origin rebuilds in place is brought up to date by its own central directory — read by Range, compared member by member on CRC-32 and size — and one Range request per changed member; the local copy is rebuilt from the members it holds and the ones fetched, raw bytes copied, never recompressed. The members decompress to the origin's bytes, which is what `origin_hash` covers; the file itself is not byte-identical to the origin's, which no checksum declares. An origin that will not serve ranges, a member that does not check out, or a delta that would move more than half the file falls back to the whole fetch — `updatefiles-dir` (*amended 2026-11-07*, docs/notes/pubmed-updatefiles.md): the origin publishes its update files in the directory `subdir` names, a relative reference resolved against `url` by RFC 3986 §5.2 (`ftp.ncbi.nlm.nih.gov/pubmed/baseline` and `updatefiles` name `…/pubmed/updatefiles`). Every pass lists it whole with the base; its files land under `<subdir>/` in the corpus, so a record parsed from one has `origin` `<subdir>/<file>#<member>`, and a verifier resolves an origin under `<subdir>/` against that directory and every other against `url`. The origin's numbering orders the files: one is applied only after its predecessor and its own checksum, and a later file's document supersedes an earlier one's |
 | `endpoints` (mirrors) | | no | additional endpoints, regions, connection limits |
 | `etiquette` | | no | `{max_conns, bandwidth_cap_bps, windows}` |
 | `profiles`, `profile_mode`, `profile_labels`, `estimated_bytes` | | no | named selections of slices and their sizes |
@@ -2353,14 +2358,17 @@ figures container (§9.5) and keeps the other four.
 | `RefRecordBatch` | `{table, rows: [object…]}` — rows keyed by the table's columns |
 | `Entity` | `{entity_id: "<namespace>:<id>", kind: table name, source_id, label or null}` |
 
-**Worked example.** PubMed's `origin.spec` as the Codex carries it:
+**Worked example.** PubMed's `origin.spec` as the Codex carries it (*amended
+2026-11-07*: the bytes of the live Codex; the example named `…/pubmed/` and
+`baseline/*.xml.gz`, which no Codex holds — both forms resolve `subdir` to
+the same update directory):
 
 ```
 {"checksums":{"algo":"md5","kind":"sidecar","suffix":".md5"},
  "delta":{"mode":"updatefiles-dir","subdir":"updatefiles"},
- "files":null,"filters":["baseline/*.xml.gz","updatefiles/*.xml.gz"],
+ "files":null,"filters":["*.xml.gz","*.xml.gz.md5"],
  "layout":"container-files","listing":"directory","source_id":"pubmed",
- "transport":"ftp","url":"ftp://ftp.ncbi.nlm.nih.gov/pubmed/"}
+ "transport":"ftp","url":"ftp.ncbi.nlm.nih.gov/pubmed/baseline"}
 ```
 
 The NLM's connection etiquette, the `demo` and `full` profiles and the

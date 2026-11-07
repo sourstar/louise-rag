@@ -28,8 +28,15 @@ def _parse_sidecar(text: str) -> str:
     return text.split()[0].lower()
 
 
-def _sidecar_expectation(path: Path, checksums: ChecksumSource) -> str | None:
+def _sidecar_expectation(path: Path, checksums: ChecksumSource,
+                         sidecar_for: Path | None = None) -> str | None:
     """The expected md5 for `path`, or None when no sidecar applies.
+
+    `sidecar_for`: the path whose sidecar applies, when it is not `path` —
+    a file downloaded into the STAGING area (engine._staging_target) is
+    checked against the sidecar at its corpus destination, where the
+    sidecar's own fetch promoted it. Looked up beside the staged copy, the
+    sidecar was never there and the check was silently skipped.
 
     Callers that must not silently skip verification should check
     sidecar_path(...).is_file() themselves — a sidecar whose own download
@@ -39,7 +46,7 @@ def _sidecar_expectation(path: Path, checksums: ChecksumSource) -> str | None:
         return None
     if checksums.sidecar_algo != "md5":
         raise ValueError(f"unsupported sidecar algo: {checksums.sidecar_algo!r}")
-    sidecar = sidecar_path(path, checksums)
+    sidecar = sidecar_path(sidecar_for if sidecar_for is not None else path, checksums)
     if not sidecar.is_file():
         return None
     return _parse_sidecar(sidecar.read_text())
@@ -49,10 +56,12 @@ def sidecar_path(path: Path, checksums: ChecksumSource) -> Path:
     return Path(str(path) + checksums.sidecar_suffix)
 
 
-def digest_and_verify(path: Path, checksums: ChecksumSource) -> str:
+def digest_and_verify(path: Path, checksums: ChecksumSource,
+                      sidecar_for: Path | None = None) -> str:
     """Single streaming pass: verifies the origin sidecar (when one exists)
-    and returns the blake2 digest. Raises TransportError on mismatch."""
-    expected = _sidecar_expectation(path, checksums)
+    and returns the blake2 digest. Raises TransportError on mismatch.
+    `sidecar_for`: see `_sidecar_expectation`."""
+    expected = _sidecar_expectation(path, checksums, sidecar_for)
     blake = hashlib.blake2b(digest_size=16)
     md5 = hashlib.md5() if expected is not None else None
     with open(path, "rb") as f:

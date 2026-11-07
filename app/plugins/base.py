@@ -91,12 +91,26 @@ NativeIdOrder = Literal["bytes", "numeric"]
 PROTOCOL_VERSION = 1
 #: `origin_versions` (06 §6.2): the origin keeps its history / replaces in place.
 ORIGIN_HISTORY, ORIGIN_REPLACES = "history", "replaces"
+#: ... / keeps its history for one period of its own and removes it when the
+#: next begins (*amended 2026-11-07*, operator: C — PubMed, whose baseline
+#: year's files NLM removes when it publishes the next baseline;
+#: docs/notes/pubmed-updatefiles.md §5). A plugin declaring it declares
+#: `origin_period(origin) -> int | None` too: the period of the origin unit a
+#: record's `origin` names, later periods larger (app/hold/shard.py
+#: `drop_past_period`). A plugin attribute read where present, like
+#: `origin_order`, not a protocol method.
+ORIGIN_HISTORY_UNTIL_BASELINE = "history-until-baseline"
+ORIGIN_VERSIONS = (ORIGIN_HISTORY, ORIGIN_REPLACES, ORIGIN_HISTORY_UNTIL_BASELINE)
 
 
 def origin_versions(plugin) -> str:
-    """A plugin's `origin_versions`; ORIGIN_HISTORY — keep — when it says nothing."""
+    """A plugin's `origin_versions`; ORIGIN_HISTORY — keep — when it says
+    nothing, or says `history-until-baseline` without the `origin_period`
+    that rule needs (keeping is the side that loses nothing)."""
     v = getattr(plugin, "origin_versions", ORIGIN_HISTORY)
-    return v if v in (ORIGIN_HISTORY, ORIGIN_REPLACES) else ORIGIN_HISTORY
+    if v == ORIGIN_HISTORY_UNTIL_BASELINE and not callable(getattr(plugin, "origin_period", None)):
+        return ORIGIN_HISTORY
+    return v if v in ORIGIN_VERSIONS else ORIGIN_HISTORY
 
 
 @dataclass(frozen=True)
@@ -148,6 +162,14 @@ class DocRef:
     error: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     scope: Literal["document", "container"] = "document"
+    #: 06 §6.1's DELETION SIGNAL (09 §9.17 `deleted`): the origin retracted
+    #: this document — PubMed's `DeleteCitation` — with its reason in
+    #: `extra["reason"]` (09 §9.4: `retracted` or `withdrawn`). It travels
+    #: with an `error` too, the marker every stage's `error IS NULL` gate
+    #: already keeps out; `deleted` is what tells discovery the document
+    #: must also leave every index it is in (app/unindexable.py), which an
+    #: ordinary error does not ask for.
+    deleted: bool = False
 
 
 class NoCurrentForm(Exception):
@@ -347,9 +369,11 @@ class CorpusSource(Protocol):
     #: 06 §6.2 (amended 2026-10-25, operator: "what really matters in the
     #: end is the verifiability"): does the origin keep earlier versions a
     #: verifier can still fetch (`ORIGIN_HISTORY`, the default when a plugin
-    #: says nothing) or overwrite them in place (`ORIGIN_REPLACES`)? A
-    #: superseded part version is kept only where it can still be checked
-    #: against its origin (01 promise 7, 02 §2.3; app/hold/shard.py).
+    #: says nothing), overwrite them in place (`ORIGIN_REPLACES`), or keep
+    #: them for one period of their own (`ORIGIN_HISTORY_UNTIL_BASELINE`,
+    #: with `origin_period`)? A superseded part version is kept only while it
+    #: can still be checked against its origin (01 promise 7, 02 §2.3;
+    #: app/hold/shard.py).
     #: Outside the Codex: it decides what a node keeps, never a byte.
     origin_versions: str
 

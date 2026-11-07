@@ -402,31 +402,202 @@ def last_listing(shard_dir: Path, rel: str, other_than: str | None = None) -> tu
     return None
 
 
-_origin_versions: dict[tuple[str, int], bool] = {}
+_origin_versions: dict[tuple[str, int], str] = {}
 
 
-def origin_keeps_history(shard_dir: Path) -> bool:
-    """Does this SHARD's origin keep earlier versions (06 §6.2's
-    `origin_versions`)? Read from the Codex's `plugin` (`shard/codex.json`),
-    cached on the file's path and mtime. A SHARD with no Codex, or a plugin
-    this node does not register (annotations), keeps — the default."""
-    import json
+def origin_versions_of(shard_dir: Path) -> str:
+    """This SHARD's origin's `origin_versions` (06 §6.2), read from the
+    Codex's `plugin` (`shard/codex.json`), cached on the file's path and
+    mtime. A SHARD with no Codex, or a plugin this node does not register
+    (annotations), keeps — `history`, the default."""
+    from app.plugins import base
     codex = Path(shard_dir) / "codex.json"
     try:
         stamp = (str(codex), codex.stat().st_mtime_ns)
     except OSError:
-        return True
+        return base.ORIGIN_HISTORY
     got = _origin_versions.get(stamp)
     if got is None:
-        from app.plugins import base
-        try:
-            from app.collections import PLUGIN_REGISTRY
-            plugin = PLUGIN_REGISTRY.get(json.loads(codex.read_bytes()).get("plugin"))
-        except (OSError, ValueError, AttributeError):
-            plugin = None
-        got = plugin is None or base.origin_versions(plugin) == base.ORIGIN_HISTORY
+        plugin = _plugin_named(_codex_plugin(codex))
+        got = base.ORIGIN_HISTORY if plugin is None else base.origin_versions(plugin)
         _origin_versions[stamp] = got
     return got
+
+
+def _codex_plugin(codex: Path) -> str | None:
+    import json
+    try:
+        return json.loads(codex.read_bytes()).get("plugin")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _plugin_named(name: str | None):
+    if not name:
+        return None
+    try:
+        from app.collections import PLUGIN_REGISTRY
+        return PLUGIN_REGISTRY.get(name)
+    except (ImportError, AttributeError):
+        return None
+
+
+def origin_keeps_history(shard_dir: Path) -> bool:
+    """Does this SHARD's origin keep earlier versions (06 §6.2's
+    `origin_versions`)? `history`, and `history-until-baseline` within its
+    period: a superseded version is kept at promotion under both, and the
+    second drops it at the rollover (`drop_past_period`)."""
+    from app.plugins import base
+    return origin_versions_of(shard_dir) != base.ORIGIN_REPLACES
+
+
+# --------------------------------------------------------------------------
+# `history-until-baseline` (06 §6.2, amended 2026-11-07, operator: C)
+
+#: a record line's `origin`, as 09 §9.5's fixed key order writes it: the key
+#: after `extra` and before `content_hash`, so the match is the top-level
+#: key, never one inside `extra` (a quote inside a string value is escaped)
+_ORIGIN_IN_LINE = re.compile(rb',"origin":"((?:[^"\\]|\\.)*)","content_hash":')
+
+
+def _origins(path: Path):
+    """Each record's `origin` of a part, in record order, frame by frame —
+    the column alone from a Parquet part."""
+    import json
+    from app.pack import records as pack_records
+    if pack_records.is_parquet(path):
+        pf = pack_records._parquet_file(path)
+        for g in range(pf.metadata.num_row_groups):
+            yield from pf.read_row_group(g, columns=["origin"]).column("origin").to_pylist()
+        return
+    index = pack_records.read_index(path)
+    search = _ORIGIN_IN_LINE.search
+    for k in range(len(index.frames)):
+        for line in pack_records.read_frame(path, index, k):
+            m = search(line)
+            # a line whose origin is not a string (null) yields None: unknown
+            yield json.loads(b'"' + m.group(1) + b'"') if m else None
+
+
+def first_period(path: Path, period_of) -> int | None:
+    """The period of a part's FIRST record's origin, or None."""
+    for origin in _origins(path):
+        return period_of(origin) if origin is not None else None
+    return None
+
+
+def names_a_period_from(path: Path, period_of, period: int) -> bool:
+    """Does any record of the part name `period` or a later one — or an
+    origin whose period the plugin cannot give (kept: unknown is never
+    dropped)? Stops at the first such record: a version of the current
+    period answers at its first line."""
+    for origin in _origins(path):
+        p = period_of(origin) if origin is not None else None
+        if p is None or p >= period:
+            return True
+    return False
+
+
+def superseded_versions(target: Path) -> list[tuple[str, Path]]:
+    """(snapshot id, path) of every superseded version held beside the part
+    at `target` (`NNNNN.<snapshot id>.<suffix>`), newest first."""
+    stem, dot, rest = target.name.partition(".")
+    out = []
+    for p in target.parent.glob(f"{stem}.*{dot}{rest}"):
+        sid = p.name[len(stem) + 1:len(p.name) - len(dot + rest)]
+        if sid and "." not in sid:
+            out.append((sid, p))
+    return sorted(out, reverse=True)
+
+
+def companions(shard_dir: Path, record_rel: str, snapshot_id: str) -> list[Path]:
+    """The relations part and figures container of the same slice and number
+    as the record part at `record_rel`, under their superseded names for
+    `snapshot_id`: re-issued exactly with it (09 §9.5, §9.14), kept and
+    dropped with it."""
+    parts = Path(record_rel).parts
+    if len(parts) != 3 or parts[0] != "records":
+        return []
+    slice_, n = parts[1], int(parts[2].split(".")[0])
+    return [superseded_name(Path(shard_dir) / rel, snapshot_id)
+            for rel in (relations_path(slice_, n), figures_path(slice_, n))]
+
+
+def drop_past_period(target: Path, shard_dir: Path, period_of) -> list[Path]:
+    """`history-until-baseline` at one record part (06 §6.2, amended
+    2026-11-07, operator: C). The origin keeps a period's units — PubMed's
+    baseline year: the baseline and every update file numbered on from it —
+    until its next period begins, and removes them then (NLM empties both
+    directories when it publishes the new baseline). So a superseded version
+    every record of which names an EARLIER period than the part's current
+    version can no longer be checked against the origin, and is dropped with
+    its companions; any other is kept (01 promise 7, 02 §2.3).
+
+    The current version is never touched, and neither is a version with one
+    record of the current period or later, one the plugin cannot place, or
+    one that cannot be read (nor anything beside a current version that
+    cannot) — a promotion never fails for this rule.
+    The current period is read from the current version's first record: a
+    lower bound of its newest, so the rule errs only towards keeping.
+    Idempotent (a dropped version is gone, a kept one is judged the same
+    again), and a stop between two unlinks leaves the rest for the next call.
+    The paths dropped."""
+    target, shard_dir = Path(target), Path(shard_dir)
+    if not target.is_file():
+        return []
+    try:
+        current = first_period(target, period_of)
+    except Exception:                       # noqa: BLE001 — a part it cannot read: nothing judged
+        return []
+    if current is None:
+        return []
+    dropped: list[Path] = []
+    rel = target.relative_to(shard_dir).as_posix()
+    for sid, version in superseded_versions(target):
+        try:
+            if names_a_period_from(version, period_of, current):
+                continue
+        except Exception:                   # noqa: BLE001 — unreadable: kept, never judged
+            continue
+        for p in (version, *companions(shard_dir, rel, sid)):
+            if p.is_file():
+                p.unlink()
+                dropped.append(p)
+    return dropped
+
+
+def period_rule(shard_dir: Path):
+    """The plugin's `origin_period` where this SHARD's origin keeps its
+    history until its next period (`history-until-baseline`), else None."""
+    from app.plugins import base
+    if origin_versions_of(shard_dir) != base.ORIGIN_HISTORY_UNTIL_BASELINE:
+        return None
+    plugin = _plugin_named(_codex_plugin(Path(shard_dir) / "codex.json"))
+    fn = getattr(plugin, "origin_period", None)
+    return fn if callable(fn) else None
+
+
+def _companion_of_held_version(target: Path, shard_dir: Path, sid: str) -> bool:
+    """A relations part or figures container about to be superseded on a
+    peer: is the record part version of the same snapshot held — under its
+    superseded name, or still current at its path (the snapshot's size)? A
+    companion is kept beside it and judged with it; without it, it serves no
+    snapshot, and the period that judged its record version went with it."""
+    parts = target.relative_to(shard_dir).parts
+    if len(parts) != 3 or parts[0] not in ("relations", "figures"):
+        return True
+    from . import snapshot as sn
+    n = int(parts[2].split(".")[0])
+    try:
+        snap = sn.load(shard_dir / "snapshots" / f"{sid}.json")
+    except Exception:                                   # noqa: BLE001 — unreadable: keep
+        return True
+    for e in snap.shards:
+        if e.slice == parts[1] and e.n == n:
+            record = shard_dir / e.path
+            return superseded_name(record, sid).is_file() or (
+                record.is_file() and record.stat().st_size == int(e.bytes))
+    return True
 
 
 def keep_superseded(target: Path, shard_dir: Path | None, new_root: str, *,
@@ -464,6 +635,9 @@ def keep_superseded(target: Path, shard_dir: Path | None, new_root: str, *,
     sid, old_root, old_bytes = listed
     if target.stat().st_size != old_bytes:
         return None                       # not that snapshotted version
+    if not until_next_snapshot and period_rule(Path(shard_dir)) is not None \
+            and not _companion_of_held_version(target, Path(shard_dir), sid):
+        return None                       # its record version is gone: so is it
     dest = superseded_name(target, sid)
     if dest.exists():
         return dest
@@ -484,13 +658,27 @@ def promote(src: Path, target: Path, *, shard_dir: Path | None = None,
     cross, so the bytes are copied to a hidden name beside `target`, synced,
     and renamed over it: the same all-or-nothing, as one sequential write.
     A failed copy removes its temporary and leaves `src` where it was."""
-    import errno
-    import os
-    import shutil
     if shard_dir is not None and Path(target).is_file():
         keep_superseded(Path(target), Path(shard_dir),
                         new_root if new_root is not None else pieces_root_of(Path(src)),
                         until_next_snapshot=until_next_snapshot)
+    _move(src, target)
+    # A PEER's promotion under `history-until-baseline`: the record part's
+    # versions of a period the origin no longer keeps go now. The producer's
+    # build keeps them until its snapshot is frozen (`until_next_snapshot`:
+    # the delta reads the previous one), and the freeze drops them
+    # (snapshot.drop_past_baseline)
+    if shard_dir is not None and not until_next_snapshot:
+        rule = period_rule(Path(shard_dir))
+        if rule is not None and Path(target).relative_to(Path(shard_dir)).parts[0] == "records":
+            drop_past_period(Path(target), Path(shard_dir), rule)
+
+
+def _move(src: Path, target: Path) -> None:
+    """`src` onto `target`, whole (`promote`)."""
+    import errno
+    import os
+    import shutil
     try:
         os.replace(src, target)
         return

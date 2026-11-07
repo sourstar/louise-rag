@@ -47,6 +47,33 @@ measured (published figures disagree).
   9 → 23 ms on 80 k rows with 17 k documents at a stage (the superseded
   lookups, bounded by ERRORED_EXACT_BELOW).
 
+### 2026-11-07: pubmed's update files — fetched, applied in NLM's order; a deleted citation's part and a baseline year decided
+
+- **The defect** (München, read-only): pubmed's origin copy is the 2026
+  baseline alone; no update file was ever fetched, though the spec and the
+  Codex declare `updatefiles-dir`. So the node held less than the origin
+  gives (invariant 11), and its snapshot 2026-08 is not its cutoff's state
+  (the cutoff rule takes every update file published before 2026-09-01).
+- **Built** ([pubmed-updatefiles.md](pubmed-updatefiles.md)): the update
+  directory listed whole with the baseline (`delta.subdir` resolved against
+  `url` by RFC 3986), landed under `updatefiles/`, checked, resumed by byte,
+  through the budget; applied in NLM's (year, number) order — a file only
+  after its predecessor and its own `.md5`; last write wins by the origin's
+  order, so a cleared cursor re-opens no revised record; a DeleteCitation is
+  the deletion signal (`retracted`), out of every index before its tombstone
+  commits. Fixed on the way: with a staging area, fetched files were never
+  md5-checked. 06 §6.1, §6.2 and 09 §9.17 amended.
+- **Decided (operator, 2026-11-07)** ([pubmed-updatefiles.md](pubmed-updatefiles.md)
+  §5): **B** — a deleted citation leaves its part at the next snapshot,
+  tombstoned `retracted` (02 §2.2, 09 §9.4, 04 amended; what the build
+  did; no peer reads a tombstone for a record still in a part); **C** — a
+  superseded version is kept while NLM keeps the files that verify it and
+  dropped at the next baseline: `origin_versions = "history-until-baseline"`
+  with the plugin's `origin_period` (06 §6.2, 02 §2.3, 09 §9.5, 01 promise
+  7 amended; `shard.drop_past_period`, at the freeze that re-issues a part
+  and at a peer's promotion). The hold on pubmed's snapshots over the update
+  files is lifted; the deploy order is the note's §9.
+
 ### 2026-11-02 (morning): harrier evaluation under acquire-only; the web alone on 938c525
 
 - **The node is acquire-only for the harrier evaluation** (operator: "Suspend
