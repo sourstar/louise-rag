@@ -491,6 +491,73 @@ def test_a_loop_is_a_span_repeated_back_to_back_and_a_list_is_not(tmp_path):
     assert ev.summary(ev._rows(tmp_path, "m"))["looped"] == 1
 
 
+def test_a_sentence_said_twice_is_a_loop_and_a_list_sharing_a_frame_is_not(tmp_path):
+    """chat-contest.md, "State" (2026-11-07): a model restating a whole
+    sentence with other text between, or only twice, was not flagged.
+    Welleck et al.'s seq-rep, the sentence as its unit."""
+    restated = ("Il romanzo è stato scritto da Alexandre Dumas nel 1844 [1]. Racconta le avventure di "
+                "d'Artagnan e dei tre moschettieri [2]. **Il romanzo è stato scritto da Alexandre Dumas "
+                "nel 1844** [3].")
+    assert not ev.back_to_back(restated), "not back to back: the first trigger misses it"
+    assert ev.looped(restated), "said again, non-adjacently, citing another source"
+    assert ev.repeated_sentence(restated).startswith("**Il romanzo")
+    assert not ev.looped("Dumas wrote The Three Musketeers in 1844 [3]. Dumas wrote Twenty Years After "
+                         "in 1845 [4]. Dumas wrote The Vicomte of Bragelonne in 1847 [5]."), \
+        "a list whose items share a frame"
+    assert not ev.looped("1. *Les Trois Mousquetaires* [1]\n   - Autore: Alexandre Dumas\n"
+                         "   - Non è disponibile in italiano.\n2. *Vingt ans après* [2]\n"
+                         "   - Autore: Alexandre Dumas\n   - Non è disponibile in italiano.\n"), \
+        "what list items share verbatim is shorter than REPEAT_MIN_WORDS"
+    back = "Le titre est " + "Rouge-Profond ? Non, Rouge-Sombre. " * 6
+    assert ev.looped(back) and ev.back_to_back(back), "the back-to-back loop still is one"
+    assert ev.repeated_sentence(back) is None, "its sentences are under 8 words: the first trigger's case"
+    qs = ev.read_queries(_queries(tmp_path))[:1]
+    ev.run(tmp_path, "m", model="m", queries=qs, guess=lambda t: "it",
+           ask=_fake_ask({qs[0]["query"]: {"answer": restated, "turns": []}}))
+    assert ev.summary(ev._rows(tmp_path, "m"))["looped"] == 1, "it feeds the looped column"
+    report = ev.pilot_report(tmp_path, "m", "", [qs[0]["key"]]).read_text(encoding="utf-8")
+    assert '- LOOPED: a sentence said twice: "**Il romanzo' in report
+
+
+def test_the_answers_language_is_its_sentences_majority_and_a_switch_is_mixed(tmp_path, capsys):
+    """chat-contest.md, "State" (2026-11-07): one guess for the whole answer
+    was mis-guessed on an answer quoting another language, or switching."""
+    from app import query_language
+    quoting = ("Nelle collezioni c'è \"The Picture of Dorian Gray and Other Stories of the Town\" di Oscar "
+               "Wilde [1]. Non ne è presente una traduzione italiana.")
+    assert query_language.guess(quoting, query_language.guessable()) == "en", "the defect: one guess"
+    mix = ev.language_mix(quoting)
+    assert (mix["lang"], mix["mixed"]) == ("it", False), "the quoted title is out"
+    italic = ("Il romanzo *The Picture of Dorian Gray* è stato scritto da Oscar Wilde e pubblicato nel "
+              "1890 [1]. Racconta la storia di un giovane che resta bello mentre il suo ritratto "
+              "invecchia [2].")
+    assert ev.language_mix(italic) == {"lang": "it", "words": {"it": 25}, "other": 0.0, "mixed": False}
+    switching = ("Il romanzo è stato scritto da Alexandre Dumas nel 1844 e racconta le avventure di "
+                 "d'Artagnan [1]. È il primo libro della trilogia dei moschettieri, ed è il più famoso [2]. "
+                 "The novel was later continued in two sequels by the same author [3]. "
+                 "It was first published as a serial in a Paris newspaper [4].")
+    mix = ev.language_mix(switching)
+    assert mix["lang"] == "it" and mix["mixed"] and mix["other"] > ev.MIXED_SHARE
+    assert set(mix["words"]) == {"it", "en"}
+    assert ev.answer_language("Il romanzo è stato scritto nel secolo scorso e parla della guerra.") == "it"
+    qs = ev.read_queries(_queries(tmp_path))
+    answers = {qs[1]["query"]: quoting, qs[2]["query"]: switching}
+    ev.run(tmp_path, "m", model="m", queries=qs[1:3],
+           ask=lambda q, collections=None: {"answer": answers[q], "turns": []})
+    rows = ev._rows(tmp_path, "m")
+    assert [(r["answer_lang"], r["answer_mixed"]) for r in rows] == [("it", False), ("it", True)]
+    s = ev.summary(rows)
+    assert (s["lang_right"], s["lang_guessed"], s["lang_mixed"]) == (2, 2, 1), \
+        "a mixed answer is still in its majority's language, and counted mixed beside it"
+    ev.score(tmp_path)
+    row = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("| m | all |"))
+    assert "**1.00** (2/2, mixed 1)" in row.split("|")[10]
+    report = ev.pilot_report(tmp_path, "m", "", [q["key"] for q in qs[1:3]]).read_text(encoding="utf-8")
+    assert "- answer language guessed: it (MIXED: en 23 words, it 29 words)" in report
+    older = {k: v for k, v in rows[1].items() if k != "answer_mixed"}
+    assert ev.summary([rows[0], older])["lang_mixed"] is None, "a row from before checker 3: unknown, not 0"
+
+
 def test_an_answer_that_thinks_aloud_is_counted(tmp_path):
     """The Q8 pilots, 2026-11-06: Qwen3.5-9B at 0.4 and 0.7 wrote its
     reasoning into the answer, invented titles retracted in place."""
@@ -607,20 +674,24 @@ def test_rescore_rewrites_a_run_from_its_recorded_searches(tmp_path, capsys):
     assert ev.main(["rescore", "--out", str(tmp_path), "--runs", "m", "--search-cache", str(cache)]) == 1
     got = ev._rows(tmp_path, "m")
     assert got[0]["checker"] == ev.CHECKER and got[0]["support"]["supported"] == 1
+    assert {k: got[0][k] for k in ev.answer_checks(answer)} == ev.answer_checks(answer), \
+        "what the answer's text alone says is read again too"
     assert "checker" not in got[1] and got[1]["support"] == old, "its search is not recorded: kept"
-    assert (run / "answers.checker-1.jsonl").read_text(encoding="utf-8").count("\n") == 2
+    assert "answer_mixed" not in got[1], "kept as it was, under its own checker"
+    before = f"answers.checker-{ev.CHECKER - 1}.jsonl"
+    assert (run / before).read_text(encoding="utf-8").count("\n") == 2
     assert "1 rows rescored" in capsys.readouterr().out
-    # a second pass, its cache grown: the file kept beside is the rows before checker 2, untouched
-    # (named after the first row's checker, it was answers.checker-2.jsonl, and a checker 3 pass
-    # would then have found it there and kept none of the rows checker 2 wrote)
+    # a second pass, its cache grown: the file kept beside is the rows before this checker, untouched
+    # (named after the first row's checker, it was answers.checker-<CHECKER>.jsonl, and the next
+    # checker's pass would then have found it there and kept none of the rows this one wrote)
     with cache.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"key": json.dumps({"query": "x"}, sort_keys=True, ensure_ascii=False),
                             "result": result, "seconds": 1.0}) + "\n")
     assert ev.main(["rescore", "--out", str(tmp_path), "--runs", "m", "--search-cache", str(cache)]) == 0
     assert all(r["checker"] == ev.CHECKER for r in ev._rows(tmp_path, "m"))
-    assert not (run / "answers.checker-2.jsonl").exists()
-    assert [json.loads(x)["support"] for x in (run / "answers.checker-1.jsonl").read_text(
-        encoding="utf-8").splitlines()] == [old, old], "the rows as checker 1 left them"
+    assert sorted(p.name for p in run.glob("answers.checker-*.jsonl")) == [before]
+    assert [json.loads(x)["support"] for x in (run / before).read_text(
+        encoding="utf-8").splitlines()] == [old, old], "the rows as the checker before left them"
 
 
 _TEXT_ONLY = {"lists": [{"hits": [{"uid": "gutenberg:1"}]}],
