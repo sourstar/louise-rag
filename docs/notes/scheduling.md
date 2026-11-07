@@ -1066,6 +1066,13 @@ the previous steps."**
 - The device-wide yield removed on 2026-09-20 returns, because the GPU
   governor now holds the clock that its absence cost chat.
 - Why: the night of 2026-10-24 (scheduling-log.md).
+- **The claim is a STEP's, not the whole query's** (operator, the same
+  day: "subsequent steps first does not mean keep the gpu unloaded for a
+  long time"). A whole-query claim (04b4f50) was reverted the same morning
+  (1b8d8cc): a query's gaps between steps — the text legs, the dense
+  search and fusion, Ask's prompt — totalled 3.4–4.1 s of 11.6–16.7 s, and
+  a corpus request then took 0.43 s, so corpus fills the gaps. Changing it
+  is the operator's decision, not a fix (scheduling-log.md, 2026-10-25).
 
 ### What was measured first
 
@@ -1182,6 +1189,7 @@ claim is live, which was its behaviour before any of this.
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
 | the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
+| corpus's stand-aside in the log (2026-11-07) | `[sched] stood aside for a person's query (since start) — <collection>: N requests, S s[, D deferred]`, from `dispatch.stood_aside` by the worker's beat | `tests/test_dispatch.py` |
 | the clock held while a person waits | `app/gpu_governor.py`, its own TrueNAS app (`deploy/truenas-gpu-governor.yaml`); the System tab's GPU panel | `tests/test_gpu_governor.py` |
 
 ### What to measure after deploying
