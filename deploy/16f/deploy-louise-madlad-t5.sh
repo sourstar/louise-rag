@@ -157,7 +157,7 @@ grep -q "bundle_genesis.forget_residuals(collection, stale)" "$ROOT/src.new/app/
 grep -q "^ROWS_AHEAD = 64_000" "$ROOT/src.new/app/parallel.py"                              # 4cafea4 (a840121): the page stream's look-ahead in rows
 grep -q '^WRITER = "writer.lock"' "$ROOT/src.new/app/plugins/wikidata/pack.py"               # a4acc13 (7476af6): one wikidata pack writer across processes
 test -s "$ROOT/src.new/app/backend.py"                                                       # a4acc13: every collection declares its backend template
-grep -q "^_groups = GroupCache(256 << 20)" "$ROOT/src.new/app/plugins/wikidata/pack.py"      # #97: the line cache in bytes, one GroupCache (app/backend.py); was _MAX_GROUP_BYTES
+grep -q '^_groups = read_cache("wikidata pack")' "$ROOT/src.new/app/plugins/wikidata/pack.py"      # #348: one read budget per process (app/backend.py read_cache); was GroupCache(256 << 20) (#97)
 grep -q "^def rechecked(" "$ROOT/src.new/app/backend.py"                                     # #98 (d75cde9): the files asked once a second per process
 test -s "$ROOT/src.new/app/container_pack.py"                                                # #99 (97b2833): one CONTAINER_PACK for pubmed's pack and page_props
 grep -q 'replace({column}, ?, ?)' "$ROOT/src.new/app/hold/rename.py"                         # 954ed47: a rename re-roots every path a locator names
