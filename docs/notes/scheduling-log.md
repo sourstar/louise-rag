@@ -2292,3 +2292,60 @@ windows, and gutenberg fts had work in both (123.9 and 93.6 ms/doc). Neither win
   rate over 17–19 min is the number here.
 - Next: take the encoder warm-up and the genesis read off the pipeline thread (A's 39 %), and find why a batch
   keeps only ~6 of 11 slots in flight. py-spy A: /root/measure/spy-A-overlap0.raw, B: spy-B-overlap1.raw.
+
+## 2026-11-07 — the read cache: one byte budget per process, Arrow memory released on eviction — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, the live node).** The worker was OOM-killed at 03:23 (cgroup 24 GiB) and came back by
+itself. 13 pool processes (the worker's 11 parse children and 2 of the scheduled check) and the parent. Each of the
+11 children sat at **~1.05 GB RssAnon**. Each process kept FIVE read caches, each with its own byte budget: wikidata
+pack 256 MiB, wikipedia archive 256, pubmed pack 64, page_props 64, records frames 64. That is **704 MiB a
+process**, ~9.6 GiB over 14 processes. One child serves several collections: wikipedia's rdf/fts reads archive row
+groups (~49 MB each, `archive._group_table`), and wikidata's embed stage cuts its short candidates in the pool from
+its pack (`EMBED_PREPARE_MAX_CHUNKS` → `parallel.chunks_for_rows`). Both read through the records' frames
+(`record_source`). München's probe, one spawned child, wikipedia rows only: RssAnon ≈ 290 MB +
+`pa.total_allocated_bytes()`. The latter grows in 49 MB steps (one row group each) and is never released. At 10,000
+rows: 436 MB RssAnon, 146 MB pa. The Arrow pool is mimalloc. Throughput: wikipedia fts **~528 docs/s** at
+`FTS_BATCH_DOCS=100`; wikidata embed **~18 chunks/s**, bound by the card.
+
+**The change (one deploy).**
+1. One `GroupCache` per process (`backend.READ_CACHE`, budget `READ_CACHE_BYTES`, 256 MiB by default). Each reader
+   holds a handle on it whose keys carry the reader's name: `forget`, `clear`, `nbytes` and `len` stay the reader's
+   own, the least recent unit of any reader goes first, and the unit just read is still always kept.
+2. A `put` that evicts calls `pa.default_memory_pool().release_unused()` (`backend.release_arrow_memory`). The call
+   is guarded and never imports pyarrow, and a get or a put that evicts nothing does not call it.
+3. The beat's `_log_shares` logs `read cache (this process) — …`: bytes, units, evictions, releases, and per reader
+   bytes, units, hits and misses since start. This is the parent's cache only. A child's numbers stay in the child
+   (a part answers with its rows' results, nothing else), so read the children from `/proc`.
+
+Not changed: `PARTS_PER_CHILD`, the pool size, the fts batching, what is read.
+
+**Measured here, not on the node** (pyarrow 25.0.1, mimalloc; three row groups kept, the oldest dropped per read,
+200 reads):
+
+| groups of | RssAnon, no release | RssAnon, release per drop | release call (median) | read median, no release → release |
+|---|---|---|---|---|
+| ~24 MB | 180–185 MB | 104 MB | 0.24 ms | 9.6–10.1 → 18.8 ms |
+| ~0.5 MB | 184–190 MB | 37 MB | 0.035 ms | 0.28–0.31 → 0.59 ms |
+
+- The cache's ceiling goes from 704 to 256 MiB a process, ~9.6 to ~3.5 GiB over the 14 processes.
+- The release has a price. Memory handed back must be faulted in again by the next read, which here doubled a read.
+  At the node's read rate (a few MB/s of row groups across all children) that is about a millisecond of CPU a
+  second. This is an estimate, not a measurement.
+
+**THE RISK.** A child that alternates between collections now shares 256 MiB between them. wikidata's lines can
+evict the archive groups wikipedia is about to read again, and the reverse. A re-read is a re-decompression, and
+`PARTS_PER_CHILD`'s history is a 4.6× regression that came from re-decompression. The AFTER's like-for-like docs/s
+decides. If it falls, or the archive's misses climb in the parent's line, the first lever is `READ_CACHE_BYTES`
+(env, a restart, no deploy), before a revert.
+
+**AFTER (München, to fill on the node).**
+- Each child's RssAnon after an hour: `grep RssAnon /proc/<pid>/status`.
+- The cgroup's `anon`: `grep -w anon /sys/fs/cgroup/memory.stat`.
+- wikipedia fts docs/s at `FTS_BATCH_DOCS=100`, like for like (chunks/doc beside it).
+- wikidata embed chunks/s.
+- The worker's `read cache (this process)` line.
+
+| | child RssAnon (1 h) | cgroup anon | wikipedia fts docs/s (chunks/doc) | wikidata embed chunks/s | OOM kills |
+|---|---|---|---|---|---|
+| BEFORE (live, 2026-11-07) | ~1.05 GB × 11 | — | ~528 | ~18 | 1 (03:23) |
+| AFTER | | | | | |
