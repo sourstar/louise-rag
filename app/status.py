@@ -166,12 +166,16 @@ def full_scan_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
     # "Clear errors & retry" cannot fix those (the next scan re-applies
     # them), so reporting them as failures promised an impossible remedy.
     stage_error = STAGE_ERROR
+    # a stage failure or exhausted retries; `error IS NOT NULL` first, so the
+    # three LIKEs run only on the few rows that carry an error (the same set:
+    # a stage error is an error)
+    failed = f"((error IS NOT NULL AND {stage_error}) OR retries>=:max)"
     # THE WORKER'S OWN TWO EMBED SELECTIONS (worker `_BACKFILL_SQL`, the new
     # documents, and `_REEMBED_WINDOWED`, the older versions): rdf_done=1 is
     # theirs, and was missing here (2026-11-07), so "awaiting the encoder"
     # is `waiting` + `reembed` exactly
-    pending = (f"in_scope=1 AND rdf_done=1 AND fts_done=1 AND error IS NULL AND retries<:max "
-               f"AND (embed_done=0 OR (embed_done=1 AND embed_version<:ver))")
+    pending = (f"(embed_done=0 OR (embed_done=1 AND embed_version<:ver)) "
+               f"AND in_scope=1 AND rdf_done=1 AND fts_done=1 AND error IS NULL AND retries<:max")
     params: dict = {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}
     archive_sums = ""
     if spans:
@@ -198,13 +202,12 @@ def full_scan_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
         # range — the rest of what lies outside it (a gap between files, an
         # id below the first, an id that is not a number) is not "past".
         archive_sums = f""",
-          SUM(CASE WHEN in_scope=1 AND {in_range} THEN 1 ELSE 0 END) arch_in_range,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 AND {in_range}
-                   THEN 1 ELSE 0 END) arch_in_range_embedded,
-          SUM(CASE WHEN in_scope=1 AND embed_done=0 AND rdf_done=1 AND fts_done=1
-                        AND {in_range} THEN 1 ELSE 0 END) arch_in_range_waiting,
-          SUM(CASE WHEN in_scope=1 AND CAST(native_id AS INTEGER) > :span_top
-                        AND {NUMERIC_ID_SQL} THEN 1 ELSE 0 END) arch_past_range,
+          COUNT(*) FILTER (WHERE in_scope=1 AND {in_range}) arch_in_range,
+          COUNT(*) FILTER (WHERE in_scope=1 AND embed_done=1 AND {in_range}) arch_in_range_embedded,
+          COUNT(*) FILTER (WHERE in_scope=1 AND embed_done=0 AND rdf_done=1 AND fts_done=1
+                        AND {in_range}) arch_in_range_waiting,
+          COUNT(*) FILTER (WHERE in_scope=1 AND CAST(native_id AS INTEGER) > :span_top
+                        AND {NUMERIC_ID_SQL}) arch_past_range,
           -- Of what lies OUTSIDE the range, the documents with NO TEXT:
           -- `chunks` is written by the fts stage, so an indexed document
           -- with none has nothing for an encoder to embed. Wikipedia's
@@ -212,69 +215,69 @@ def full_scan_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
           -- and the card said all 30.9 M pages past the range were the
           -- local encoder's work (2026-09-15). An UNINDEXED row is not
           -- counted: its chunk count is unknown, never zero.
-          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND fts_done=1
-                        AND COALESCE(chunks, 0) = 0
-                   THEN 1 ELSE 0 END) arch_outside_empty,
+          COUNT(*) FILTER (WHERE in_scope=1 AND NOT {in_range} AND fts_done=1
+                        AND COALESCE(chunks, 0) = 0) arch_outside_empty,
           -- The local encoder's progress on THE REST: embedded, and not one
           -- of those. The embed stage marks a document with no chunk done
           -- without writing a vector, and the card, which derived this as
           -- embed_done minus the range's, counted 37 of pubmed's 53 empty
           -- records both as "nothing to embed" and as "done" (2026-09-18).
-          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND embed_done=1
-                        AND NOT (fts_done=1 AND COALESCE(chunks, 0) = 0)
-                   THEN 1 ELSE 0 END) arch_outside_embedded"""
+          COUNT(*) FILTER (WHERE in_scope=1 AND NOT {in_range} AND embed_done=1
+                        AND NOT (fts_done=1 AND COALESCE(chunks, 0) = 0)) arch_outside_embedded"""
+    # COUNT(*) FILTER (WHERE …), not SUM(CASE WHEN … THEN 1 ELSE 0 END)
+    # (2026-11-07; SQLite 3.30's aggregate FILTER, the SQL:2003 standard): a
+    # row the filter refuses never reaches the aggregate, and each filter
+    # names its most selective column first. MEASURED on 4 M synthetic rows,
+    # same numbers every way: the scan of 960bb09 3.12 s; with this module's
+    # twelve counts as SUM(CASE) 5.45 s (+75 %); as FILTER 3.27 s; and each
+    # filter ordered most-selective first 2.47 s — 21 % under 960bb09's scan
+    # while counting twelve numbers more, its own numbers identical
+    # (SQLite 3.45; the image's Debian SQLite is >= 3.40, FILTER is 3.30's).
     return f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
-          SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
-          SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
+          COUNT(*) FILTER (WHERE in_scope=1 AND rdf_done=1) rdf_done,
+          COUNT(*) FILTER (WHERE in_scope=1 AND fts_done=1) fts_done,
+          COUNT(*) FILTER (WHERE in_scope=1 AND embed_done=1) embed_done,
           -- not embedded here by choice (07 §7.8 `embed_slices`): out of the
           -- dense stage's target, never counted as embedded
-          SUM(CASE WHEN in_scope=1 AND embed_done=-1 THEN 1 ELSE 0 END) declined,
-          SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked,
+          COUNT(*) FILTER (WHERE in_scope=1 AND embed_done=-1) declined,
+          COUNT(*) FILTER (WHERE in_scope=1 AND {failed}) blocked,
           -- PER STAGE, because "blocked" is collection-wide and says
           -- nothing about WHICH stage a document is stuck at. A document
           -- blocked at fts has already passed rdf, so counting it against
           -- rdf's remaining work makes a stage that is actively running
-          -- look like it has nothing left to do. Three more SUMs on a scan
+          -- look like it has nothing left to do. Three more counts on a scan
           -- that is already walking every row.
-          SUM(CASE WHEN in_scope=1 AND rdf_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_rdf,
-          SUM(CASE WHEN in_scope=1 AND fts_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_fts,
-          SUM(CASE WHEN in_scope=1 AND embed_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_embed,
-          SUM(CASE WHEN in_scope=1 AND error IS NOT NULL
-                        AND NOT {stage_error} AND retries<:max
-                   THEN 1 ELSE 0 END) unindexable,
-          SUM(CASE WHEN {pending} THEN 1 ELSE 0 END) embed_ready,
-          SUM(CASE WHEN {pending} THEN chunks ELSE 0 END) chunks_pending,
+          COUNT(*) FILTER (WHERE rdf_done=0 AND in_scope=1 AND {failed}) blocked_rdf,
+          COUNT(*) FILTER (WHERE fts_done=0 AND in_scope=1 AND {failed}) blocked_fts,
+          COUNT(*) FILTER (WHERE embed_done=0 AND in_scope=1 AND {failed}) blocked_embed,
+          COUNT(*) FILTER (WHERE error IS NOT NULL AND in_scope=1
+                        AND NOT {stage_error} AND retries<:max) unindexable,
+          COUNT(*) FILTER (WHERE {pending}) embed_ready,
+          SUM(chunks) FILTER (WHERE {pending}) chunks_pending,
           -- Documents that still have to pass rdf/fts before they can be
           -- embedded. `chunks` is written BY the fts stage, so for these the
           -- chunk count is not zero — it is unknown, and a page that renders
           -- it as 0 says "nothing to do" about a collection with thousands of
           -- contigs still to index.
-          SUM(CASE WHEN in_scope=1 AND fts_done=0 AND error IS NULL
-                        AND retries<:max THEN 1 ELSE 0 END) docs_unindexed,
+          COUNT(*) FILTER (WHERE fts_done=0 AND in_scope=1 AND error IS NULL
+                        AND retries<:max) docs_unindexed,
           -- ONE STATUS (2026-11-07): what `node show` counts live, counted
           -- here too, so the two can be held to the same number (app/status.py)
-          SUM(CASE WHEN {AT['rdf']} AND error IS NULL THEN 1 ELSE 0 END) waiting_rdf,
-          SUM(CASE WHEN {AT['fts']} AND error IS NULL THEN 1 ELSE 0 END) waiting_fts,
-          SUM(CASE WHEN {AT['embed']} AND error IS NULL THEN 1 ELSE 0 END) waiting_embed,
-          SUM(CASE WHEN {AT['rdf']} AND error IS NOT NULL THEN 1 ELSE 0 END) errored_rdf,
-          SUM(CASE WHEN {AT['fts']} AND error IS NOT NULL THEN 1 ELSE 0 END) errored_fts,
-          SUM(CASE WHEN {AT['embed']} AND error IS NOT NULL THEN 1 ELSE 0 END) errored_embed,
-          SUM(CASE WHEN {REEMBED} THEN 1 ELSE 0 END) reembed,
-          SUM(CASE WHEN {SUPERSEDED['fts']} THEN 1 ELSE 0 END) superseded_fts,
-          SUM(CASE WHEN {SUPERSEDED['embed']} THEN 1 ELSE 0 END) superseded_embed,
+          COUNT(*) FILTER (WHERE rdf_done=0 AND in_scope=1 AND error IS NULL) waiting_rdf,
+          COUNT(*) FILTER (WHERE fts_done=0 AND rdf_done=1 AND in_scope=1 AND error IS NULL) waiting_fts,
+          COUNT(*) FILTER (WHERE embed_done=0 AND fts_done=1 AND rdf_done=1 AND in_scope=1
+                                  AND error IS NULL) waiting_embed,
+          COUNT(*) FILTER (WHERE error IS NOT NULL AND {AT['rdf']}) errored_rdf,
+          COUNT(*) FILTER (WHERE error IS NOT NULL AND {AT['fts']}) errored_fts,
+          COUNT(*) FILTER (WHERE error IS NOT NULL AND {AT['embed']}) errored_embed,
+          COUNT(*) FILTER (WHERE embed_version<:ver AND {REEMBED}) reembed,
+          COUNT(*) FILTER (WHERE fts_done=0 AND {SUPERSEDED['fts']}) superseded_fts,
+          COUNT(*) FILTER (WHERE embed_done=0 AND {SUPERSEDED['embed']}) superseded_embed,
           -- `/api/status`'s, from the same pass (its own scan until 2026-11-07)
-          SUM(CASE WHEN in_scope=1 AND summary_done=1 THEN 1 ELSE 0 END) summaries,
-          SUM(CASE WHEN in_scope=1 THEN chunks ELSE 0 END) chunks,
-          SUM(CASE WHEN in_scope=1 THEN tokens ELSE 0 END) tokens{archive_sums}
+          COUNT(*) FILTER (WHERE summary_done=1 AND in_scope=1) summaries,
+          SUM(chunks) FILTER (WHERE in_scope=1) chunks,
+          SUM(tokens) FILTER (WHERE in_scope=1) tokens{archive_sums}
         FROM documents""", params
 
 
