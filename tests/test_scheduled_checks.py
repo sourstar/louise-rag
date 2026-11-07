@@ -297,8 +297,9 @@ def test_a_run_the_worker_died_under_is_interrupted_counted_and_bounded(isolated
     assert any(m.startswith("gutenberg: ") and "never ended" in m and "interrupted 2 time(s)" in m
                and "not retried before" in m for m in lines), lines
     assert sc.turn(stop=lambda: False, log=lines.append, now=NOW + 120, run=_passes(ran)) is None and ran == []
+    from app import louise
     codex = col.read(root, "gutenberg")
-    shown = sc.summary(root, "gutenberg", codex)
+    shown = louise._scheduled_check(root, "gutenberg", codex)       # what `hold collection show` displays
     assert shown["outcome"] == "interrupted" and shown["interrupts"] == 2
     assert shown["retry_at"] == NOW + sc.period_of(codex)
     assert "interrupted 2 times" in shown["note"] and "retried at " in shown["note"]
