@@ -204,6 +204,13 @@ scan does not report is unchanged. Under `erasure: append-only` a
 removal still needs a tombstone with a reason; amendment and repeal are
 metadata — `in_force` in the record's `extra`, the relation in the
 relations member (§5.5) — never a tombstone.
+The document leaves every index the peer holds it in before its
+tombstone is written (*amended 2026-11-07*,
+docs/notes/pubmed-updatefiles.md). Where a later unit of the origin
+supersedes an earlier one's document (PubMed's update files), the plugin
+gives each locator its place in the origin's order, and discovery applies
+a document's refs by that order, never by arrival: a ref from an earlier
+unit than the one held changes nothing.
 
 ### Parse
 
@@ -325,8 +332,12 @@ versions a verifier can still fetch (Wikipedia and Wikidata by revision
 id, Normattiva by the version in force), `"replaces"` when it overwrites
 in place (Project Gutenberg rewrites a book under the same number). A
 superseded part version is kept only under `"history"` (02 §2.3, 01
-promise 7). A plugin that declares nothing keeps (`"history"`); pubmed,
-deposit and embedded declare nothing until their origins are checked. The
+promise 7). A plugin that declares nothing keeps (`"history"`). pubmed
+declares `"history"` (*amended 2026-11-07*): NLM keeps the baseline and
+every update file at its own path for the baseline year; what becomes of
+them at the next baseline is the operator's
+(docs/notes/pubmed-updatefiles.md §5). deposit and embedded declare
+nothing until their origins are checked. The
 declaration is the plugin's and outside the Codex: it decides what a node
 keeps, never a byte that is hashed.
 

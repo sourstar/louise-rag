@@ -198,6 +198,23 @@ def test_a_codex_collection_takes_the_update_directory_its_codex_names():
     assert updatefiles.subdir_of(torrent) is None, "the peer plane carries them at their paths"
 
 
+def test_a_codex_pins_only_the_update_directory_never_another_mode():
+    """Only `updatefiles-dir`'s subdir is pinned: a Codex older than its
+    plugin's mode (normattiva's, written before `zip-directory`) keeps the
+    plugin's mode, as it did before the pin existed."""
+    from app.acquire.specs import NORMATTIVA_SPEC
+    codex = SimpleNamespace(origin=SimpleNamespace(spec={
+        "filters": list(NORMATTIVA_SPEC.filters), "delta": {"mode": "full-resync", "subdir": None}}))
+    spec = engine.effective_spec(SimpleNamespace(codex=codex, peer_source=None, profile="full"),
+                                 NORMATTIVA_SPEC)
+    assert spec.delta == NORMATTIVA_SPEC.delta
+    plain = SimpleNamespace(origin=SimpleNamespace(spec={
+        "filters": ["*.xml.gz", "*.xml.gz.md5"], "delta": {"mode": "full-resync", "subdir": None}}))
+    spec = engine.effective_spec(SimpleNamespace(codex=plain, peer_source=None, profile="full"),
+                                 PUBMED_SPEC)
+    assert spec.delta == PUBMED_SPEC.delta
+
+
 # ---------------------------------------------------------------- acquisition
 
 def test_update_files_are_listed_whole_fetched_beside_the_baseline_and_verified(tmp_path, origin):

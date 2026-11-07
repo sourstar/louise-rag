@@ -332,14 +332,16 @@ def effective_spec(collection, spec: AcquisitionSpec,
     pinned_filters = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("filters")
     if pinned_filters:
         spec = replace(spec, filters=tuple(pinned_filters))
-    # and BY ITS CODEX'S UPDATE FORM: `delta` is in the identifying half too
-    # (09 §9.17), so the update directory a collection takes is the one its
-    # Codex names, never one a plugin's spec has moved to since
+    # and BY ITS CODEX'S UPDATE DIRECTORY: `delta` is in the identifying half
+    # too (09 §9.17), so the update files a collection takes are in the
+    # directory its Codex names, never one a plugin's spec has moved to since.
+    # Only for `updatefiles-dir`, where the Codex's subdir is what is fetched:
+    # every other mode stays the plugin's, as it was (a Codex older than a
+    # mode — normattiva's before `zip-directory` — must not lose it)
     pinned_delta = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("delta")
-    if isinstance(pinned_delta, dict) and pinned_delta.get("mode"):
-        from .spec import DeltaSpec
-        spec = replace(spec, delta=DeltaSpec(mode=pinned_delta["mode"],
-                                             updatefiles_subdir=pinned_delta.get("subdir")))
+    if isinstance(pinned_delta, dict) and pinned_delta.get("mode") == updatefiles.MODE \
+            and spec.delta.mode == updatefiles.MODE and pinned_delta.get("subdir"):
+        spec = replace(spec, delta=replace(spec.delta, updatefiles_subdir=pinned_delta["subdir"]))
     peers = peer_sources(collection)
     if not peers:
         return spec
