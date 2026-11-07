@@ -183,6 +183,8 @@ report the interval, not just the point; measure at the depth the system uses
 
 ## 10. Added 2026-11-03 (the chat model check) — a general rule
 
+(The contest's results, and how to read its table: [chat-contest.md](chat-contest.md).)
+
 The operator, 2026-11-03: "For your chat benchmark suspend all the parasite
 tasks to test an unloaded system", "consider only warm model answers", and
 "note it as a general benchmarking rule, this is not the first time it
