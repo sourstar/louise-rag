@@ -176,6 +176,28 @@ def test_every_surface_counts_the_same_stages(node):
     assert re.search(r"rdf\s+7\s+running\s+\(1 errored, not waiting\)", text), text
 
 
+def test_api_status_follows_the_apis_own_actions(node, monkeypatch):
+    """`/api/status` reads the card's cached counts now, where it scanned on
+    every request: a reset through the API drops them, as the Library's
+    actions do, so the next status is the reset's."""
+    from fastapi.testclient import TestClient
+    from app.api import app
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
+    client = TestClient(app)
+    before = client.get("/api/status").json()["counts"]
+    assert before["fts_done"] == 5 + 2 + 3 + 1
+    r = client.post("/api/reset", json={"stage": "fts"}, headers={"X-Admin-Token": "sekrit"})
+    assert r.status_code == 200
+    after = client.get("/api/status").json()["counts"]
+    assert after["fts_done"] == 0 and after["embed_done"] == before["embed_done"], after
+    # a row stored before the scan carried /api/status's counts is not read as 0
+    c = node
+    stored = {k: v for k, v in web._document_counts_query(c).items() if k not in ("chunks", "tokens")}
+    web.invalidate_counts()
+    assert web._persist_counts(c, stored)
+    assert client.get("/api/status").json()["counts"]["chunks"] == after["chunks"] > 0
+
+
 def _reasons(c, mode: str) -> tuple[dict, dict, dict, list[str]]:
     _counted(c)
     shelf, _ = _card(c, mode)

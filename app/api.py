@@ -818,7 +818,12 @@ def discover():
     # invariant 9, "not discovered" (verification pass, 2026-09-13)
     web._refuse_withheld(collection, "its corpus is discovered")
     con = _con()
-    return discovery.sync_collection(con, collection)
+    try:
+        return discovery.sync_collection(con, collection)
+    finally:
+        # /api/status reads the card's cached counts (one status, 2026-11-07):
+        # an action that changes them drops them, as the Library's actions do
+        web.invalidate_counts(collection)
 
 class ResetBody(BaseModel):
     stage: str  # rdf | fts | embed | errors
@@ -832,6 +837,7 @@ def reset(body: ResetBody):
     except ValueError as e:
         raise HTTPException(400, str(e))
     db.log_event(con, "info", "control", f"reset {body.stage} ({len(body.book_ids) or 'all'})")
+    web.invalidate_counts(_collection())
     return {"ok": True}
 
 # ---------------- books ----------------
@@ -881,6 +887,7 @@ def reindex(book_id: int):
         "UPDATE documents SET rdf_done=0,fts_done=0,embed_done=0,error=NULL,retries=0 "
         "WHERE uid=?", (uid,))
     db.log_event(con, "info", "control", "manual reindex", uid)
+    web.invalidate_counts(_collection())
     return {"ok": True}
 
 _summary_jobs: dict[int, str] = {}   # book_id -> "running" | error string

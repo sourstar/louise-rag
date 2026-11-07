@@ -1655,7 +1655,9 @@ def document_counts_now(collection) -> tuple[dict, float]:
     card's cached counts when there are any (fresh, or stored and labelled
     by age), else the scan itself, now, as it always did."""
     counts, age = _document_counts(collection)
-    if counts is None:
+    if counts is None or any(k not in counts for k in status_mod.SCAN_KEYS):
+        # cold, or a row stored before the counts this route reads were in
+        # the scan: they would read 0 until the next refresh lands
         return _document_counts_query(collection), 0.0
     return counts, age
 
