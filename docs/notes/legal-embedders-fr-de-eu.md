@@ -484,3 +484,33 @@ of the tables should weigh. BSARD and EUR-Lex-Sum have no other-model rows
 yet, so there is nothing to repeat there. Results: below, when München's
 runs land.
 
+
+### Nemotron-3-Embed-1B for Normattiva too (operator, 2026-11-07)
+
+The operator: "When the other collections with legal content are created I
+want you to verify Nemotron has an alternative embedder for Normattiva.
+Having a unique embedder for most of the collections is definitely a plus."
+
+**When.** With the legal collections' encoder runs above, on the same
+engine and settings, so one card session serves both.
+
+**What.** Nemotron-1B (`passage: ` on documents, `query: ` on queries)
+against DAR-legal-it in Normattiva's served form (`query: `):
+- `lemur-it`, MRR@10, hybrid and dense, paired test: the deciding row
+  (the rule above);
+- JuriFindIT `validation` (gazzetta-plugin.md §7.1b), reported beside it.
+  DAR-legal-it was trained on JuriFindIT's train split (§7.1c there), so
+  this row is in-domain for it and is not the deciding one.
+
+**How it is read.** A tie, meaning no difference at p < 0.01, counts for
+Nemotron (the operator's "plus"). The switch itself goes to the operator
+with its measured cost, because it is a new space and so a new collection.
+- Pros: one encoder resident for wikidata and Normattiva (and the legal
+  collections it wins), one engine to gate; DAR-legal-it's assumed
+  CC-BY-NC-SA-4.0 (gazzetta-plugin.md §7) leaves.
+- Cons: all 8,178,785 chunks re-embedded (the time measured then);
+  2,048 dimensions against 768, about 2.7× the vector bytes (16 GB to
+  ~43 GB, arithmetic) unless the Matryoshka 1,024 cut measures as good.
+
+The re-creation decided the same day (normattiva B: the archived engine,
+the vectors carried) is not affected: it keeps the current space.
