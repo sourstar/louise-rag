@@ -5732,6 +5732,8 @@ JOB_STOP_WAIT_S = 20.0
 #: api_commands.KILL_AFTER_S and a margin: the command thread requeues its
 #: job after the child has gone, which this waits for.
 COMMAND_STOP_WAIT_S = 75.0
+#: scheduled_checks.STOP_GRACE_S (the check's own SIGTERM grace) and its 1 s poll
+CHECK_STOP_WAIT_S = 35.0
 #: how often finished jobs are swept
 JOB_SWEEP_S = 600.0
 
@@ -5901,8 +5903,9 @@ def run_forever():
     # 03 §3.2: the plan, once per cadence per collection, in a child process,
     # one at a time (app/scheduled_checks.py)
     from . import scheduled_checks
-    threading.Thread(target=scheduled_checks.loop, args=(_stop, _node_line("check")),
-                     name="scheduled-checks", daemon=True).start()
+    check_thread = threading.Thread(target=scheduled_checks.loop, args=(_stop, _node_line("check")),
+                                    name="scheduled-checks", daemon=True)
+    check_thread.start()
     from .share import transport as share_transport
     threading.Thread(target=share_transport.loop, args=(_stop,),
                      kwargs={"log": lambda m: print(f"{time.strftime('%H:%M:%S')} [node info:share] {m}", flush=True),
@@ -6078,6 +6081,10 @@ def run_forever():
     # or is killed (api_commands.KILL_AFTER_S), and is queued again either way
     command_thread.join(timeout=COMMAND_STOP_WAIT_S)
     _join_pipeline_threads()
+    # the scheduled check ends its child (terminate, then kill) and removes
+    # its started marker: waited for, so the next start never takes this stop
+    # for a run the worker died under (app/scheduled_checks.py)
+    check_thread.join(timeout=CHECK_STOP_WAIT_S)
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
     for c in all_collections:
