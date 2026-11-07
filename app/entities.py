@@ -38,3 +38,16 @@ def write_tags(con, uid: str, entity_ids: list[str]) -> list[str]:
             "INSERT INTO doc_keys(uid, entity_id) VALUES (?,?)",
             [(uid, eid) for eid in entity_ids])
     return entity_ids
+
+
+def write_tags_many(con, tags: dict[str, list[str]]) -> None:
+    """`write_tags` for a batch, in two statements — the rows written are
+    the same rows: every uid's keys deleted, then every uid's entities
+    inserted (the uids are distinct, the dict's keys). Sorted by uid, so the
+    doc_keys index is walked forward once instead of descended per document
+    (the text-index stage's batch; app/worker.py `stage_fts`)."""
+    uids = sorted(tags)
+    con.executemany("DELETE FROM doc_keys WHERE uid=?", [(u,) for u in uids])
+    pairs = [(u, eid) for u in uids for eid in tags[u]]
+    if pairs:
+        con.executemany("INSERT INTO doc_keys(uid, entity_id) VALUES (?,?)", pairs)

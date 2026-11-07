@@ -37,6 +37,8 @@ def fresh_worker_state():
     worker.reset_query_priority_memo()
     worker.reset_phase_memo()
     worker._prefetch_last.clear()
+    # a text-index batch parsed ahead belongs to the test that started it
+    worker.drop_fts_ahead()
     worker._vindex_last.clear()
     worker._vlight_last.clear()
     genesis.reset_revisit_state()

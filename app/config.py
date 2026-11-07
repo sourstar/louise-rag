@@ -347,6 +347,11 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 # memory until the commit.
 FTS_BATCH_DOCS = int(os.getenv("FTS_BATCH_DOCS", "200"))
 FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
+# The text-index stage's LOOK-AHEAD (app/lookahead.py): on a pipeline thread
+# with a parse pool, the next batch is parsed while this one's index commit,
+# marks and tags are written. 0 restores parse-then-write, one after the
+# other, without a redeploy.
+FTS_OVERLAP = int(os.getenv("FTS_OVERLAP", "1"))
 
 # How many documents one rdf round handles inside a single transaction.
 # Profiled on pubmed (33M rows): 95% of a warm rdf step was SQLite — the
