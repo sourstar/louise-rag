@@ -21,7 +21,7 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from app.backend import GroupCache
+from app.backend import read_cache
 
 from . import ids
 
@@ -38,8 +38,10 @@ _LOCATOR_SEP = "::"
 # the parallel embed stage fetches from threads.
 _cache_lock = threading.Lock()
 _layouts: OrderedDict = OrderedDict()     # path -> (mtime, [row group start offsets], total)
-#: (path, group) -> (mtime, table): 256 MiB of rows (app/backend.py); it held 8 groups
-_groups = GroupCache(256 << 20)
+#: (path, group) -> (mtime, table), in the process's one read budget
+#: (app/backend.py `READ_CACHE`, config.READ_CACHE_BYTES); it held 8 groups,
+#: then 256 MiB of its own
+_groups = read_cache("wikipedia archive")
 _MAX_LAYOUTS = 64
 
 

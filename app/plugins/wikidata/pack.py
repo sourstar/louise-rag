@@ -89,7 +89,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config, cpu_limit, derived, parallel
-from app.backend import RECHECK_S, GroupCache, forget_rechecked, rechecked
+from app.backend import RECHECK_S, forget_rechecked, read_cache, rechecked
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -1403,8 +1403,10 @@ _files_lock = threading.Lock()
 #: 1,000 than of one regrouped by 64: records-build children of 5.7 GB
 #: against ~0.65 GB before, and an OOM at 32 g with 12 and with 6 of them
 #: (München, 2026-10-30). 256 MiB is about the 8 groups of 1,000 kept
-#: before #88; the most recent group is always kept.
-_groups = GroupCache(256 << 20)
+#: before #88; the most recent group is always kept. The budget is the
+#: process's ONE read budget (config.READ_CACHE_BYTES), shared with every
+#: other reader (app/backend.py `READ_CACHE`, 2026-11-07).
+_groups = read_cache("wikidata pack")
 
 
 def chunk_files(dump: Path) -> list[Path]:
