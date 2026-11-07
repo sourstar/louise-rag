@@ -253,10 +253,22 @@ the other.
 > `all`, since it takes no bundle in; it bundles only aligned parts
 > (*amended 2026-11-07*).
 
-**07 §7.3**, the tree under `louise node` and the notes beside `pause`;
-**07 §7.8**, the state-database row and the exception (the mode, a
-collection's pause, a collection's freeze), and `frozen/` in the state
-directory's line.
+**07 §7.2**, the verbs `node` alone has: `freeze` and `unfreeze` join
+`start`, `stop`, `pause`, `resume` — not a flag of `pause`, whose every form
+stops processing (§7.5 rule 2: a verb is §7.2's). **07 §7.3**, the tree
+under `louise node` and the notes beside `pause`; the routes follow (`POST
+/api/node/freeze`, `/api/node/unfreeze`: one route per command of the tree,
+app/api_commands.py). **07 §7.8**, the state-database row and the exception
+(the mode, a collection's pause, a collection's freeze), and `frozen/` in
+the state directory's line. In 07's tree, `snapshot create`'s help said
+"freeze the current records as this month's snapshot"; it says "fix" now,
+so the word has one meaning. **01**, the vocabulary: *frozen*.
+
+**CLAUDE.md invariant 10** names the pause as the second exception that
+survives a restart; the freeze is the third, by the same reason. CLAUDE.md
+is the operator's to edit; the text it would take: "A paused or FROZEN
+collection (`node pause|freeze <collection>`) survives a restart for the
+same reason (app/node_state.py)."
 
 **09 §9.9**, the `benchmarks` and `members` rows: a frozen collection does
 not count toward `benchmarks`, and its `members` are the aligned ones (04
@@ -300,7 +312,9 @@ version held and is no update of it. If the operator says nothing, A stays.
 ## 11. What the Library card and the status display should show
 
 Left to the worker building app/status.py (not touched here). From
-`node_state.frozen_since(name)`:
+`node_state.frozen_since(name)` (who and when, read creating nothing) and
+`share.frozen.summary(root, collection, snapshot)` (`snapshot_id`,
+`newest_read`, `aligned_files` of `files`):
 
 - a badge **Frozen** on the card, with "since `<when>`, by `<by>`" (both
   may be None for an entry before the history: then "frozen", no date);

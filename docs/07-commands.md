@@ -52,7 +52,10 @@ does — the three tools of §5.4 plus the listing of 05 §5.7 — and
 `chat` and `serve` expose them to a model and over MCP; `contribute`
 and `attest` are `share`'s two wrappers of `hold vectors build` and
 `hold check`; `peers` is the one noun `share` has that `hold` has not;
-`start`, `stop`, `pause` and `resume` belong to `node` alone; `add` and
+`start`, `stop`, `pause` and `resume` belong to `node` alone, and so do
+`freeze` and `unfreeze` (*added 2026-11-07*: not a flag of `pause`, whose
+every form stops processing — a frozen collection is processed, and only
+its updates stop, §7.3); `add` and
 `erase` put a deposit, or a URL source, into a deposit collection and
 take it out leaving no trace (02 §2.9, 06 §6.7). A new verb
 that does not fit one of these rows is probably a flag on an existing
