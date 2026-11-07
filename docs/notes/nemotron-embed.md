@@ -1175,7 +1175,16 @@ arms loop and presence 1.5 costs quality.
 
 ## Several texts in one pass (`parallel`) on wikidata's chunks (München, 2026-11-07) — MEASURED, NOT ADOPTED
 
-**NOT THE DEPLOYED ENGINE (found the same day).** These rows are louise-sycl-f16-llama-cpp-16acc89's. The node runs louise-sycl-f16-llama-cpp-ea2417d91dcc (vega-louise-llama-cpp/vega.json, the running backends), against measuring.md's "measure the DEPLOYED flags". The same run on ea2417d91dcc replaces this table; until then its conclusion stands only for 16acc89.
+**On the deployed engine (re-run the same day).** The first run below was on louise-sycl-f16-llama-cpp-16acc89, a stale engine name; the node runs louise-sycl-f16-llama-cpp-ea2417d91dcc (read from vega-louise-llama-cpp/vega.json; the 16acc89 series plus P6, chat tool-call parsing only). München re-ran it there, 09:43–10:03:46, the same 2,000 texts (687,333 tokens), bytes against parallel:1's first pass:
+
+| parallel | texts/s | tokens/s | card busy | identical / near / worse (of 2,000, per pass) | worst cos |
+|---|---|---|---|---|---|
+| 1 | 39.6–39.7 | ~13,600 | 91.7–98.1 % | 2,000 / 0 / 0 | 1.0 |
+| 4 | 42.3–44.0 | ~14,900 | 92.3–99.4 % | 4–22 / 1,978–1,995 / 0–1 | 0.9999763 |
+| 8 | 38.4–39.3 | ~13,400 | 92.5–97.6 % | 2–17 / 1,983–1,997 / 0–1 | 0.9999823 |
+| 16 | 15.4–21.2 | 5,300–7,300 | 96.7–100 % | 0–4 / 1,996–2,000 / 0–1 | 0.9999873 |
+
+The same verdict as 16acc89's rows below: only parallel:1 is exact, parallel:4 (+9 %) is not even near-exact. Files: /mnt/ssd4/apps/louise-rag/data/bakeoff/nemo-par-ea2417d/, /root/measure/nemo-par2.log. The table below is kept as 16acc89's.
 
 The question: wikidata's Nemotron embedding runs at ~34 chunks/s with the card
 at 100 %, after the request-side levers (batch 16, 4 lanes, requests filled
