@@ -2372,9 +2372,63 @@ as (2)'s first pass is read.
 |---|---|---|---|---|---|---|
 | BEFORE B (cda6e126, `FTS_OVERLAP=1`) | 481.6 | 2,690 | 5.58 | — | 5.8 of 11 | 53.6 % / — / — |
 | BEFORE A (cda6e126, `FTS_OVERLAP=0`) | 511.8 | 2,833 | 5.54 | — | 6.5 of 11 | 44.7 % / 21.7 % / 17.7 % |
-| AFTER (1) 8e7bf75 | | | | | | |
-| AFTER (2) d604f24 | | | | | | |
-| AFTER (3) bac309c | | | | | | |
+| AFTER (1)+(2)+(3) together, A `FTS_OVERLAP=0` (6afbe35, 12:02–12:21) | 173.4 | 1,613 | 9.30 | — | 3.1 of 11 | — / — / 15.2 % `_read_behind` (queue wait) |
+| AFTER (1)+(2)+(3) together, B `FTS_OVERLAP=1` (6afbe35, restart only, 12:26–12:46) | 257.6 | 1,609 | 6.24 | — | 3.5 of 11 | — / — / 8.8 % `_read_behind` (queue wait) |
+
+**AFTER (2026-11-07, the node, 6afbe35).** (1), (2) and (3) reached the node in ONE deploy (7364b7b, then 6afbe35),
+not one at a time as planned, so their effects are not separable here. The A/B is FTS_OVERLAP alone: 20 min each, 3 min
+warm-up, the day profile (12 cores), wikidata's Nemotron embedding beside both
+(/root/measure/overlap-ab2.txt, /root/measure/spy2-{A-overlap0,B-overlap1}.raw).
+- **Per chunk, no difference:** 1,613 against 1,609 chunks/s. The docs/s differ only with chunks/doc (9.30 French
+  genesis documents in A, 6.24 in B). FTS_OVERLAP=1 stays live, the code's default (architecture session).
+- **Not like for like otherwise:** in B gutenberg's discovery ended (38 changed books; rdf 9.3 ms/doc) and genesis
+  logged 164 import lines, against 0 in A; during A a read-only scan of wikidata's manifest ran (86 s, ionice idle).
+- **The thread, py-spy 60 s:** no `ensure_loaded` / `_warm_first` frame in either (2); the genesis Parquet read is
+  off the thread, which waits on its queue (`_read_behind`, 15.2 % / 8.8 %) (3). What remains on the one pipeline
+  thread: `unchanged_books` 13.7 % / 9.1 %, `chunks_for_rows` 12.5 % / 8.4 %, the encoder post 10.4 % / 7.7 %,
+  `fts_for_rows` 8.8 %, and in B `_rdf_one` 31.5 % (gutenberg's 38 plus wikipedia's).
+- **The bound:** the pool is 28–32 % in flight both ways, so wikipedia waits on genesis's import and the shared
+  pipeline thread, not on the overlap. The next lever (multi-core audit) is taken from these profiles.
+
+## 2026-11-07 — retired backends removed (deploy/vega/retired_backends.py, main 087e37a) — DONE
+
+On the operator's yes ("Delete all listed"), `--delete` on LocalAI's backends path and on each
+`/mnt/ssd5/apps/localai/backends-bak-*`; the `live` and `named by` lines are left out here
+(/root/measure/retired-backends-delete-20261107.txt has them).
+
+```
+### backends path
+codexes: 6 read under /mnt/ssd4/apps/louise-rag/data/collections and /mnt/tank/apps/louise-shard; archives in /mnt/tank/apps/louise-platform-images/backends
+removed  louise-cpu-llama-cpp-16acc89  81,429,504 B (0.08 GB)
+removed  louise-sycl-f16-llama-cpp-16acc89  470,458,880 B (0.47 GB)
+removed 2 of 2: 551,888,384 B (0.55 GB) counted; free space on /mnt/ssd5/apps/localai/backends 118.44 -> 118.44 GB (+0.00 GB)
+### /mnt/ssd5/apps/localai/backends-bak-20261027
+refused  louise-sycl-f16-llama-cpp: named by the Codex of gutenberg, pubmed, wikidata-bge-retired, wikipedia, and /mnt/tank/apps/louise-platform-images/backends/337ef98b4503cf75baa188a60b10fc7ac2a562a8560d08dee7aff21f85fc596b.tar.zst unpacks to nothing (NoZstd: no zstd here: neither the zstandard module, pyarrow, nor the zstd program), not sha256:337ef98b…  (09 §9.3)
+removed 0 of 1: 0 B (0.00 GB) counted
+### /mnt/ssd5/apps/localai/backends-bak-20261030-110
+removed  vega-llama-cpp-cpu  259,072 B (0.00 GB)
+### /mnt/ssd5/apps/localai/backends-bak-20261031-116
+removed  models  59,392 B (0.00 GB)
+removed  vega-llama-cpp-cpu  263,168 B (0.00 GB)
+removed  vega-louise-python-20261030  259,072 B (0.00 GB)
+### /mnt/ssd5/apps/localai/backends-bak-241
+removed  vega-llama-cpp-cpu  209,917,440 B (0.21 GB)
+removed  vega-llama-cpp-up  210,015,744 B (0.21 GB)
+removed  vega-louise-python-20261030  217,892,352 B (0.22 GB)
+### /mnt/ssd5/apps/localai/backends-bak-cutover-20261102
+removed  models  128,000 B (0.00 GB)
+removed  vega-llama-cpp-cpu  209,974,784 B (0.21 GB)
+### /mnt/ssd5/apps/localai/backends-bak-wrapper-rename-20261103
+removed  models  87,040 B (0.00 GB)
+freed (live data): backends dataset 526 MiB, localai dataset 803 MiB; the free space returns as ssd5's 1-week snapshots expire
+```
+
+- The refusal is the host's missing zstd, not the archive: 337ef98b… verified in the worker image the same morning.
+  #363 (`.verified` sidecars) lets the host accept it; that tree stays until then.
+- Earlier the same day, by hand on the operator's yes: backends-retired-20261102 (3.4 GB) and five Python engines
+  with their wrappers (~20.5 GB). One of them, louise-python, was pubmed's document engine (9eb8807c…); it was
+  recovered from the 01:00 snapshot into the archive and verified. That is why the tool now refuses a Codex-named
+  engine without a verified archive.
 
 ## 2026-11-07 — a reranked list holds one claim, from its warm to its last variant — MEASURED
 
