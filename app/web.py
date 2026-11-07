@@ -1786,10 +1786,16 @@ def _stored_counts(collection) -> tuple[dict, float] | None:
             return None
         got = json.loads(raw)
         counts, at = got.get("counts"), float(got.get("at") or 0)
+        scan_s = float(got.get("scan_s") or 0)
     except Exception:      # noqa: BLE001 — a missing or malformed row is
         return None        # simply no answer, never a broken page
     if not isinstance(counts, dict) or not at:
         return None
+    if scan_s > 0:
+        # a cold process learns the scan's cost from the row, so its TTL and
+        # its "every N min" are the scan's, not the floor (see _persist_counts)
+        with _counts_lock:
+            _counts_scan_secs.setdefault(_counts_key(collection), scan_s)
     # A ROW WRITTEN BY AN OLDER RELEASE lacks the counts added since: 0 for
     # those until the next refresh writes them. Read as it was, the
     # `declined` count #137 added broke every Library card whose stored row
@@ -1813,7 +1819,13 @@ def _persist_counts(collection, counts: dict) -> bool:
     exists to fix, silently and permanently. One line in `docker logs`
     is the difference between a bug and a mystery.
     """
-    payload = json.dumps({"at": time.time(), "counts": counts})
+    # the scan's own time travels with it: a cold process that serves these
+    # stored counts recounts on the same interval (`_counts_ttl_for`) and
+    # says that interval, not the two-minute floor (2026-11-07: the card read
+    # "every 2 min" over recounts 5.5 min apart, after a deploy)
+    secs = _counts_scan_secs.get(_counts_key(collection))
+    payload = json.dumps({"at": time.time(), "counts": counts,
+                          **({"scan_s": round(float(secs), 1)} if secs else {})})
     try:
         con = db.connect(collection)
         try:
@@ -2159,6 +2171,16 @@ def _collection_shelf(collection: collections_mod.Collection,
     stage_targets: dict[str, int] = {k: 0 for k in _RATE_FIELDS}
     if not counts_pending:
         now_i = int(time.time())
+        # WHEN EACH NUMBER WAS TRUE (2026-11-07). The document counts are a
+        # scan that lands every TTL (5-6 min on wikidata) and is served from
+        # cache between, so a rate measured against the RENDER time divided
+        # a delta counted over one span by another: the card said
+        # +184.021/h while the worker embedded ~120k documents an hour, and
+        # the first window after a restart — baselined on stored counts
+        # minutes old — read 1.5x high. A stage's sample carries the time its
+        # count was taken; the fetch counter is read live, at now.
+        counted_at = now_i - int(counts_age or 0)
+        seen_at = {"rdf": counted_at, "fts": counted_at, "embed": counted_at, "fetch": now_i}
         cur = {
             "rdf": counts["rdf_done"] or 0,
             "fts": counts["fts_done"] or 0,
@@ -2235,7 +2257,9 @@ def _collection_shelf(collection: collections_mod.Collection,
                     rec_sr = None
         if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS):
             # first sight or a pre-upgrade record: fresh baseline
-            baseline = {**cur, "ts": now_i}
+            baseline = {**cur, "ts": now_i,
+                        **{k + "_pts": seen_at[k] for k in _RATE_FIELDS},
+                        **{k + "_pc": cur[k] for k in _RATE_FIELDS}}
             _stage_rate_memo[memo_key] = baseline
             _sample_write(con, "stage_rate", json.dumps(baseline))
             for k in _RATE_FIELDS:
@@ -2257,7 +2281,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                     # standing still, and a sticky flag made it claim so.
                     rec_sr = {**rec_sr, k: cur[k], k + "_ph": None,
                               k + "_n": 0, k + "_stalled": False,
-                              k + "_pts": now_i, k + "_pc": cur[k]}
+                              k + "_pts": seen_at[k], k + "_pc": cur[k]}
             # LOW-PASS FILTERED rate: an exponential moving average over the
             # per-window rates (alpha 0.3 -> a new window carries 30 %), and
             # an ETA is shown only once TWO windows have contributed.
@@ -2290,7 +2314,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                     p_count = int(rec_sr.get(k + "_pc") if rec_sr.get(k + "_pc") is not None
                                   else (rec_sr.get(k) or 0))
                     delta = cur[k] - p_count
-                    span = max(1, now_i - p_ts)
+                    span = max(1, seen_at[k] - p_ts)
                     prev = rec_sr.get(k + "_ph")
                     if delta > 0:
                         raw = delta * 3600.0 / span
@@ -2304,7 +2328,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                         stage_rates[k] = round(ema) if ema >= 1 else round(ema, 2)
                         samples[k] += 1
                         stalled[k] = False
-                        p_ts, p_count = now_i, cur[k]
+                        p_ts, p_count = seen_at[k], cur[k]
                     elif span >= _STALL_S:
                         stage_rates[k] = None       # stalled: no number to stand behind
                         samples[k] = 0

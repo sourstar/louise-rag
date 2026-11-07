@@ -888,3 +888,75 @@ def test_a_card_says_how_old_its_counts_are_and_how_often_they_move(isolated_con
     assert "cached 2 min" not in html
     fresh = dict(shelf, counts_age=30.0)
     assert "counted" not in _render_library(fresh).split("embedded (dense)")[1][:400]
+
+
+def _rdf_rows(con, done: int, total: int) -> None:
+    for i in range(total):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,?,0,0,0)", (f"g:{i}", str(i), f"/x{i}", int(i < done)))
+
+
+def test_a_rate_is_measured_at_the_counts_time_not_the_render(isolated_config, monkeypatch):
+    """The counts are a scan served from cache between landings, so a delta
+    counted over one span was divided by another — the render's. wikidata,
+    2026-11-07: +184.021/h on the card against ~120k documents an hour in the
+    worker's log. A stage's sample carries the time its count was taken."""
+    import json as _json
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _rdf_rows(con, 100, 300)
+    web.invalidate_counts()
+    _wait_counts(c)
+    counts, _age = web._document_counts(c)
+    now = int(time.time())
+    # the last progress was seen at 10 parsed, 1,200 s ago; this count is 600 s old
+    web._stage_rate_memo[str(c.manifest_path)] = {
+        "rdf": 10, "fts": 0, "embed": 0, "fetch": 0, "ts": now - 1200,
+        **{k + "_ph": None for k in ("rdf", "fts", "embed", "fetch")},
+        **{k + "_n": 0 for k in ("rdf", "fts", "embed", "fetch")},
+        "rdf_pts": now - 1200, "rdf_pc": 10}
+    monkeypatch.setattr(web, "_document_counts", lambda _c: (counts, 600.0))
+    shelf = web._collection_shelf(c, {})
+    # 90 parsed between the two counts, 600 s apart: 540/h. Against the
+    # render (1,200 s) it read 270/h; a stale count and a fresh one, 1,080/h.
+    assert shelf["stage_rates"]["rdf"] == 540, shelf["stage_rates"]
+    _json.dumps(shelf["stage_rates"])
+
+
+def test_a_baseline_on_stored_counts_starts_when_they_were_counted(isolated_config, monkeypatch):
+    """After a restart the first view baselines on counts stored minutes
+    ago; baselined at the render, the next window counted the progress made
+    before it too (the deploy's 1.5x)."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _rdf_rows(con, 100, 300)
+    web.invalidate_counts()
+    _wait_counts(c)
+    counts, _age = web._document_counts(c)
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    con.execute("DELETE FROM control WHERE key='stage_rate'")
+    monkeypatch.setattr(web, "_document_counts", lambda _c: (counts, 600.0))
+    web._collection_shelf(c, {})
+    rec = web._stage_rate_memo[str(c.manifest_path)]
+    assert abs(rec["rdf_pts"] - (int(time.time()) - 600)) <= 2, rec
+    assert rec["rdf_pc"] == 100
+
+
+def test_a_cold_process_recounts_and_says_the_scans_interval(isolated_config):
+    """The stored counts carry the scan's own time: a process that starts on
+    them recounts on the scan's interval and says it, not the two-minute
+    floor (2026-11-07: "every 2 min" over recounts 5.5 min apart)."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _rdf_rows(con, 1, 3)
+    web.invalidate_counts()
+    _wait_counts(c)
+    counts, _age = web._document_counts(c)
+    key = web._counts_key(c)
+    web._counts_scan_secs[key] = 45.0
+    assert web._persist_counts(c, counts)
+    web._counts_scan_secs.pop(key, None)
+    assert web._counts_ttl_for(key) == web._COUNTS_TTL_S, "the floor, before the row is read"
+    assert web._stored_counts(c) is not None
+    assert web._counts_ttl_for(key) == 450.0
