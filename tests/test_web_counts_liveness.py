@@ -455,7 +455,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
         "work remains, no trustworthy rate: a dash, and the reason in the tooltip"
     assert "no rate yet" in shelf["stage_eta_why"]["fts"]
     html = _render_library(shelf)
-    assert "(~22min)" in html
+    assert "(~22min, +540/h)" in html, "the rate is read beside the estimate, not only on a hover"
     # An unknown ETA shows a DASH, and the reason is in its tooltip
     # (operator, 2026-09-12). It used to show "TBD" and a tooltip reading
     # literally "+/h" — a plus and a per-hour around nothing.
