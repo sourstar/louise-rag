@@ -13,7 +13,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git archive --format=tar "$rev" \
   deploy/vega/run.sh deploy/vega/vega_wrapper.py deploy/vega/requirements.txt \
-  deploy/vega/retired_backends.py \
+  deploy/vega/retired_backends.py tools/archive_backend.py \
   tests/fixtures/vega/backend.proto \
   app/__init__.py app/hold/__init__.py app/hold/codex.py \
   app/vega/model.py app/vega/procfs.py app/vega/runs.py app/vega/loadopts.py \

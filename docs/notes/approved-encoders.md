@@ -45,16 +45,26 @@ A swap (a new engine or wrapper in place of an old one) ends like this:
    P6's gates did).
 2. Every model file and wrapper names the new one, and every model loaded on
    the old one is unloaded (`POST /backend/shutdown`, measuring.md §9).
-3. If a Codex names the retired engine, its archive is made first (09 §9.3,
-   `tools/archive_backend.py`). The tool below does not check this.
-4. On the node, as root:
+3. If a Codex names the retired engine, its archive is made first:
+   `python -m tools.archive_backend <engine dir> <archive dir>` (09 §9.3: the
+   node keeps a Codex's backend engine for the Codex's life).
+4. On the node, as root, from the deployed tree (`/mnt/ssd4/apps/louise-rag/src`):
    `python3 -I deploy/vega/retired_backends.py` lists every backend, wrapper
    and directory of the backends path that no model file names, directly or
-   through a wrapper's vega.json, with its size. `--delete` removes exactly
-   those and prints what it removed and the bytes freed. It refuses one that a
-   running process uses, and it refuses everything if /proc cannot be read.
+   through a wrapper's vega.json, with its size. For each retired engine it
+   also says which collections' Codexes name it and whether its archive
+   exists. `--delete` removes exactly those and prints what it removed and the
+   bytes freed. It refuses:
+   - one that a running process uses;
+   - an engine a Codex names (by `localai/<name>`, or by an image of its tree,
+     alone or with a wrapper's code), unless `<tree hex>.tar.zst` under
+     `--archive` unpacks to the engine's tree digest;
+   - everything, if /proc or any Codex cannot be read.
+
    A twin (the CPU engine a `-cpu` wrapper names) is kept, because something
-   names it.
+   names it. The archive directory's default,
+   `/mnt/tank/louise-platform-images/backends`, is not confirmed: the
+   dataset's host path is in deploy/reference/DEPLOYMENT.md.
 5. That output is the record. It goes into the swap's note, or into
    scheduling-log.md.
 

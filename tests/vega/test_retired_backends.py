@@ -84,7 +84,22 @@ def node(tmp_path):
     _model(models, "vega-qwen3-embedding-4b-cpu", CPU)
     proc = tmp_path / "proc"
     _process(proc, 4242, cwd=tmp_path, exe=Path(sys.executable))
+    for d in ("collections", "shards", "archive"):
+        (tmp_path / d).mkdir()
     return backends, models, proc
+
+
+def _codexes(backends: Path):
+    """The node's Codexes and archives beside the fake backends path; the
+    worker's SHARDs root under a name no host has."""
+    t = backends.parent
+    return rb.Codexes(t / "collections", t / "shards", "/no-such-shards", t / "archive")
+
+
+def _flags(backends: Path) -> list[str]:
+    c = _codexes(backends)
+    return ["--collections", str(c.collections), "--shards", str(c.shards),
+            "--container-shards", c.container_shards, "--archive", str(c.archive)]
 
 
 def _process(proc: Path, pid: int, cwd: Path, exe: Path, maps: list[Path] = (),
@@ -109,7 +124,8 @@ def _process(proc: Path, pid: int, cwd: Path, exe: Path, maps: list[Path] = (),
 
 def _run(backends, models, proc, *flags) -> tuple[int, str]:
     out = io.StringIO()
-    rc = rb.run(backends, models, "/backends", proc, delete="--delete" in flags, out=out)
+    rc = rb.run(backends, models, "/backends", proc, delete="--delete" in flags,
+                codex=_codexes(backends), out=out)
     return rc, out.getvalue()
 
 
@@ -189,7 +205,7 @@ def test_an_unreadable_process_table_refuses_the_deletion_whole(node, monkeypatc
             return real(path)
         monkeypatch.setattr(rb.os, "listdir", listdir)
     rc = rb.main(["--backends", str(backends), "--models", str(models), "--proc", str(proc),
-                  "--delete"])
+                  "--delete", *_flags(backends)])
     assert rc == 2
     assert "nothing removed" in capsys.readouterr().err
     assert (backends / OLD).is_dir()
@@ -297,3 +313,105 @@ def test_the_kernels_own_proc_entries_are_read_as_the_fakes_are(node, tmp_path):
         for child in (sitting, mapping):
             child.kill()
             child.wait()
+
+
+# ---- 09 §9.3: an engine a Codex names goes only once its archive verifies -------------------
+
+def _engine_object(name: str, image: str) -> dict:
+    return {"name": name, "build": image[7:19], "variant": None, "image": image,
+            "args": ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"], "env": {},
+            "device": "Intel(R) Arc(TM) Pro B70 Graphics"}
+
+
+def _codex(path: Path, document: dict, query: dict | None = None) -> None:
+    """A codex.json with its engines where 09 §9.3 puts them."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    space = {"encoder": {"weights": "sha256:" + "77" * 32, "engine": document}}
+    if query:
+        space["query"] = {"encoder": {"weights": "sha256:" + "88" * 32, "engine": query}}
+    path.write_text(json.dumps({"version": 11, "space": space}))
+
+
+def test_an_engine_a_codex_names_without_its_archive_is_refused(node):
+    """Named by its image, the tree digest (the query side here), under
+    another name: refused, and the listing says so."""
+    backends, models, proc = node
+    c = _codexes(backends)
+    tree = rb._repository().tree_digest(backends / OLD)
+    _codex(c.collections / "gutenberg" / "shard" / "codex.json",
+           _engine_object(f"localai/{LIVE}", "sha256:" + "11" * 32),
+           query=_engine_object("localai/renamed-since", tree))
+    rc, out = _run(backends, models, proc)
+    assert rc == 0 and "codex: named by gutenberg; archived: no" in out
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and f"refused  {OLD}: {OLD}: named by the Codex of gutenberg" in out
+    assert str(rb.archive_of(c.archive, tree)) in out and "(09 §9.3)" in out
+    assert (backends / OLD / "run.sh").is_file()
+
+
+def test_with_a_verified_archive_the_engine_a_codex_names_is_removed(node):
+    """Named by its NAME (its image held the wrapper's code, which is gone),
+    through a shard that links into the SHARDs root as the worker sees it. An
+    archive that does not unpack to the tree is refused; the real one admits it."""
+    backends, models, proc = node
+    c = _codexes(backends)
+    os.makedirs(c.collections / "wikidata")
+    os.symlink(f"{c.container_shards}/wikidata", c.collections / "wikidata" / "shard")
+    _codex(c.shards / "wikidata" / "codex.json",
+           _engine_object(f"localai/{OLD}", "sha256:" + "22" * 32))
+    ab = rb._repository()
+    tree = ab.tree_digest(backends / OLD)
+    kept = rb.archive_of(c.archive, tree)
+    kept.write_bytes(b"not an archive")
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and f"{kept} unpacks to nothing" in out and (backends / OLD).is_dir()
+    kept.unlink()
+    assert ab.archive_backend(backends / OLD, c.archive)["verified"]
+    rc, out = _run(backends, models, proc)
+    assert "codexes: 1 read" in out and "codex: named by wikidata; archived: yes" in out
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 0 and f"removed  {OLD}" in out, out
+    assert not (backends / OLD).exists() and kept.is_file(), "the archive stays"
+
+
+def test_an_engine_moved_into_a_retired_directory_is_named_with_its_wrappers_code(node):
+    """backends-retired-20261102's shape: a wrapper and its engine moved into one
+    directory. The Codex's image is the engine's tree WITH the wrapper's code
+    (09 §9.3, amended 2026-10-31), under a name that matches nothing."""
+    backends, models, proc = node
+    held = backends / "backends-retired-20261102"
+    engine = _engine(held, "louise-sycl-f16-llama-cpp-p5")
+    wrapper = _wrapper(held, "vega-llama-cpp-p5", "louise-sycl-f16-llama-cpp-p5")
+    (wrapper / "vega_wrapper.py").write_text("# the wrapper's code\n")
+    vw = rb._repository().wrapper()
+    image = vw.manifest_digest(vw.engine_manifest(engine, wrapper, vw.TOKENIZER), engine)
+    assert image != rb._repository().tree_digest(engine)
+    _codex(_codexes(backends).collections / "gutenberg" / "shard" / "codex.json",
+           _engine_object("localai/vega-llama-cpp-p5", image))
+    rc, out = _run(backends, models, proc)
+    assert "codex (louise-sycl-f16-llama-cpp-p5): named by gutenberg; archived: no" in out
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1
+    assert "refused  backends-retired-20261102: louise-sycl-f16-llama-cpp-p5: named" in out
+    assert held.is_dir() and not (backends / OLD).exists(), "the engine no Codex names went"
+
+
+@pytest.mark.parametrize("bad", ["not json", "a link this host cannot follow"])
+def test_a_codex_that_cannot_be_read_refuses_the_deletion_whole(node, bad, capsys):
+    backends, models, proc = node
+    c = _codexes(backends)
+    if bad == "not json":
+        (c.collections / "pubmed" / "shard").mkdir(parents=True)
+        (c.collections / "pubmed" / "shard" / "codex.json").write_text("{not json")
+    else:
+        (c.collections / "pubmed").mkdir()
+        os.symlink("/elsewhere/pubmed", c.collections / "pubmed" / "shard")
+    rc = rb.main(["--backends", str(backends), "--models", str(models), "--proc", str(proc),
+                  "--delete", *_flags(backends)])
+    err = capsys.readouterr().err
+    assert rc == 2 and "nothing removed" in err
+    assert ("cannot read the Codex" in err) if bad == "not json" else ("cannot read" in err)
+    assert (backends / OLD).is_dir()
+    rc, out = _run(backends, models, proc)
+    assert rc == 0 and "codexes: not read" in out and "--delete would refuse" in out
+    assert "codex: named by not known; archived: no" in out
