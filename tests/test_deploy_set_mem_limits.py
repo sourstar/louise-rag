@@ -48,3 +48,25 @@ def test_a_config_it_does_not_recognise_is_left_untouched():
     with pytest.raises(ValueError, match="worker"):
         sml.apply(cfg)
     assert "mem_limit" not in cfg["services"]["web"]
+
+
+def test_the_worker_gets_the_arena_cap_and_the_token_stays():
+    cfg = a_config()
+    assert sml.apply_env(cfg) == {"worker": {"MALLOC_ARENA_MAX": None}}
+    assert cfg["services"]["worker"]["environment"] == {"ADMIN_TOKEN": "s3cret", "MALLOC_ARENA_MAX": "2"}
+    assert "MALLOC_ARENA_MAX" not in cfg["services"]["web"]["environment"]
+    assert sml.apply_env(cfg) == {"worker": {"MALLOC_ARENA_MAX": "2"}}, "idempotent"
+
+
+def test_a_list_environment_stays_a_list_and_a_stale_value_is_replaced():
+    cfg = a_config()
+    cfg["services"]["worker"]["environment"] = ["ADMIN_TOKEN=s3cret", "MALLOC_ARENA_MAX=8"]
+    assert sml.apply_env(cfg) == {"worker": {"MALLOC_ARENA_MAX": "8"}}
+    assert cfg["services"]["worker"]["environment"] == ["ADMIN_TOKEN=s3cret", "MALLOC_ARENA_MAX=2"]
+
+
+def test_the_arena_cap_is_the_repository_yaml_s():
+    text = (Path(__file__).resolve().parents[1] / "deploy" / "truenas-app.yaml").read_text(encoding="utf-8")
+    worker = text.split("\n  worker:\n", 1)[1].split("\n  # ", 1)[0]
+    for k, v in sml.ENV["worker"].items():
+        assert f"{k}: '{v}'" in worker

@@ -2533,3 +2533,31 @@ not fit beside the parse pool, and the operator decides.
 |---|---|---|---|---|
 | BEFORE (live, 2026-11-07) | ~6.4 GB (4.8 + 2 × 0.78) | 7.1 + 11 × ~0.87 GB | 1 (06:17) | 06:18:01, unbounded |
 | AFTER | | | | |
+
+## 2026-11-07 — the worker's glibc arenas capped at 2 (MALLOC_ARENA_MAX) — MEASURED
+
+**The defect.** The worker's main was OOM-killed at 06:17 at 7.1 GB, growing
+~1 GB an hour from 2.4 GB at a start. It was not the read cache, which held
+3.4 MiB in main, and not genesis's demand, which had 25,222 candidates in all.
+smaps at 06:35 (München): 2,940 MB in 47 glibc 64-MiB arenas and 1,548 MB in
+mimalloc's ≥ 1 GiB regions. py-spy: 102 threads, 65 of them an idle
+ThreadPoolExecutor, most likely wikidata's embed window (64 documents
+submitted at once). Each thread that allocates gets its own arena, up to
+8 per core, and keeps what it frees.
+
+**The change.** glibc's own control, `MALLOC_ARENA_MAX=2` (mallopt
+M_ARENA_MAX), in the worker's environment: deploy/truenas-app.yaml, applied
+live by deploy/16f/set_mem_limits.py. The parse children inherit it.
+
+| 06:39–07:39 (München) | before the cap | with the cap |
+|---|---|---|
+| main RssAnon | 5.5 → 6.5 → 7.1 GB, killed | 1.6–3.8 GB, every 5 min, bounded |
+| glibc arenas | 47, 2,940 MB | 5 → 9, 318 → 573 MB |
+| mimalloc ≥ 1 GiB regions | 1,548 MB | 49 → 67 MB |
+| OOM kills | 1 in the hour | 0 |
+| wikidata embed | ~18 chunks/s | 34.4 chunks/s |
+| fts | (genesis-mixed, not like for like) | 1,161 chunks/s (French, 8.48 chunks/doc) |
+
+The cap costs nothing measurable on either rate. The children's ~1 GB each is
+NOT arenas: 3 sampled at 969/953/1010 MB at the start, 911/859/813 at the end
+(respawned). That stays open.
