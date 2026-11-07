@@ -107,6 +107,27 @@ TEMPLATES.env.globals.update(mode_labels=node_state.MODE_LABELS,
 # everywhere a count is shown.
 TEMPLATES.env.filters["num"] = (
     lambda n: "" if n is None else f"{int(n):,}".replace(",", "."))
+
+
+def _share(done, total) -> str:
+    """' · 0,9 %': the share done, one decimal, a comma for the decimal (the
+    dots group thousands, above). A bar at 1 % reads as empty, and the
+    operator read wikidata's 397.292 / 42.019.245 as stuck (2026-11-07);
+    the tenths move every few minutes where the bar does not. Nothing for
+    an empty target, '< 0,1 %' for a start too small to show."""
+    try:
+        done, total = int(done or 0), int(total or 0)
+    except (TypeError, ValueError):
+        return ""
+    if total <= 0:
+        return ""
+    pct = 100.0 * done / total
+    if 0 < pct < 0.05:
+        return " · < 0,1 %"
+    return " · " + f"{pct:.1f}".replace(".", ",") + " %"
+
+
+TEMPLATES.env.filters["share"] = _share
 TEMPLATES.env.filters["size"] = gpu.size
 
 

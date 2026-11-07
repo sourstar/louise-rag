@@ -197,6 +197,14 @@ services:
       # the worker signs (validations, the Library's create and export,
       # app/jobs.py), so it alone holds the private key
       NODE_KEY_PATH: /run/louise/private/node.key
+      # glibc's own cap on its per-thread heaps (mallopt M_ARENA_MAX). The
+      # worker runs ~100 threads (wikidata's embed window alone is 64), each
+      # got its own 64 MiB arena and kept what it freed: main 2.4 -> 7.1 GB,
+      # OOM-killed at 06:17 (München, 2026-11-07, 47 arenas = 2.9 GB). Capped
+      # at 2, 06:39-07:39: main 1.6-3.8 GB, 9 arenas, 0 OOM kills, wikidata
+      # 34.4 chunks/s and fts unchanged (scheduling-log.md, the same day).
+      # The parse children inherit it.
+      MALLOC_ARENA_MAX: '2'
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data

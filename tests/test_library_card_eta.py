@@ -336,3 +336,38 @@ def test_a_stage_the_node_was_told_not_to_run_says_nothing(isolated_config):
     on = web._collection_shelf(c, {}, "running")
     assert on["stage_etas"]["embed"] is not None
     _assert_slot_invariant(on, _render(on))
+
+
+def test_the_rate_and_the_share_are_read_without_a_hover(isolated_config):
+    """The operator follows the node from a phone, where a title is never
+    shown: wikidata's 397.292 / 42.019.245 drew a bar at 0.9 % and read as
+    stuck (2026-11-07) while it moved at +33 documents a second. The rate
+    the estimate came from is in the slot's text, and the share done is
+    beside the counts, one decimal, a comma for the decimal."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _seed(con, [(1, 1, 1, 1, None)] * 9 + [(1, 1, 1, 0, None)] * 991)
+    now = int(time.time())
+    web._stage_rate_memo[str(c.manifest_path)] = {
+        **{k: 0 for k in _STAGES}, "embed_ph": 120_000, "embed_n": 2, "ts": now - 600}
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+    html = _render(shelf)
+    _assert_slot_invariant(shelf, html)
+
+    slots = {text.split(",")[0]: text for _tip, text in _slots(html)}
+    eta = shelf["stage_etas"]["embed"]
+    assert eta.startswith("~")
+    why = shelf["stage_eta_why"]["embed"]
+    assert why.startswith("+") and why.endswith("/h"), why
+    assert slots[eta] == f"{eta}, {why}", slots
+    assert "9 / 1.000 · 0,9 %" in html
+
+
+def test_the_share_has_one_decimal_a_comma_and_a_floor():
+    share = web.TEMPLATES.env.filters["share"]
+    assert share(397_292, 42_019_245) == " · 0,9 %"
+    assert share(1, 42_019_245) == " · < 0,1 %"
+    assert share(0, 10) == " · 0,0 %"
+    assert share(10, 10) == " · 100,0 %"
+    assert share(5, 0) == "" and share(5, None) == ""
