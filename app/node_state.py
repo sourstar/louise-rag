@@ -623,28 +623,11 @@ def embedding_blockers(name: str, embed: str | None,
     `embed=None` leaves the setting out, for a caller that says it itself.
     `con` is a `connect()` the caller holds; without one the store is read
     creating nothing (`peek`), and an absent store reads as the worker reads
-    it. NEVER RAISES: a store that cannot be read is said as unreadable."""
-    def read(c):
-        return db.worker_state(c), _pause_entry(c, name)
-    try:
-        facts = read(con) if con is not None else peek(read, ("paused", None), error=None)
-    except (sqlite3.Error, OSError, ValueError, TypeError):
-        facts = None
-    out: list[str] = []
-    if facts is None:
-        out.append(f"The node's state ({path()}) could not be read, so whether the node's mode or a "
-                   f"pause of {name} stops its embedding is not known: `louise node show` reads the "
-                   f"same file.")
-    else:
-        state, pause = facts
-        if not mode_runs(state, EMBED):
-            label = dict(MODE_LABELS).get(state, state)
-            says = MODE_SAYS.get(state, "a mode this node does not know: nothing runs")
-            out.append(f'The node is in "{label}" mode ({says}). Nothing embeds until it is set to '
-                       f'"run everything": at the top of the Library, or with `louise node resume`.')
-        if pause is not None:
-            out.append(_pause_says(name, pause))
-    if embed == "off":
-        out.append(f'{name}\'s embed setting is "off": set it to on-demand, all local or all p2p in its '
-                   f"Embed mode in the Library, or run `louise hold config apply {name} --set embed=all`.")
-    return out
+    it. NEVER RAISES: a store that cannot be read is said as unreadable.
+
+    THE ONE REASON FUNCTION is app/status.py `holds` (2026-11-07): this is
+    its embed stage without a collection — the node's facts and the setting
+    — in the sentences the card, `node show` and `node health` say, with
+    the node profile's hold where one is in force."""
+    from . import status
+    return [h.says for h in status.holds(name, "embed", embed_mode=embed, node_con=con)]

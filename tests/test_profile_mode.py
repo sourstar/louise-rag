@@ -78,8 +78,12 @@ def test_health_names_the_schedule_as_the_reason(monkeypatch):
     for stage in ("rdf", "fts", "embed", "archive"):
         why = health._held_reason("running", stage)
         assert "processing suspended" in why and "platform.toml" in why, stage
-    # the node's own mode, where it is the stricter, is named first
-    assert health._held_reason("acquire-only", "embed").startswith("the node is acquire-only")
+    # the node's own mode, where it is the stricter, is named first — in the
+    # sentence every surface says it in (app/status.py, one status, 2026-11-07;
+    # this read "the node is acquire-only; …" here and "The node is in
+    # "download/seeding only" mode …" on the card)
+    assert health._held_reason("acquire-only", "embed").startswith(
+        'The node is in "download/seeding only" mode')
     _profile(monkeypatch, "running", cores=0)
     assert health._held_reason("running", "embed") == ""
     assert "embedding goes on" in health._held_reason("running", "fts")

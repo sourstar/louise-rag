@@ -117,6 +117,7 @@ louise hold
               list                                                     collections held, by lineage (amended 2026-10-25: `--all` dropped — dormant is a state of the
                                                                        network's catalogue, 04 §4.7, and every held collection is listed)
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
+                                                                       — and its stages as `node show` counts them, with what holds each (`status`, one status, added 2026-11-07)
   annotations update <collection> [--claims FILE] [--against TARGET=SNAPSHOT …] [--snapshot ID] [--dry-run]
                                                                        (amended 2026-10-23, operator: updated, not replaced; 02 §2.10) the next snapshot of the SAME
                                                                        annotations collection: the claims checked against each target's newest snapshot (or
@@ -782,6 +783,42 @@ reader needs at the command line:
   (§7.7), exit 0.
   `pause` and `resume` are runtime overrides: they live in the state
   database and survive a restart until `resume` (§7.8).
+- **One status: `node show`, `node health`, `hold collection show`, the
+  Library's card, `/api/status`.** *Added 2026-11-07 (operator: "The
+  interface with which a model status is queried must me common, as the
+  fetching, parsing, indexing and embedding").* A collection's status is
+  defined once, in `app/status.py`, and every surface reads it. Per stage
+  (fetch, parse, index, embed): **target** (in scope, less the documents
+  the origin gave no text for — and for embed, less those *declined*,
+  `embed_done = -1`, not embedded here by choice), **done**, **waiting**
+  (cleared the stage before, not this one, no error: what the worker's own
+  selection takes), **errored** (at the stage with an error: out of every
+  selection, never waiting), **blocked** (stopped by a stage failure, here
+  or upstream), **superseded** (not done here, the earlier version still
+  held — its text in the lexical index, its vectors in the table — and
+  searched until the stage redoes it; the card draws it grey,
+  "present but not active", operator, 2026-11-07) and, for embed,
+  **reembed** (done at an older embedding version, which the worker takes
+  again). What holds a stage is one list in one order — the node's mode,
+  the collection's own pause, the node profile, the embed setting, the
+  licence, the copy's state, the vector store's floor — each said in one
+  sentence, the same on every surface; a single-line surface names the
+  first that blocks, else the first that holds. Two costs, one
+  definition: the card and `/api/status` read the full scan (cached; the
+  card says how old), `node show`, `node health` and `hold collection
+  show` (its `status` key) count live along the state database's index,
+  capped; where both are exact they are the same number, and what the
+  index cannot see (a re-embed; a version above the bound) the live count
+  takes from the last full count and names that count's time
+  (`from_scan`). *What changed with it:* `node show` and `node health`
+  call a collection paused on its own held at every stage (they said
+  running), say the mode and `embed = "off"` in the card's sentences, and
+  count a re-embed beside the embed stage's waiting; the card's
+  "awaiting the encoder" takes the worker's selection exactly (parsed,
+  indexed, then new or older-version); `/api/status` keeps its shape and
+  takes the card's counts — up to the card's recount interval old, where
+  it scanned on every request — with `errors` as blocked plus not
+  indexable.
 - **`dev migrate schema`.** Creating the schema of a new state database
   is not a migration and happens on first open. Changing an existing
   schema happens here only; a process that finds a schema other than its

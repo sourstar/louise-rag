@@ -182,7 +182,7 @@ grep -q "^def _as_candidate(recipe, a):" "$ROOT/src.new/app/louise.py"          
 grep -q '^TREE_TYPES = ("file", "dir", "link", "setting")$' "$ROOT/src.new/app/vega/service.py"   # #116 (f1fd164): the receipts service takes the wrapper's `setting` entry, BEFORE the wrappers move
 grep -q "^def find(root: Path, name: str, role: str, \*, weights: str, set_id: str," "$ROOT/src.new/app/hold/cpu_reference.py"   # #119 (bbf6628): the stored CPU reference, statement version 5, own bytes enforced
 grep -q "^def fresh_loads(texts: Sequence, embed_one, reload: " "$ROOT/src.new/app/hold/embedder.py"   # #120 (5f49e24): the multi-load gate, `exactness = "near"` opt-in
-grep -q '^IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"$' "$ROOT/src.new/app/health.py"   # #126 (2c765fa): a stage the profile pauses says so
+grep -q '^IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"$' "$ROOT/src.new/app/status.py"   # #126 (2c765fa): a stage the profile pauses says so — in app/status.py since one status (2026-11-07)
 grep -q "^def _merge_by_relevance(lists: list\[tuple\[list\[dict\], Any\]\]) -> list\[dict\]:" "$ROOT/src.new/app/retrieval.py"   # #128 (a46fe9b): lists merged on calibrated relevance (off until a calibration)
 test -s "$ROOT/src.new/tools/measure/fusion_calibration.py"                                  # #128
 grep -q "^    batch: int = 0$" "$ROOT/src.new/app/collections.py"                               # #129 (93b435e): [encoder] batch, a collection's own, gated at it
