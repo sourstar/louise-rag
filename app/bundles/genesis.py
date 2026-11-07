@@ -1352,6 +1352,10 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
         for g in groups:
             yield from pf.read_row_group(g, columns=["id", "embedding"]).to_batches(max_chunksize=1024)
 
+    def decoded():
+        for batch in batches():
+            yield batch.column(0).to_pylist(), _vectors(batch.column(1))
+
     def rows():
         # An article straddling two shard files surfaces here with a PARTIAL
         # vector list (each shard is read independently), fails the
@@ -1359,8 +1363,8 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
         # shard boundary, and never a wrong import.
         current: str | None = None
         vecs: list[np.ndarray] = []
-        for batch in batches():
-            for rid, vec in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist()):
+        for ids, vectors in _read_behind(decoded(), name=f"genesis-read-{collection.name}"):
+            for rid, vec in zip(ids, vectors):
                 article, _seq = split_row_id(rid)
                 if article != current:
                     if current is not None:
@@ -1368,12 +1372,95 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
                         if want is None or uid in want:
                             yield uid, vecs
                     current, vecs = article, []
-                vecs.append(np.asarray(vec, dtype=np.float32))
+                vecs.append(vec)
         if current is not None:
             uid = f"{uid_prefix}{native_id_of(lang, int(current), archive=True)}"
             if want is None or uid in want:
                 yield uid, vecs
     return rows(), [path]
+
+
+def _vectors(column) -> list[np.ndarray]:
+    """One float32 vector per row of a list column: the arrays
+    `np.asarray(row.as_py(), dtype=np.float32)` gives, byte for byte, made
+    from the column's values in ONE conversion instead of a Python float per
+    value — München, 2026-11-07: 13.2 % of wikipedia's pipeline thread was
+    this loop's `to_pylist`, a million Python floats for every 1,024 vectors.
+    A float64 or float16 column is cast as numpy casts a Python float (round
+    to nearest). A null anywhere takes the per-row path of the code before."""
+    import pyarrow as pa
+    typ = column.type
+    listed = pa.types.is_list(typ) or pa.types.is_large_list(typ) or pa.types.is_fixed_size_list(typ)
+    if not listed or column.null_count:
+        return [np.asarray(v, dtype=np.float32) for v in column.to_pylist()]
+    flat = column.flatten()                 # the slice's values, its offset taken into account
+    if flat.null_count or not pa.types.is_floating(flat.type):
+        return [np.asarray(v, dtype=np.float32) for v in column.to_pylist()]
+    values = flat.to_numpy(zero_copy_only=False).astype(np.float32, copy=False)
+    if pa.types.is_fixed_size_list(typ):
+        n = typ.list_size
+        return [np.array(values[i * n:(i + 1) * n], dtype=np.float32) for i in range(len(column))]
+    from itertools import pairwise
+    offsets = column.offsets.to_numpy()
+    offsets = offsets - offsets[0]
+    return [np.array(values[a:b], dtype=np.float32) for a, b in pairwise(offsets)]
+
+
+#: row batches a shard read keeps ready ahead of the pass (`_read_behind`)
+READ_AHEAD = 2
+
+
+def _read_behind(source: Iterator, *, name: str, depth: int = READ_AHEAD,
+                 timeout: float | None = None) -> Iterator:
+    """`source`'s items, read on a DAEMON THREAD up to `depth` ahead of the
+    caller: the next row group's read and decode overlap the pass's lookups,
+    chunking and Lance writes on the caller's thread — the collection's
+    pipeline thread — where they ran inline (München, 2026-11-07: 4.5 % of
+    wikipedia's pipeline thread in `ParquetFile.read_row_group`, beside the
+    13.2 % `_vectors` removes). The standard producer/consumer, a bounded
+    `queue.Queue`; the items and their order are the source's.
+
+    BOUNDED (scheduling.md §3 rule 2): the wait for the next item is
+    `timeout` (PARSE_TIMEOUT_S) — a read that does not answer is
+    `GenesisUnavailable`, the shard skipped and retried, as a missing file is.
+    A caller that stops early (a stop, its budget) closes this generator, and
+    the reader stops at its next item."""
+    import queue
+    bound = float(config.PARSE_TIMEOUT_S if timeout is None else timeout)
+    q: queue.Queue = queue.Queue(maxsize=max(1, depth))
+    stop = threading.Event()
+
+    def offer(entry) -> bool:
+        while not stop.is_set():
+            if not q.full():                # one producer: room seen is room kept
+                q.put_nowait(entry)
+                return True
+            stop.wait(0.05)
+        return False
+
+    def produce() -> None:
+        try:
+            for item in source:
+                if not offer(("item", item)):
+                    return
+            offer(("end", None))
+        except BaseException as e:          # noqa: BLE001 — handed to the reader of the queue
+            offer(("error", e))
+
+    threading.Thread(target=produce, name=name, daemon=True).start()
+    try:
+        while True:
+            try:
+                kind, value = q.get(timeout=bound)
+            except queue.Empty:
+                raise GenesisUnavailable(f"the shard's read did not answer for {bound:.0f} s") from None
+            if kind == "end":
+                return
+            if kind == "error":
+                raise value
+            yield value
+    finally:
+        stop.set()
 
 
 _ADAPTERS = {"medcpt-npy": _read_medcpt_shard, "parquet": _read_parquet_shard,
