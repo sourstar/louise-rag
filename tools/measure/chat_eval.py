@@ -41,8 +41,10 @@ WHAT IS SCORED, DETERMINISTICALLY (no LLM judge, as the legal pilot):
 - tool use: calls per answer, calls that failed (unknown tool, refused
   arguments), loops that hit the round bound;
 - the answer's language: `app.query_language.guess` (the node's own
-  deterministic guess), set against the query's label. "No guess" is
-  counted apart, never as right;
+  deterministic guess) sentence by sentence, titles and quoted spans out,
+  the majority by words (`language_mix`), set against the query's label.
+  "No guess" is counted apart, never as right; an answer more than a
+  quarter in other languages is counted "mixed" beside it;
 - time per answer;
 - PRECISION AND TOOLS (operator, 2026-11-03: "fast, not too big, precise in
   articulating the answer and able to use tools"): the sources an answer
@@ -117,7 +119,8 @@ localai is applying your settings otherwise the test is void"): `probe
 (sampling_probe.py); `run` refuses a model whose probe has not passed.
 LOOPS are counted (`looped`): a span of words repeated back to back three
 times, the degenerate repetition near-greedy sampling can fall into (the
-35B pilot, 2026-11-03: "Rouge-Profond ? Non, …" to the token bound).
+35B pilot, 2026-11-03: "Rouge-Profond ? Non, …" to the token bound), or a
+sentence of eight words or more said twice anywhere in the answer.
 """
 from __future__ import annotations
 
@@ -167,8 +170,11 @@ _NUMBER = re.compile(r"\b\d[\d.,]*\d\b|\b\d\b")
 
 #: the checker's version, written on every row it scored (`rescore` rewrites
 #: a run's rows under the current one): 2 = labels and markup out, German
-#: names not counted, a name held in another spelling (operator, 2026-11-06)
-CHECKER = 2
+#: names not counted, a name held in another spelling (operator, 2026-11-06);
+#: 3 = a loop is also a sentence said twice (`repeated_sentence`), and the
+#: answer's language is its sentences' majority by words, titles and quotes
+#: out, with "mixed" beside it (`language_mix`; 2026-11-07)
+CHECKER = 3
 
 #: a list item's label — "Auteur:", "* **Personnages principaux**:" — a
 #: heading the answer gives its item, not a fact it states; at most three words
@@ -633,10 +639,60 @@ def arm_model(sampling: dict[str, float | int] | None):
 
 #: the shortest repeated span, in words, and how many times back to back
 LOOP_MIN_WORDS, LOOP_TIMES = 8, 3
+#: the shortest sentence, in words, whose second saying is a loop: the same
+#: bound as a span's. What a list's items share is shorter — a label
+#: ("Autore: Alexandre Dumas", 3), a note ("Non è disponibile in italiano", 5)
+REPEAT_MIN_WORDS = LOOP_MIN_WORDS
 _LOOP_CITE = re.compile(r"\[[^\]]*\]")
+#: a list item's or a heading's marker at a line's start: "- ", "* ", "1. ", "> ", "## "
+_LIST_MARK = re.compile(r"(?m)^[ \t]*(?:[-*+>#]+|\d{1,3}[.)])[ \t]+")
 
 
 def looped(answer: str, *, max_span: int = 80) -> bool:
+    """The answer repeats itself, by either of two triggers:
+    - `back_to_back`: a span repeated LOOP_TIMES times in a row, the
+      degenerate loop of near-greedy decoding (Holtzman et al. 2020);
+    - `repeated_sentence`: a sentence said twice anywhere in it, the same
+      claim restated with other text between (Welleck et al. 2019's
+      seq-rep, the sentence as its unit).
+    Both feed the one "looped" column: the same defect, a model repeating
+    what it has written; the pilot's line says which trigger fired."""
+    return back_to_back(answer, max_span=max_span) or repeated_sentence(answer) is not None
+
+
+def repeated_sentence(answer: str) -> str | None:
+    """The first sentence the answer says a second time, or None.
+
+    THE STANDARD: the repetition rate of Welleck et al. (ICLR 2020, "Neural
+    Text Generation with Unlikelihood Training"), seq-rep-n = the share of a
+    text's n-grams that are duplicates, taken with the SENTENCE as its unit
+    and flagged above 0. The loop is sentence-level and feeds itself: once a
+    sentence is repeated, repeating it again grows likelier (Xu et al.,
+    NeurIPS 2022, "Learning to Break the Loop").
+
+    WHY THE SENTENCE, NOT seq-rep-4: a list whose items share a frame
+    ("Dumas wrote X in 1844 [3]. Dumas wrote Y in 1845 [4].") repeats
+    4-grams by construction, and is a good answer. Its items differ in a
+    word; a sentence repeated WHOLE does not happen by chance.
+
+    THE THRESHOLDS: a sentence of REPEAT_MIN_WORDS (8) words or more — what
+    a list's items legitimately share verbatim is a label or a short note,
+    under 8 — and twice: one restatement is what `back_to_back`, needing
+    three in a row, misses. Compared on its words: case, whitespace, punctuation,
+    markdown, list markers and citations ([n], `_LOOP_CITE`) aside, so a
+    restatement citing another source is still one."""
+    seen: set[tuple[str, ...]] = set()
+    for sentence in _SENTENCES.split(_LIST_MARK.sub("", answer or "")):
+        words = tuple(_WORD.findall(_LOOP_CITE.sub(" ", sentence).casefold()))
+        if len(words) < REPEAT_MIN_WORDS:
+            continue
+        if words in seen:
+            return " ".join(sentence.split())
+        seen.add(words)
+    return None
+
+
+def back_to_back(answer: str, *, max_span: int = 80) -> bool:
     """A span of words repeated back to back LOOP_TIMES times, at least
     LOOP_MIN_WORDS words in all, citations aside: the degenerate repetition
     of near-greedy decoding (Holtzman et al., ICLR 2020, "The Curious Case
@@ -670,9 +726,90 @@ def self_talk(answer: str) -> bool:
     return bool(_SELF_TALK.search(answer or ""))
 
 
-def answer_language(text: str) -> str | None:
+#: MIXED: more than this share of the words in an answer's guessed sentences
+#: is in languages other than its majority's — its Code-Mixing Index / 100
+MIXED_SHARE = 0.25
+#: what a sentence's language is guessed without: a span in quotes (a title,
+#: a source's own words) and one in italics, stars or bold (a title, mostly);
+#: an emphasis opens and closes on a letter, as CommonMark's, so a bullet's
+#: "* " opens none
+_QUOTE_SPAN = re.compile(r"[«\"“„][^«»\"“”„\n]{1,600}[»\"”“]")
+_EMPHASIS = re.compile(r"\*\*(?=\S)[^*\n]+?(?<=\S)\*\*|__(?=\S)[^_\n]+?(?<=\S)__"
+                       r"|\*(?=\S)[^*\n]+?(?<=\S)\*|(?<!\w)_(?=\S)[^_\n]+?(?<=\S)_(?!\w)")
+#: a word as app/query_language counts one: letters only
+_LETTER_WORD = re.compile(r"[^\W\d_]+")
+
+
+def language_mix(text: str) -> dict[str, Any]:
+    """The answer's language, sentence by sentence (2026-11-07: one guess
+    for the whole answer took an Italian answer quoting English titles for
+    English, and could not see an answer switching language halfway).
+
+    - Citations, quoted spans and italic, starred or bold spans out first:
+      a title or a source's words is not the language the answer is
+      written in.
+    - Each sentence guessed by the node's own guess (app/query_language:
+      function words and scripts, no model); one it cannot tell (a name, a
+      fragment) is no one's.
+    - THE ANSWER'S LANGUAGE is the majority BY WORDS of the guessed
+      sentences, as CLD2 (Google's Compact Language Detector 2) names a
+      text's language by the largest share of it and reports each share.
+      A tie goes to the guess over the whole (stripped) text if it is one
+      of the tied, else no guess. No sentence guessed: the guess over the
+      whole stripped text, which pools a short answer's evidence.
+    - MIXED when the other languages hold more than MIXED_SHARE of the
+      guessed words: the Code-Mixing Index (Das & Gambäck, ICON 2014;
+      Gambäck & Das, LREC 2016), CMI / 100 = 1 - max_i(w_i) / (n - u), u
+      the words no language claims, read per sentence.
+
+    MIXED_SHARE = 0.25, one word in four: the guess was wrong on 4 of 490
+    labelled queries (0.8 %), texts of a sentence's length
+    (one-language-per-work.md §3), so the noise is a stray sentence — an
+    unquoted foreign title — and one sentence in Qwen3.5-9B's answers (6 to
+    8 citing sentences) is 12-17 % of the words; a switch halfway is 50 %.
+    In an answer of three sentences one stray sentence crosses it.
+
+    THE STANDARD, NOT ADOPTED: a detector with per-segment output (lingua's
+    `detect_multiple_languages_of`, CLD2's ranked spans) finds the switch
+    inside a sentence too. A new dependency in the node's image (CLAUDE.md:
+    ask first), and the node's own guess is what the language column has
+    always used; it pays if answers switch within sentences.
+
+    {"lang": the majority or None, "words": {lang: words}, "other": share
+    of the guessed words in other languages, "mixed": other > MIXED_SHARE}"""
     from app import query_language
-    return query_language.guess(text or "", query_language.guessable())
+    held = query_language.guessable()
+    plain = _EMPHASIS.sub(" ", _QUOTE_SPAN.sub(" ", _LOOP_CITE.sub(" ", text or "")))
+    words: dict[str, int] = {}
+    for sentence in _SENTENCES.split(plain):
+        lang = query_language.guess(sentence, held)
+        if lang is not None:
+            words[lang] = words.get(lang, 0) + len(_LETTER_WORD.findall(sentence))
+    words = {k: v for k, v in words.items() if v}
+    if not words:
+        return {"lang": query_language.guess(plain, held), "words": {}, "other": 0.0, "mixed": False}
+    most = max(words.values())
+    tied = sorted(k for k, v in words.items() if v == most)
+    if len(tied) == 1:
+        lang = tied[0]
+    else:
+        pooled = query_language.guess(plain, held)
+        lang = pooled if pooled in tied else None
+    other = round(1.0 - most / sum(words.values()), 3)
+    return {"lang": lang, "words": dict(sorted(words.items())), "other": other, "mixed": other > MIXED_SHARE}
+
+
+def answer_language(text: str) -> str | None:
+    """The language an answer is written in: `language_mix`'s majority."""
+    return language_mix(text)["lang"]
+
+
+def answer_checks(answer: str) -> dict[str, Any]:
+    """What CHECKER reads off the answer's text alone, as a row records it:
+    the loop, the language and whether it is mixed (`language_mix`)."""
+    mix = language_mix(answer)
+    return {"looped": looped(answer), "answer_lang": mix["lang"], "answer_mixed": mix["mixed"],
+            "answer_words": mix["words"]}
 
 
 def _warm_up(url: str, model: str) -> None:
@@ -784,9 +921,10 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
             searched = search_hits(turns)
             facts = unsupported(got.get("answer") or "", q["query"], turns, q.get("lang"))
             support = citation_support(got, turns, q["query"], q.get("lang"))
+            checks = answer_checks(got.get("answer") or "")
             row = {**q, "tag": tag, "answer": got.get("answer") or "", "rounds": got.get("rounds", 0),
                    "sampling": dict(sampling or {}),
-                   "looped": looped(got.get("answer") or ""),
+                   "looped": checks["looped"],
                    "exhausted": bool(got.get("exhausted")),
                    "tools": [t.get("tool") for t in turns],
                    "tool_errors": sum(1 for t in turns if t.get("error")),
@@ -813,7 +951,8 @@ def run(out: Path, name: str, *, model: str, queries: list[dict[str, str]],
                 # `seconds` is then the answer's time without them
                 row["replayed"] = search_cache.hits - hits0
                 row["replayed_s"] = round(search_cache.replayed_s - replayed0, 3)
-            row["answer_lang"] = guess(row["answer"])
+            row["answer_mixed"], row["answer_words"] = checks["answer_mixed"], checks["answer_words"]
+            row["answer_lang"] = checks["answer_lang"] if guess is answer_language else guess(row["answer"])
             with answers.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     finally:
@@ -867,12 +1006,16 @@ def pilot_report(out: Path, name: str, tag: str, keys: list[str]) -> Path:
         if r.get("tools_failed"):
             lines.append(f"- TOOLS FAILED, answered without them: {r['tools_failed']}")
         if r.get("looped"):
-            lines.append("- LOOPED: a span repeated back to back")
+            again = repeated_sentence(r.get("answer") or "")
+            lines.append(f"- LOOPED: a sentence said twice: \"{again[:200]}\"" if again
+                         else "- LOOPED: a span repeated back to back")
         if self_talk(r.get("answer") or ""):
             lines.append("- THINKS ALOUD: the answer retracts what it has just said")
         for u in (r.get("support") or {}).get("uncited", []):
             lines.append(f"- uncited, in no source: {', '.join(u['missing'])}")
-        lines.append(f"- answer language guessed: {r.get('answer_lang')}; {r.get('seconds')} s "
+        mixed = (f" (MIXED: {', '.join(f'{k} {v} words' for k, v in (r.get('answer_words') or {}).items())})"
+                 if r.get("answer_mixed") else "")
+        lines.append(f"- answer language guessed: {r.get('answer_lang')}{mixed}; {r.get('seconds')} s "
                      f"(model {r.get('model_s')} s); rounds {r.get('rounds')}"
                      + ("; ROUND BOUND HIT" if r.get("exhausted") else ""))
         lines.append("")
@@ -932,6 +1075,10 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_errors": sum(r["tool_errors"] for r in rows),
             "lang_right": sum(1 for r in guessed if r["answer_lang"] == r["lang"]),
             "lang_guessed": len(guessed),
+            # more than MIXED_SHARE of the answer in another language; None for
+            # rows scored before checker 3 recorded it: unknown, not 0
+            "lang_mixed": (sum(1 for r in rows if r["answer_mixed"])
+                           if all("answer_mixed" in r for r in rows) else None),
             "median_s": statistics.median(warm) if warm else None,
             "no_tool": sum(1 for r in rows if r.get("no_tool")),
             "cited": sum(r.get("cited", 0) for r in rows),
@@ -1023,7 +1170,7 @@ def score(out: Path, works: Path | None = None) -> int:
                   f"**{c['answers_misattributing']}** | **{c['answers_claiming_uncited']}** |")
     print()
     print("| model | languages | answers | failed | bound hit | looped | thinks aloud | calls/answer | tool errors "
-          "| answer in the query's language (of those guessed) | cold (not timed) | median s, warm "
+          "| answer in the query's language (of those guessed, mixed) | cold (not timed) | median s, warm "
           "| no tool call | cited per answer | grounded | answers citing nothing "
           "| of which results had come back | results slimmed to fit |")
     print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -1039,7 +1186,8 @@ def score(out: Path, works: Path | None = None) -> int:
             print(f"| {name} | {label} | {s['n']} | {s['failed']} | {s['exhausted']} | "
                   f"{'-' if s['looped'] is None else s['looped']} | {s['self_talk']} | "
                   f"{s['calls_per_answer']:.2f} | {s['tool_errors']} | "
-                  f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}) | {s['cold']} | "
+                  f"**{share:.2f}** ({s['lang_right']}/{s['lang_guessed']}, mixed "
+                  f"{'-' if s['lang_mixed'] is None else s['lang_mixed']}) | {s['cold']} | "
                   f"{'-' if s['median_s'] is None else format(s['median_s'], '.1f')} | "
                   f"{s['no_tool']} | {s['cited'] / s['n']:.1f} | "
                   f"{(s['grounded'] / s['cited']) if s['cited'] else 0.0:.2f} | {s['uncited']} | "
@@ -1191,7 +1339,7 @@ def rescore(out: Path, name: str, cache: Path) -> int:
             new.append(r)
             continue
         new.append({**r, "facts": unsupported(r["answer"], r.get("query", ""), turns, r.get("lang")),
-                    "support": support, "checker": CHECKER})
+                    "support": support, **answer_checks(r["answer"]), "checker": CHECKER})
         done += 1
     if done:
         before = path.with_name(f"answers.checker-{CHECKER - 1}.jsonl")

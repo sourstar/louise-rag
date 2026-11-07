@@ -72,6 +72,18 @@ column that is 0 in every other run.
 
 **State.** The new prompt is live (ec21999, in every deploy since
 2026-11-06). qwen3.5-9b-q4 stays Ask's model: put to the operator, with
-"keep" as the default. Open in the checker: an answer that repeats a
-sentence in a loop is not flagged, and the language guess for a
-mixed-language answer is unreliable.
+"keep" as the default. Both gaps in the checker are closed (checker 3,
+2026-11-07; `rescore` reads a run again):
+- **A repeated sentence is a loop.** "looped" also counts a sentence of 8
+  words or more said twice anywhere in the answer, case, markup and
+  citations aside: Welleck et al.'s seq-rep, with the sentence as its unit.
+  A list whose items share a frame differs in a word, and what its items
+  share verbatim (a label, a note) is under 8 words. The back-to-back
+  trigger stays.
+- **The language is guessed per sentence.** Quoted spans and italic or
+  bold titles come out first. The answer's language is the majority by
+  words, and an answer more than a quarter in other languages is counted
+  "mixed" beside the language share (the Code-Mixing Index).
+
+The night-b table above does not move: none of its columns reads the loop
+or the language.
