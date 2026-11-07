@@ -511,3 +511,121 @@ def test_the_time_left_is_read_off_the_wall_not_the_reading(collection, announce
         clock[0] += 3.0                    # a round between windows, no reading
     line = [l for l in capsys.readouterr().out.splitlines() if "window 2 of" in l][0]
     assert "1.5 s a window (0.00 s reading)" in line, line
+
+
+def test_a_pass_waits_for_its_encoder_to_load_behind_the_thread(collection, monkeypatch):
+    """München, 2026-11-07: 21.7 % of wikipedia's pipeline thread waited in
+    its encoder's warm, inside the archive pass's same-function proof
+    (`embed = "off"`: the encoder is unloaded between passes). The load now
+    starts behind the thread: the drain returns at once with nothing
+    imported, the rdf/fts rounds have the thread, one warm is sent; once the
+    model is loaded, the pass imports as before."""
+    import threading
+    import time
+
+    from app import model_load
+    con = db.connect(collection)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
+    loaded: set[str] = set()
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset(loaded))
+    gate = threading.Event()
+    warms: list[tuple[str, bool]] = []
+
+    def warm_request(recipe, pair, level):
+        def warm(bound_s):
+            warms.append((threading.current_thread().name, pair))
+            gate.wait(10)
+            loaded.add(recipe.model)
+        return warm
+    monkeypatch.setattr(embeddings, "_warm_request", warm_request)
+    _make_eligible(con)
+    try:
+        t0 = time.monotonic()
+        for _ in range(3):
+            assert genesis.drain_next_shard(con, collection) is None
+        assert time.monotonic() - t0 < 2
+        assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
+        deadline = time.monotonic() + 5
+        while not warms and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert warms == [("model-load-bge-m3-test", False)]   # one, of the text form, behind
+    finally:
+        gate.set()
+    deadline = time.monotonic() + 5
+    while not loaded and time.monotonic() < deadline:
+        time.sleep(0.01)
+    for _ in range(10):
+        if genesis.drain_next_shard(con, collection) is None:
+            break
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 4
+    assert len(warms) == 1
+
+
+# ---- the shard's read: its vectors in one conversion, the next read behind --
+
+@pytest.mark.parametrize("arrow_type", [
+    pa.list_(pa.float32()), pa.list_(pa.float64()), pa.large_list(pa.float32()),
+    pa.list_(pa.float32(), 4), pa.list_(pa.float16())])
+def test_the_vectors_are_the_bytes_the_per_value_conversion_gave(arrow_type):
+    """`_vectors` replaces `np.asarray(row, float32)` over `to_pylist()` (13.2 %
+    of wikipedia's pipeline thread): the same float32 bytes per row, for every
+    list type a shard may carry, on the sliced batches `to_batches` yields."""
+    rng = np.random.default_rng(7)
+    n = 4 if pa.types.is_fixed_size_list(arrow_type) else None
+    rows = [rng.normal(size=n or int(rng.integers(0, 9))).tolist() for _ in range(3000)]
+    table = pa.table({"embedding": pa.array(rows, type=arrow_type)})
+    offsets = []
+    for batch in table.to_batches(max_chunksize=1024):
+        col = batch.column(0)
+        offsets.append(col.offset)
+        old = [np.asarray(v, dtype=np.float32) for v in col.to_pylist()]
+        new = genesis._vectors(col)
+        assert len(new) == len(old)
+        assert all(a.dtype == b.dtype == np.float32 and a.tobytes() == b.tobytes()
+                   for a, b in zip(old, new))
+    assert offsets[0] == 0 and all(offsets[1:])     # the later batches are slices
+
+
+def test_a_column_with_a_null_takes_the_per_value_path():
+    col = pa.array([[1.0, 2.0], None, [3.0]], type=pa.list_(pa.float32()))
+    got = genesis._vectors(col)
+    want = [np.asarray(v, dtype=np.float32) for v in col.to_pylist()]
+    assert [g.tobytes() for g in got] == [w.tobytes() for w in want]
+
+
+def test_the_read_behind_keeps_its_order_its_bound_and_stops_with_its_reader():
+    import threading
+    import time
+    assert list(genesis._read_behind(iter(range(50)), name="t", depth=2)) == list(range(50))
+
+    def failing():
+        yield 1
+        raise OSError("disk")
+    got = genesis._read_behind(failing(), name="t")
+    assert next(got) == 1
+    with pytest.raises(OSError):
+        next(got)
+
+    never = threading.Event()
+
+    def silent():
+        never.wait(10)
+        yield 1
+    t0 = time.monotonic()
+    with pytest.raises(genesis.GenesisUnavailable):
+        next(genesis._read_behind(silent(), name="t", timeout=0.2))
+    assert time.monotonic() - t0 < 2
+    never.set()
+
+    read: list[int] = []
+
+    def counted():
+        for i in range(1000):
+            read.append(i)
+            yield i
+    reader = genesis._read_behind(counted(), name="genesis-read-t", depth=2)
+    assert [next(reader) for _ in range(3)] == [0, 1, 2]
+    reader.close()                                   # the pass stopped
+    time.sleep(0.3)
+    assert len(read) <= 3 + 2 + 1                    # its depth ahead, no more
+    assert not any(t.name == "genesis-read-t" for t in threading.enumerate())

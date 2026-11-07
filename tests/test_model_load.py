@@ -518,3 +518,77 @@ def test_a_cold_start_is_published_by_another_thread(monkeypatch):
     model_load.ensure_loaded(SERVER, "m", lambda bound: None, caller="test")
     assert done.wait(5)
     assert got == [("m", "model-load-log")], "never by the thread doing the work"
+
+
+# ---- a load BEHIND its caller (model_load.warm_behind) ----------------------
+#
+# München, 2026-11-07: wikipedia's archive pass, on the collection's pipeline
+# thread, waited its encoder's load inside the same-function proof (21.7 % of
+# the thread) while the text stages behind it had work. A caller with other
+# work starts the load behind itself and asks again on its next turn.
+
+def _until(predicate, within: float = 5.0) -> bool:
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_a_load_behind_its_caller_starts_once_and_never_holds_the_caller(monkeypatch):
+    loaded: set[str] = set()
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset(loaded))
+    gate = threading.Event()
+    calls: list[tuple[str, float]] = []
+
+    def warm(bound_s: float):
+        calls.append((threading.current_thread().name, bound_s))
+        gate.wait(10)
+        loaded.add("m")
+    try:
+        t0 = time.monotonic()
+        for _ in range(5):                       # five turns of the caller, the load in flight
+            assert model_load.warm_behind(SERVER, "m", warm, caller="corpus embedding (w)") is False
+        assert time.monotonic() - t0 < 1.0
+        assert _until(lambda: len(calls) == 1)
+        # one load, on a thread of its own, bounded by the model's load bound
+        assert calls == [("model-load-m", model_load.load_timeout_s("m"))]
+    finally:
+        gate.set()
+    assert _until(lambda: model_load.warm_behind(SERVER, "m", warm, caller="c"))
+    assert len(calls) == 1
+    assert [c.outcome for c in model_load.recent()] == ["loaded"]
+
+
+def test_a_load_behind_that_failed_lets_its_caller_go_on(monkeypatch):
+    """A load that ends without the model must not hold the caller back for
+    ever: for BEHIND_GRACE_S the caller goes on (its request then meets its
+    own fate, bounded, as before); after it, the load is tried again."""
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset())
+    calls: list[int] = []
+
+    def warm(bound_s: float):
+        calls.append(1)
+        return httpx.Response(500, text="failed to load model")
+    assert model_load.warm_behind(SERVER, "m", warm, caller="c") is False
+    assert _until(lambda: model_load.warm_behind(SERVER, "m", warm, caller="c"))
+    assert calls == [1] and model_load.recent()[-1].outcome == "failed: HTTP 500"
+    monkeypatch.setattr(model_load, "BEHIND_GRACE_S", 0.0)
+    assert model_load.warm_behind(SERVER, "m", warm, caller="c") is False
+    assert _until(lambda: len(calls) == 2)
+
+
+def test_nothing_is_loaded_behind_a_caller_where_nothing_is_known(monkeypatch):
+    """A runner that cannot say what it holds, a loaded model, no model: the
+    caller goes on at once, and nothing is sent."""
+    calls: list[int] = []
+
+    def warm(bound_s: float):
+        calls.append(1)
+    assert model_load.warm_behind(SERVER, "m", warm, caller="c") is True      # conftest: cannot say
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset({"m"}))
+    model_load.reset()
+    assert model_load.warm_behind(SERVER, "m", warm, caller="c") is True
+    assert model_load.warm_behind(SERVER, None, warm, caller="c") is True
+    assert calls == []
