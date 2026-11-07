@@ -105,9 +105,8 @@ NODE_SHARDS = Path("/mnt/tank/apps/louise-shard")
 NODE_CONTAINER_SHARDS = "/shards"
 #: Where a Codex's backend engine is kept (09 §9.3): beside the platform images
 #: on tank, `louise-platform-images/backends/<tree hex>.tar.zst` (v5-migration.md
-#: G6, 2026-10-10). The dataset's host path is in deploy/reference/DEPLOYMENT.md,
-#: which the repository does not hold: check it, or pass --archive.
-NODE_ARCHIVE = Path("/mnt/tank/louise-platform-images/backends")
+#: G6, 2026-10-10), confirmed on the node by München, 2026-11-07.
+NODE_ARCHIVE = Path("/mnt/tank/apps/louise-platform-images/backends")
 CODEX_FILE = "codex.json"                           # app/hold/collection.py
 ROOT = Path(__file__).resolve().parents[2]
 #: The one wrapper of every llama.cpp model on the card (approved-encoders.md,

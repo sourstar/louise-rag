@@ -62,9 +62,9 @@ A swap (a new engine or wrapper in place of an old one) ends like this:
    - everything, if /proc or any Codex cannot be read.
 
    A twin (the CPU engine a `-cpu` wrapper names) is kept, because something
-   names it. The archive directory's default,
-   `/mnt/tank/louise-platform-images/backends`, is not confirmed: the
-   dataset's host path is in deploy/reference/DEPLOYMENT.md.
+   names it. The archive directory's default is
+   `/mnt/tank/apps/louise-platform-images/backends` (confirmed on the node,
+   2026-11-07).
 5. That output is the record. It goes into the swap's note, or into
    scheduling-log.md.
 
