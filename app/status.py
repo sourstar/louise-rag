@@ -401,7 +401,9 @@ def bounded(con, *, cap: int = WAITING_CAP, exact_below: int = ERRORED_EXACT_BEL
             continue
         st = StageStatus(name, exact=False)
         waiting = n
-        if 0 < n <= exact_below:
+        # n is capped at cap + 1: past the cap it says only "more", so the
+        # errored are not looked up (an uncapped count) and it stays "over"
+        if 0 < n <= min(exact_below, cap):
             try:
                 st.errored = _count(con, f"{where} AND error IS NOT NULL")
                 waiting -= st.errored
@@ -432,6 +434,24 @@ def bounded(con, *, cap: int = WAITING_CAP, exact_below: int = ERRORED_EXACT_BEL
         stored = read_stored(con)
     if stored:
         counts, at, _ = stored
+        # OVER THE CAP, the stored full count: the live count only knows
+        # "more than WAITING_CAP", the card shows the scan's exact number,
+        # and node show printed the cap beside it (München, 2026-11-07:
+        # wikidata's embed "1000000, over" against the card's 41,455,026).
+        # Taken only when it agrees with the live count — a stored number
+        # under the cap is older than what the index just counted, and
+        # the cap ("over") is then the truer answer.
+        for name, st in out.items():
+            if not (isinstance(st, StageStatus) and st.over):
+                continue
+            w = counts.get(f"waiting_{name}")
+            if w is None or int(w) <= cap:
+                continue
+            st.waiting, st.over = int(w), False
+            st.from_scan["waiting"] = at
+            if f"errored_{name}" in counts:
+                st.errored = int(counts[f"errored_{name}"])
+                st.from_scan["errored"] = at
         for name in ("fts", "embed"):
             st = out.get(name)
             if isinstance(st, StageStatus) and st.superseded is None and f"superseded_{name}" in counts:

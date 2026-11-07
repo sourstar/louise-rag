@@ -331,6 +331,33 @@ def test_superseded_over_the_bound_comes_from_the_stored_scan_and_says_when(node
     assert live["embed"].superseded == SUPERSEDED["embed"] and "superseded" not in live["embed"].from_scan
 
 
+def test_over_the_cap_node_show_says_the_cards_number_and_when(node, monkeypatch):
+    """München, 2026-11-07: wikidata's embed read "1000000, over" in `node
+    show` against the card's 41,455,026. Over the cap, the waiting count is
+    the stored full count the card shows, with its time; a stored count
+    under the cap is older than the live one and the cap stands."""
+    from app import status
+    _counted(node)
+    con = db.connect(node)
+    got = status.bounded(con, cap=3)
+    assert got["rdf"].waiting == WAITING["rdf"] and not got["rdf"].over
+    assert got["rdf"].errored == ERRORED["rdf"]
+    assert "waiting" in got["rdf"].from_scan and "errored" in got["rdf"].from_scan
+    assert "waiting" not in got["embed"].from_scan, "2 under a cap of 3: counted live"
+    monkeypatch.setattr(health, "WAITING_CAP", 3)
+    shown = _node_show()
+    shelf, _ = _card(node, "running")
+    assert shown["rdf"]["waiting"] == WAITING["rdf"] == shelf["status"]["rdf"]["waiting"]
+    assert "over" not in shown["rdf"] and shown["rdf"]["counted_at"] > 0
+    reports, _ = health.check([node], mode="running")
+    (rdf,) = [s for s in reports[0].stages if s.name == "rdf"]
+    assert "full count" in rdf.line() and "over" not in rdf.line()
+    # a stored count UNDER the cap is stale against the live count: the cap stays
+    counts, at, scan_s = status.read_stored(con)
+    stale = status.bounded(con, cap=3, stored=({**counts, "waiting_rdf": 2}, at, scan_s))
+    assert stale["rdf"].over and stale["rdf"].waiting == 3 and "waiting" not in stale["rdf"].from_scan
+
+
 def test_the_superseded_predicate_is_what_the_writers_leave(node):
     """`<stage>_version` is written only with its mark; a mark cleared keeps
     it (discovery's re-parse, a reset). A withdrawn document — vectors and
