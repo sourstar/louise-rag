@@ -703,6 +703,16 @@ def _staging_target(collection, f: RemoteFile, dest: Path) -> Path:
     return target
 
 
+def _verified(land: Path, dest: Path, spec: AcquisitionSpec) -> str:
+    """The landed file's digest, its origin sidecar checked. A file landed
+    in the STAGING area is checked against the sidecar at its corpus
+    destination, where the sidecar's own fetch promoted it: looked up beside
+    the staged copy it was never there, and a corrupt file passed."""
+    if land == dest:
+        return checksum.digest_and_verify(land, spec.checksums)
+    return checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
+
+
 def _promote(land: Path, dest: Path) -> None:
     """Move a verified file from the staging area into the corpus — one
     sequential copy across volumes, then the staging copy is gone."""
@@ -870,7 +880,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                 size = transport.fetch_segments(endpoint, f, land, segments)
                 elapsed = time.monotonic() - started
                 manager.record_throughput(endpoint_key, size, elapsed)
-                digest = checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
+                digest = _verified(land, dest, spec)
                 if land != dest:
                     _promote(land, dest)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
@@ -910,7 +920,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                         raise
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
-        digest = checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
+        digest = _verified(land, dest, spec)
         if land != dest:
             _promote(land, dest)
         elapsed = time.monotonic() - started

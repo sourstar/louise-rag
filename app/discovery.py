@@ -204,6 +204,8 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
                         withdraw=withdraw):
             applied += len(batch)
             _signal_committed(state, applied)
+        else:
+            interrupted = True          # not committed: the next scan re-enumerates it
     if not interrupted and (counts["added"] or counts["changed"]
                             or counts["relocated"] or counts["missing"]):
         # a pure stat pass changed nothing in_scope could depend on; scope
@@ -251,6 +253,18 @@ def _superseded(order, ref, row) -> bool:
         return False
     here, held = order(ref.locator), order(row["path"])
     return here is not None and held is not None and here < held
+
+
+def _other_unit(order, ref, row) -> bool:
+    """The ref names ANOTHER origin unit than the row (a PubMed record in a
+    later update file), which is a content question whatever the two
+    containers' (mtime, size) — equal by chance, they read as a relocation
+    and the revision was never hashed. A moved corpus keeps every unit's
+    place, so it is not this."""
+    if order is None or row is None or not row["path"]:
+        return False
+    here, held = order(ref.locator), order(row["path"])
+    return here is not None and held is not None and here != held
 
 
 def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
@@ -371,7 +385,8 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
                 "mtime=?,size=?,txt_hash=NULL,updated_at=? WHERE uid=?",
                 (ref.locator, txt_name, lang, ref.mtime, ref.size, now, uid)))
             local["resigned"] += 1
-        elif row["mtime"] != ref.mtime or row["size"] != ref.size:
+        elif (row["mtime"] != ref.mtime or row["size"] != ref.size
+              or _other_unit(order, ref, row)):
             raw = plugin.fetch(ref)                 # no lock held here
             if raw.raw_hash != row["txt_hash"]:
                 writes.append((

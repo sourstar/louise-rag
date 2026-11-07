@@ -592,7 +592,8 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         existing = None
     delta = (existing.delta if existing is not None else
              _first_delta(shard_dir, shards) if previous is None else
-             _later_delta(shard_dir, previous, shards, name=name, snapshot_id=snapshot_id))
+             _later_delta(shard_dir, previous, shards, name=name, snapshot_id=snapshot_id,
+                          reasons=build_tombstone_reasons(db_path)))
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,
         previous=previous.hash if previous else None,
@@ -765,8 +766,30 @@ def _previous(shard_dir, snapshot_id: str) -> "Snapshot | None":
     return load(d / f"{ids[-1]}.json")
 
 
+def build_tombstone_reasons(db_path) -> dict[str, str]:
+    """uid -> 09 §9.4 tombstone reason, for the documents the build found
+    the origin RETRACTED (app/pack/build.py records them in its `skipped`
+    table: 06 §6.1's deletion signal as the manifest holds it). A uid gone
+    from the parts and not named here was merely not supplied: `withdrawn`."""
+    import sqlite3
+    from pathlib import Path
+    from app.pack.build import TOMBSTONE_PREFIX
+    if not Path(db_path).is_file():
+        return {}
+    con = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)   # a read
+    try:
+        rows = con.execute("SELECT uid, reason FROM skipped WHERE reason LIKE ?",
+                           (TOMBSTONE_PREFIX + "%",)).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    out = {uid: reason[len(TOMBSTONE_PREFIX):] for uid, reason in rows}
+    return {uid: why for uid, why in out.items() if why in REASONS}
+
+
 def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
-                 snapshot_id: str) -> Delta:
+                 snapshot_id: str, reasons: dict[str, str] | None = None) -> Delta:
     """A later snapshot's delta: `compute_delta` over the previous
     snapshot's records and this one's — computed from the parts whose bytes
     changed alone, each side as an Arrow table, by Arrow's hash join.
@@ -844,7 +867,7 @@ def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
             raise CodexError(f"{name}: {c.path}: its records_root is not the build's "
                              f"({c.records_root[:16]}…)")
         new.append(got)
-    return _join_delta(old, new, name=name)
+    return _join_delta(old, new, name=name, reasons=reasons)
 
 
 def _first_pairs(paths: list[str], records_root: str):
@@ -871,7 +894,7 @@ def _pairs(path, records_root: str):
                      "h": pa.array([bytes.fromhex(h) for h in hashes], pa.binary(16))})
 
 
-def _join_delta(old: list, new: list, *, name: str) -> Delta:
+def _join_delta(old: list, new: list, *, name: str, reasons: dict[str, str] | None = None) -> Delta:
     """`compute_delta` over two Arrow sides: a full outer hash join on the
     uid (Arrow's Acero join — the named, proven algorithm, no Python object
     per record until the lists of what changed are made)."""
@@ -892,7 +915,7 @@ def _join_delta(old: list, new: list, *, name: str) -> Delta:
     changed = both.filter(pc.not_equal(both["old"], both["new"]))["uid"].to_pylist()
     del j, both
     return Delta(tuple(sorted(added)), tuple(sorted(changed)),
-                 tuple(Tombstone(u, "withdrawn") for u in sorted(gone)))
+                 tuple(Tombstone(u, (reasons or {}).get(u, "withdrawn")) for u in sorted(gone)))
 
 
 def drop_replaced(shard_dir, previous: "Snapshot | None", current: "Snapshot") -> int:

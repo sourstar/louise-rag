@@ -51,6 +51,10 @@ PLAN_WINDOW_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FR
 #: the in-memory record's key for its parse's issues (app/issues.py) — not a
 #: 09 §9.5 key, so no line could carry it even if it were left on
 ISSUES_KEY = "_issues"
+#: a `skipped` row's reason for a document the origin retracted, followed by
+#: 09 §9.4's tombstone reason (`hold snapshot create` reads it back:
+#: app/hold/snapshot.py `build_tombstone_reasons`)
+TOMBSTONE_PREFIX = "tombstone: "
 
 
 class BuildError(RuntimeError):
@@ -151,7 +155,17 @@ def _plan_rows(page, plugin, origin: str, scheme, context) -> tuple[list, list]:
     """A page of manifest rows planned: `(uid, slice, ord)` for each, and
     `(uid, reason)` for each that could not be (recorded, never fatal)."""
     rows, skipped = [], []
+    reason_of = getattr(plugin, "tombstone_reason", None)
     for row in page:
+        if row["error"] is not None and reason_of is not None:
+            # 06 §6.1's deletion signal, as the manifest holds it: the origin
+            # RETRACTED this document. Recorded so that `hold snapshot create`
+            # writes the tombstone with the origin's reason (09 §9.4,
+            # `retracted`), never the `withdrawn` it gives a record that is
+            # merely gone
+            why = reason_of(row["error"])
+            if why is not None:
+                skipped.append((row["uid"], f"{TOMBSTONE_PREFIX}{why}"))
         if not row["in_scope"] or row["error"] is not None:
             continue
         slice_name = slicing.slice_hint(origin, row, context)

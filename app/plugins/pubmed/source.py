@@ -259,6 +259,13 @@ class PubmedSource:
     #: answered this is the platform's default, written out.
     origin_versions = "history"
 
+    @staticmethod
+    def tombstone_reason(error: str | None) -> str | None:
+        """09 §9.4's tombstone reason for a manifest row carrying `error`:
+        `retracted` for a DeleteCitation, None for any other error (a
+        document that is merely broken is not tombstoned for it)."""
+        return DELETE_REASON if error == DELETE_MARKER else None
+
     def origin_order(self, locator: str) -> tuple[int, int, int] | None:
         """A locator's place in the origin's sequence: (baseline year, file
         number, member index) — what app/discovery.py compares, so that a
