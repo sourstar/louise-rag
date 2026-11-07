@@ -38,7 +38,8 @@ import httpx
 from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
                discovery, embed_select, layers as layers_mod, parallel, embeddings,
                encoder_timeouts, entities,
-               fts, issues as issues_mod, model_load, model_pins, origin_missing, node_state,
+               fts, issues as issues_mod, lookahead, model_load, model_pins, origin_missing,
+               node_state,
                plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
 from .rage import card_record, dispatch
 from .rage.dispatch import Level
@@ -331,8 +332,10 @@ def stage_rdf(con, row, collection) -> None:
                f"extracted {n} documents in one transaction ({took:.1f}s)",
                docs=n, secs=took, emit=n > 1)
 
+# Every peer query carries the row's ROWID (`rid`): the marks find each row
+# by it (`_MARK_INDEXED`), never by a descent of the uid index.
 _FTS_BATCH_PEERS = (
-    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
+    "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
     "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
     "AND uid<>? LIMIT ?")
 
@@ -343,10 +346,10 @@ _FTS_BATCH_PEERS = (
 # an index prefix (0.4 ms); re-index peers stay inside the window the
 # selection is walking (_next_reindex).
 _FTS_FRESH_PEERS = (
-    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 "
+    "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 "
     "AND error IS NULL AND retries<? AND uid<>? LIMIT ?")
 _FTS_REINDEX_PEERS = (
-    "SELECT * FROM documents WHERE rowid>? AND rowid<=? "
+    "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
     "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
     "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) "
     "AND uid<>? LIMIT ?")
@@ -438,12 +441,184 @@ def _prefetch_ahead(con, collection, stage: str, row) -> None:
         pass
 
 
-def _mark_indexed(con, row, chunks, now: int) -> None:
-    con.execute(
-        "UPDATE documents SET fts_done=1,fts_version=?,entity_version=?,chunks=?,tokens=?,"
-        "updated_at=? WHERE uid=?",
-        (config.FTS_VERSION, config.ENTITY_VERSION, len(chunks),
-         sum(c["tokens"] for c in chunks), now, row["uid"]))
+#: THE MARK, by the row's integer key. Its columns and values are what the
+#: stage always wrote; what changed (2026-11-07) is how the row is found. By
+#: `uid=?` every mark first descended the uid index
+#: (sqlite_autoindex_documents_1) to learn the rowid the selection had
+#: already read: 21.4 page fetches a mark against 17.5 by rowid, measured on
+#: a 4 M-row synthetic manifest (scheduling-log.md, 2026-11-07). `+uid=?` is
+#: checked on the row the rowid found — the unary plus keeps the uid index out
+#: of the plan (scheduling.md §5, 20) — so a rowid that no longer holds that
+#: document marks nothing, and the document is indexed again (invariant 2).
+#: Rowids are stable (nothing VACUUMs a manifest, invariant 6); a deleted
+#: row's id can still be reused, which is what the uid check is for.
+_MARK_INDEXED = (
+    "UPDATE documents SET fts_done=1,fts_version=?,entity_version=?,chunks=?,tokens=?,"
+    "updated_at=? WHERE rowid=? AND +uid=?")
+
+
+def _mark_indexed_many(con, marks, now: int) -> None:
+    """The batch's marks in ONE statement, in rowid order. `marks`: one
+    (rid, uid, chunks, tokens) per document, every one of them already
+    committed to the text index (invariant 2: index, commit, THEN mark).
+
+    executemany, not a loop of executes: one statement prepared once and
+    stepped per row (pysqlite's own batching), and the B-tree walked forward
+    — the table, and idx_documents_scope, whose entry moves with fts_done.
+    The SELECTIONS already return their rows in rowid order (the scope
+    index's tail); the sort makes it a property instead of a coincidence."""
+    con.executemany(_MARK_INDEXED, sorted(
+        ((config.FTS_VERSION, config.ENTITY_VERSION, n_chunks, n_tokens, now, int(rid), uid)
+         for rid, uid, n_chunks, n_tokens in marks),
+        key=lambda m: m[-2]))
+
+
+def _with_rid(con, row) -> dict:
+    """`row` as a dict carrying its rowid (`rid`): the peer queries select it;
+    the round's own row (`_FTS_FRESH`, `_next_reindex`) is looked up once. A
+    row gone meanwhile has None, and is then not marked (it is not there)."""
+    out = dict(row)
+    if out.get("rid") is None:
+        got = con.execute("SELECT rowid FROM documents WHERE uid=?", (out["uid"],)).fetchone()
+        out["rid"] = int(got[0]) if got is not None else None
+    return out
+
+
+# ---- the text-index stage's LOOK-AHEAD (app/lookahead.py) ------------------
+#
+# MEASURED FIRST (München, 2026-11-07, wikipedia fts at ~503 documents a
+# second): the pipeline thread spent 52.4 % of its time waiting on the parse
+# pool and 44.6 % writing the batch's marks and tags, one after the other, so
+# the children idled while it wrote. The next batch is now handed to the pool
+# BEFORE this batch's index commit and marks, and taken on the next round.
+#
+# WHICH ROWS. The next batch is what the next round's selection would take,
+# so it starts at the lowest pending row — the row `_FTS_FRESH` returns:
+#   1. what THIS batch's selection leaves unwritten: the peers past the chunk
+#      cap, their parse CARRIED (it used to be thrown away and done again —
+#      wikipedia's batches stop at the cap, a median 20,002 chunks), and the
+#      peers that failed, parsed again (as their own turn always did);
+#   2. then the pending rows after the selection's last rowid, walked by the
+#      scope index from that rowid (`_FTS_NEXT`): the rows of this batch,
+#      still unmarked, are behind the cursor, so nothing is taken twice.
+# Fresh batches only, and only while the pending set has no embedded row (the
+# index orders those last); anything else is selected afresh, as before.
+#
+# TAKEN ONLY WHEN IT IS STILL TRUE. The next round takes it only if its own
+# selected row is the one the look-ahead starts at; and every row is read
+# again by rowid before it is written (`_FTS_RECHECK`): a row that changed
+# meanwhile (a rescan, an imported bundle) is not written from the old parse —
+# it is parsed again in the batch after, from its new state, or left alone
+# when it is no longer pending. Anything else abandons the look-ahead and the
+# stage selects and parses as it always did.
+_FTS_NEXT = (
+    "SELECT rowid AS rid, * FROM documents "
+    "WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 AND embed_done=0 AND rowid>? "
+    "AND error IS NULL AND retries<? ORDER BY rowid LIMIT ?")
+#: a look-ahead's rows read again, by rowid, in parts of this many (the `IN`
+#: size `_RESIDUAL_SQL` sends too; plan-checked at it)
+_FTS_RECHECK = "SELECT rowid AS rid, * FROM documents WHERE rowid IN ({marks})"
+_FTS_RECHECK_PART = 500
+#: the look-ahead of each manifest, keyed on its path (pitfall 12)
+_fts_ahead = lookahead.Held()
+#: set on a PIPELINE thread: the one thread that comes back for a look-ahead.
+#: Elsewhere (a deposit's stage call, a tool, the main loop's rollback) the
+#: stage parses and writes one batch at a time, as before.
+_ahead_here = threading.local()
+#: the result a row gets in a look-ahead whose row changed after its parse:
+#: skipped like a failed peer, and parsed again from its new state
+_CHANGED = (False, {"type": "Changed", "msg": "the row changed after its parse"})
+
+
+def _fts_overlap() -> bool:
+    """Whether this stage call leaves the next batch parsing behind it: on a
+    pipeline thread, with a parse pool and no node-profile limit below it
+    (`parallel.prefetch_allowed`: a second batch in flight beside the one
+    being cut would hold twice the profile's parts), and only while the node
+    runs parsing — never after a stop, and never under a mode that holds
+    parsing (pitfall 16: what stops for SIGTERM stops for the mode)."""
+    return (bool(config.FTS_OVERLAP) and getattr(_ahead_here, "on", False)
+            and not _stop.is_set() and not _parse_held.is_set()
+            and parallel.prefetch_allowed())
+
+
+def _fts_pending(r) -> bool:
+    """Still a fresh text-index candidate, in the look-ahead's order."""
+    return (r["in_scope"] == 1 and r["rdf_done"] == 1 and r["fts_done"] == 0
+            and not r["embed_done"] and r["error"] is None
+            and int(r["retries"] or 0) < config.MAX_RETRIES)
+
+
+def _fts_recheck(con, rids: list[int]) -> dict[int, dict]:
+    out: dict[int, dict] = {}
+    for start in range(0, len(rids), _FTS_RECHECK_PART):
+        part = rids[start:start + _FTS_RECHECK_PART]
+        for r in con.execute(_FTS_RECHECK.format(marks=",".join("?" * len(part))), part):
+            out[int(r["rid"])] = dict(r)
+    return out
+
+
+def _fts_take_ahead(con, row, collection) -> list | None:
+    """The look-ahead's rows with their results, `row` first — when this
+    round's selected row is the one it starts at and is unchanged; None
+    otherwise, and then the stage selects and parses as it always did."""
+    ahead = _fts_ahead.take(str(collection.manifest_path))
+    if ahead is None:
+        return None
+    if row["fts_done"] or not ahead.rows or ahead.rows[0]["uid"] != row["uid"]:
+        ahead.abandon()
+        return None
+    # BOUNDED (§3 rule 2): the parse is `parallel.compute`, whose own watchdog
+    # and in-process fall-back run inside it; a batch not answered by then is
+    # abandoned and parsed here, as a batch always was
+    results = ahead.results(timeout=config.PARSE_TIMEOUT_S)
+    if results is None:
+        return None
+    current = _fts_recheck(con, [int(r["rid"]) for r in ahead.rows])
+    out = []
+    for r, res in zip(ahead.rows, results):
+        now = current.get(int(r["rid"]))
+        if now == r:
+            out.append((r, res))
+        elif now is not None and now["uid"] == r["uid"] and _fts_pending(now):
+            out.append((now, _CHANGED))
+    if not out or out[0][0]["uid"] != row["uid"] or out[0][1] is _CHANGED:
+        return None                         # the selected row itself changed: parse it now
+    return out
+
+
+def _fts_start_ahead(con, collection, computed: list, written: set, want: int,
+                     names: bool) -> None:
+    """Leave the next batch parsing (see above). `computed`: this batch's
+    selection with its results, in order; `written`: the uids it writes."""
+    key = str(collection.manifest_path)
+    if not _fts_overlap():
+        _fts_ahead.drop(key)
+        return
+    if any(r["rid"] is None or r["embed_done"] for r, _ in computed):
+        return
+    left = [(r, res) for r, res in computed if r["uid"] not in written]
+    fresh = []
+    if len(left) < want:
+        anchor = max(int(r["rid"]) for r, _ in computed)
+        fresh = [dict(r) for r in con.execute(
+            _FTS_NEXT, (anchor, config.MAX_RETRIES, want - len(left)))]
+    rows = sorted([r for r, _ in left] + fresh, key=lambda r: int(r["rid"]))
+    if not rows:
+        return
+    carried = {r["uid"]: res for r, res in left if res[0]}
+    _fts_ahead.put(key, lookahead.Ahead(
+        rows, [carried.get(r["uid"]) for r in rows],
+        lambda todo: parallel.fts_for_rows(collection, todo, names=names),
+        name=f"fts-ahead-{collection.name}"))
+
+
+def drop_fts_ahead(collection=None) -> None:
+    """The look-ahead let go of: a pipeline thread's exit, and tests."""
+    if collection is None:
+        _fts_ahead.reset()
+    else:
+        _fts_ahead.drop(str(collection.manifest_path))
 
 
 def stage_fts(con, row, collection) -> None:
@@ -464,6 +639,14 @@ def stage_fts(con, row, collection) -> None:
     Only `row` may fail the round. A peer that cannot load its chunks, or
     cannot be entity-tagged, is dropped rather than blamed on `row`: it keeps
     its pending state and records its own error when its own turn comes.
+
+    THE NEXT BATCH PARSES WHILE THIS ONE IS WRITTEN (on a pipeline thread
+    with a pool: the look-ahead above). It is handed to the pool once this
+    batch's parse is in hand and before its index commit, and taken on the
+    next round. The ORDER above holds per batch: this batch's marks name only
+    this batch's documents, written after this batch's commit; the next
+    batch has written nothing at all until its own turn, so a stop or a crash
+    in between loses only a parse.
     """
     # LOADS AND THE TANTIVY COMMIT RUN OUTSIDE ANY SQLITE TRANSACTION
     # (CLAUDE.md: long non-DB work stays outside the transaction). Chunking
@@ -475,21 +658,25 @@ def stage_fts(con, row, collection) -> None:
     # marks are SQLite writes, so the transaction opens just before them
     # (see the BEGIN IMMEDIATE below; _execute_step commits it).
     t0 = time.monotonic()
-    peers = []
     want = batch_docs(collection, "fts", config.FTS_BATCH_DOCS)
-    if want > 1:
-        peers = _fts_peers(con, collection, row, want - 1)
     _prefetch_ahead(con, collection, "fts", row)
-    # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
-    # one (ok, chunks) per row, in order; the selected row's failure IS the
-    # round's, a peer's failure drops the peer
     # a collection whose records are also found by NAME (wikidata, operator
     # 2026-10-24): the same parse gives each record's names (fts.search_names)
     with_names = fts.names_capable(collection)
     # the children read refs.db to tag each document (refs.read_store): its
     # schema is made here, by the worker, before they open it
     refs.get_store()
-    results = parallel.fts_for_rows(collection, [row, *peers], names=with_names)
+    # (row, (ok, value)) per document, in order, `row` first: parsed while the
+    # batch before was written, or here
+    computed = _fts_take_ahead(con, row, collection)
+    ahead = computed is not None
+    if computed is None:
+        peers = _fts_peers(con, collection, row, want - 1) if want > 1 else []
+        rows = [_with_rid(con, row), *(dict(p) for p in peers)]
+        # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
+        # one (ok, chunks) per row, in order; the selected row's failure IS the
+        # round's, a peer's failure drops the peer
+        computed = list(zip(rows, parallel.fts_for_rows(collection, rows, names=with_names)))
     names_of: dict[str, tuple | None] = {}
     entities_of: dict[str, list[str]] = {}
 
@@ -497,13 +684,13 @@ def stage_fts(con, row, collection) -> None:
         names_of[r["uid"]] = value.get("names")
         entities_of[r["uid"]] = value["entities"]
         return value["chunks"]
-    ok, first = results[0]
+    first_row, (ok, first) = computed[0]
     if not ok:
         parallel.raise_for(first)
-    chunks = _unpack(row, first)
-    batch = [(row, chunks)]
+    chunks = _unpack(first_row, first)
+    batch = [(first_row, chunks)]
     n_chunks = len(chunks)
-    for peer, (ok, peer_value) in zip(peers, results[1:]):
+    for peer, (ok, peer_value) in computed[1:]:
         if n_chunks >= config.FTS_BATCH_CHUNKS:
             break
         if not ok:
@@ -511,6 +698,12 @@ def stage_fts(con, row, collection) -> None:
         peer_chunks = _unpack(peer, peer_value)
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
+    # THE NEXT BATCH TO THE POOL NOW, before this one's index commit and
+    # marks: the children parse it while this thread writes (a SQLite read
+    # here, outside any transaction; nothing of it is written this round)
+    if not row["fts_done"]:
+        _fts_start_ahead(con, collection, computed, {r["uid"] for r, _ in batch}, want,
+                         with_names)
 
     # the validity columns of a versioned collection (app/validity.py), read
     # before the lock like every other load; `{}` for every other collection
@@ -529,14 +722,25 @@ def stage_fts(con, row, collection) -> None:
     now = int(time.time())
     # the selected document first and unguarded: its failure IS the round's.
     # Its tags were computed by the child that cut it (parallel kind `fts`).
-    entities.write_tags(con, row["uid"], entities_of[row["uid"]])
-    _mark_indexed(con, row, chunks, now)
+    marks = [(first_row["rid"], first_row["uid"], len(chunks), sum(c["tokens"] for c in chunks))]
+    tags = {first_row["uid"]: entities_of[first_row["uid"]]}
     for peer, peer_chunks in batch[1:]:
         try:
-            entities.write_tags(con, peer["uid"], entities_of[peer["uid"]])
-            _mark_indexed(con, peer, peer_chunks, now)
+            mark = (peer["rid"], peer["uid"], len(peer_chunks),
+                    sum(c["tokens"] for c in peer_chunks))
+            tag = entities_of[peer["uid"]]
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
+        marks.append(mark)
+        tags[peer["uid"]] = tag
+    # ONE statement each for the batch (measured: scheduling-log.md,
+    # 2026-11-07). Neither can fail for one row and not the others: no column
+    # written is in a unique index or carries a check, and the tags are a set
+    # per distinct uid — what can fail is the connection, and that fails the
+    # selected row's own write as it always did. The marks first: the batch's
+    # table and scope-index pages are still in the cache from its selection.
+    _mark_indexed_many(con, [m for m in marks if m[0] is not None], now)
+    entities.write_tags_many(con, tags)
     # these documents are embed candidates once the marks commit: a LOCAL
     # archive's demand learns them here instead of re-walking the manifest
     # (genesis._candidate_shards; "Demand is announced, not polled")
@@ -559,8 +763,12 @@ def stage_fts(con, row, collection) -> None:
                      f"their published vectors are imported rather than recomputed")
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
+    # "parsed ahead": this batch was parsed while the one before it was
+    # written (the look-ahead) — the line says which, for the log read as a
+    # time series (tools/sched_measure.sh reads only the counts before it)
     _batch_log(con, "fts", collection,
-               f"indexed {len(batch)} documents / {n_chunks} chunks in one commit ({took:.1f}s)",
+               f"indexed {len(batch)} documents / {n_chunks} chunks in one commit ({took:.1f}s"
+               + (", parsed ahead)" if ahead else ")"),
                docs=len(batch), chunks=n_chunks, secs=took, emit=len(batch) > 1)
 
 #: how long a collection's embed stage stays idle before its encoder's pin
@@ -4112,6 +4320,8 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
     # (operator, 2026-09-19; docs/notes/scheduling.md §12) — only with
     # producers: in the rollback this thread may embed
     _background_priority()
+    # this thread comes back for its text-index look-ahead (stage_fts)
+    _ahead_here.on = True
     con = db.connect(collection)
     db.log_event(con, "info", "worker",
                  f"pipeline thread started for {collection.name!r}")
@@ -4233,6 +4443,9 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
         db.log_event(con, "info", "worker",
                      f"pipeline thread stopped for {collection.name!r}")
     finally:
+        # a batch parsed ahead and not written: nothing of it was, so it is
+        # only let go of (its parse finishes or is stopped with the pool)
+        drop_fts_ahead(collection)
         con.close()
 
 
