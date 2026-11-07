@@ -34,3 +34,39 @@ def withdraw(con, collection, uid: str) -> dict[str, Any]:
         embeddings.delete_book(book, collection, lock_con=con)
     catalog.delete_rows(collection, [row["rowid"]])
     return {"uid": uid, "withdrawn": True, "book_id": book}
+
+
+def withdraw_many(con, collection, uids) -> int:
+    """`withdraw` for many documents, one commit per index rather than one
+    per document (the commit is what costs: fts.delete_books) — what the
+    origin RETRACTED in one discovery batch (06 §6.1's deletion signal,
+    app/discovery.py): a day of PubMed's update files can delete hundreds.
+    Same rule as `withdraw`: a failure to write an index raises, and the
+    caller defers. Returns how many documents were found."""
+    from app import catalog, embeddings, fts
+    uids = sorted(set(uids))
+    rows = []
+    for i in range(0, len(uids), 900):
+        part = uids[i:i + 900]
+        rows += con.execute("SELECT rowid, native_id, lang FROM documents WHERE uid IN "
+                            f"({','.join('?' * len(part))})", part).fetchall()
+    by_group: dict[str, list[int]] = {}
+    books: list[int] = []
+    for row in rows:
+        try:
+            book = int(row["native_id"])
+        except (TypeError, ValueError):
+            continue
+        books.append(book)
+        lang = row["lang"] or "und"
+        if lang == fts.MULTILINGUAL:
+            fts.delete_book(lang, book, collection)      # its sections may sit in several groups
+        else:
+            by_group.setdefault(fts.group_for(lang), []).append(book)
+    for group, ids in sorted(by_group.items()):
+        fts.delete_books(group, ids, collection)
+    if books:
+        embeddings.delete_books(books, collection, lock_con=con)
+    if rows:
+        catalog.delete_rows(collection, [r["rowid"] for r in rows])
+    return len(rows)

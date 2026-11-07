@@ -96,8 +96,13 @@ class FtpTransport:
                     f.flush()
                     os.fsync(f.fileno())
                     budget.acquire_bytes(len(chunk))
+                # `remote` when the file is requested by another name than
+                # its corpus path — an update file lands under `updatefiles/`
+                # and is RETR'd by its name in that directory (09 §9.17
+                # `updatefiles-dir`), as transport_https._url already reads it
+                name = remote.remote or remote.rel_path
                 try:
-                    ftp.retrbinary(f"RETR {remote.rel_path}", _write,
+                    ftp.retrbinary(f"RETR {name}", _write,
                                    rest=resume_from or None)
                 except ftplib.error_perm as e:
                     # "554 invalid REST argument": the server rejects our
@@ -110,7 +115,7 @@ class FtpTransport:
                         f.seek(0)
                         f.truncate()
                         resume_from = 0
-                        ftp.retrbinary(f"RETR {remote.rel_path}", _write)
+                        ftp.retrbinary(f"RETR {name}", _write)
                     else:
                         raise
             clean_exit = True

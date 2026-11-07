@@ -403,7 +403,8 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
         src = row[HELD_SRC] if HELD_SRC in row else _ro(str(collection.manifest_path)).execute(
             "SELECT uid, native_id, path, lang, txt_hash FROM documents WHERE uid=?",
             (row["uid"],)).fetchone()
-        if src is None or not src["txt_hash"] or src["txt_hash"] == line.get("origin_hash"):
+        if (src is None or not src["txt_hash"] or src["txt_hash"] == line.get("origin_hash")) \
+                and not _origin_moved(collection, plugin, src, line):
             return _record_from_line(collection, line)
     if src is None:
         src = row[HELD_SRC] if HELD_SRC in row else _ro(str(collection.manifest_path)).execute(
@@ -411,6 +412,22 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
     if src is None:
         raise LookupError(f"{row['uid']}: neither held nor in the manifest")
     return _record_of(collection, plugin, {k: src[k] for k in ("uid", "native_id", "path", "lang")})
+
+
+def _origin_moved(collection, plugin, src, line: dict) -> bool:
+    """The row locates its record in ANOTHER origin unit than the held line
+    names — the same bytes, sent again in a later PubMed update file
+    (docs/notes/pubmed-updatefiles.md §4): a build by the book writes the
+    row's `origin`, so the line is parsed again rather than taken with the
+    old one. A row with no locator, or one the base does not reach, proves
+    nothing and the line is taken, as before."""
+    if src is None or not src["path"] or not line.get("origin"):
+        return False
+    try:
+        here = plugin_io.origin_locator(plugin, src["path"], collection.corpus_dir)
+    except (plugin_io.OriginOutsideBase, ValueError, OSError):
+        return False
+    return here != line["origin"]
 
 
 def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:

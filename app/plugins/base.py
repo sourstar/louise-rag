@@ -148,6 +148,14 @@ class DocRef:
     error: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     scope: Literal["document", "container"] = "document"
+    #: 06 §6.1's DELETION SIGNAL (09 §9.17 `deleted`): the origin retracted
+    #: this document — PubMed's `DeleteCitation` — with its reason in
+    #: `extra["reason"]` (09 §9.4: `retracted` or `withdrawn`). It travels
+    #: with an `error` too, the marker every stage's `error IS NULL` gate
+    #: already keeps out; `deleted` is what tells discovery the document
+    #: must also leave every index it is in (app/unindexable.py), which an
+    #: ordinary error does not ask for.
+    deleted: bool = False
 
 
 class NoCurrentForm(Exception):

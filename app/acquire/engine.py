@@ -31,6 +31,7 @@ from . import claim as claim_mod
 from . import export_job
 from . import mirrors
 from . import transport_https
+from . import updatefiles
 from .transport_https import RangeUnsupported
 from .spec import (AcquisitionPlan, AcquisitionSpec, ChecksumSource, DiskPreflightError,
                     Endpoint, Filter, LicenseAckRequiredError, RemoteFile, TransferAborted,
@@ -183,7 +184,9 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
             _stop_check(stop, f"before listing {endpoint.url}")
             try:
                 with _listing_bound(stop, priority):
-                    candidates = list(transport.list_files(endpoint, spec))
+                    # the base directory, then (09 §9.17 `updatefiles-dir`)
+                    # the update directory beside it
+                    candidates = list(updatefiles.listing(transport, endpoint, spec))
                 break
             except TransferAborted:
                 # the STOP, not the mirror. TransferAborted IS a
@@ -200,7 +203,7 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         for endpoint in spec.endpoints:
             _stop_check(stop, f"before listing {endpoint.url}")
             with _listing_bound(stop, priority):
-                candidates.extend(transport.list_files(endpoint, spec))
+                candidates.extend(updatefiles.listing(transport, endpoint, spec))
     for f in candidates:
         if f.rel_path not in seen:
             seen.add(f.rel_path)
@@ -329,6 +332,14 @@ def effective_spec(collection, spec: AcquisitionSpec,
     pinned_filters = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("filters")
     if pinned_filters:
         spec = replace(spec, filters=tuple(pinned_filters))
+    # and BY ITS CODEX'S UPDATE FORM: `delta` is in the identifying half too
+    # (09 §9.17), so the update directory a collection takes is the one its
+    # Codex names, never one a plugin's spec has moved to since
+    pinned_delta = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("delta")
+    if isinstance(pinned_delta, dict) and pinned_delta.get("mode"):
+        from .spec import DeltaSpec
+        spec = replace(spec, delta=DeltaSpec(mode=pinned_delta["mode"],
+                                             updatefiles_subdir=pinned_delta.get("subdir")))
     peers = peer_sources(collection)
     if not peers:
         return spec
@@ -818,6 +829,10 @@ def _export_fetch(endpoint, f: RemoteFile, collection, spec: AcquisitionSpec,
 
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
+    # a file listed in the update directory is requested from it (09 §9.17
+    # `updatefiles-dir`); the slot, the etiquette and the budget are the
+    # endpoint's own — the same host
+    endpoint = updatefiles.request_endpoint(endpoint, spec, f)
     dest = collection.corpus_dir / f.rel_path
     land = _staging_target(collection, f, dest)
     part = land.with_name(land.name + ".part")
@@ -855,7 +870,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                 size = transport.fetch_segments(endpoint, f, land, segments)
                 elapsed = time.monotonic() - started
                 manager.record_throughput(endpoint_key, size, elapsed)
-                digest = checksum.digest_and_verify(land, spec.checksums)
+                digest = checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
                 if land != dest:
                     _promote(land, dest)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
@@ -895,7 +910,7 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                         raise
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
-        digest = checksum.digest_and_verify(land, spec.checksums)
+        digest = checksum.digest_and_verify(land, spec.checksums, sidecar_for=dest)
         if land != dest:
             _promote(land, dest)
         elapsed = time.monotonic() - started
