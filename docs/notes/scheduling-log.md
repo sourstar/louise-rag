@@ -2292,3 +2292,86 @@ windows, and gutenberg fts had work in both (123.9 and 93.6 ms/doc). Neither win
   rate over 17–19 min is the number here.
 - Next: take the encoder warm-up and the genesis read off the pipeline thread (A's 39 %), and find why a batch
   keeps only ~6 of 11 slots in flight. py-spy A: /root/measure/spy-A-overlap0.raw, B: spy-B-overlap1.raw.
+
+## 2026-11-07 — wikipedia fts: the pool fed across batches and by rdf's commits; the archive pass's load and read off the thread — BEFORE (deploy pending)
+
+**Scenario (BEFORE).** The #346 AFTER above: B (`FTS_OVERLAP=1`, live) 481.6 docs/s, the pool 5.8 of 11 slots in
+flight, the pipeline thread waiting on it 53.6 %; A 511.8 docs/s with 21.7 % in an encoder warm-up and 17.7 % in a
+genesis Parquet read on the same thread. wikipedia: 11.13 M documents still to extract (rdf), so rdf and fts
+interleave on its thread (`_next_book`: fts takes the turn once `want` = 4,000 are pending, rdf otherwise).
+
+**Why the pool is half idle (found on a synthetic run, below).**
+1. *The tail.* The next batch went to the pool only once ALL of this batch's results were back (`Ahead` was
+   started after `_fts_take_ahead`), so nothing was queued behind a batch's last parts: the children that finished
+   early idled until the round came back.
+2. *The interleave, the larger term.* When a batch ends, the rows the next one needs do not exist yet: rdf makes
+   them pending later, a batch at a time. The look-ahead then held only the carry past the chunk cap; the next fts
+   round wrote that carry as a batch of its own (an extra tantivy commit) and only then started the full batch's
+   parse, which the round after waited for, hidden behind nothing but the carry's own small writes. Synthetic:
+   **10 of 20 fts batches were the carry alone**.
+3. *What no fts change fills.* While the thread does its own work — rdf's selection and writes, fts's index commit
+   and marks, the rest of the round — nothing parseable exists. With rdf batches as large as fts's (4,000), this
+   is all that is left (case C below).
+4. *Inline on the thread, A's 39 %:* the archive pass (`_drain_remote_archive` > `drain_next_shard` >
+   `import_shard`) waited the encoder's LOAD inside its same-function proof (`prove` > `_sample_re_encode` >
+   `embed_chunks` > `_warm_first`; `embed = "off"`, so the encoder is unloaded between passes), and decoded its
+   shard's vectors as Python floats (`to_pylist`, a million per 1,024 vectors) after reading each row group inline.
+   Not the embed stage: the archive pass, on the thread its text stages share.
+
+**The changes, one commit each, deployable alone.**
+1. `8e7bf75` — the look-ahead is a `lookahead.Chain` of `Ahead` links (each a `parallel.compute` on a daemon thread,
+   unchanged: PARSE_TIMEOUT_S, the in-process fall-back, the profile cap), held up to two batches of rows: a batch's
+   carry and the rows after the cursor, and the rows each rdf commit makes pending, added in the commit's step
+   (`_fts_after_rdf`). A round takes whole links within one bound, cuts at the chunk cap and its size, puts back
+   what it does not write. Selection, order and what is indexed unchanged; each batch's commit, then its marks.
+2. `d604f24` — the pass asks `embeddings.warm_behind` before it starts: a cold model loads on a daemon thread
+   (`model_load.warm_behind`, `ensure_loaded`'s own flight and bound), the drain returns, rdf/fts run, and the pass
+   starts once the model is loaded. A load that ends without the model lets the next pass go (BEHIND_GRACE_S, 60 s).
+3. `bac309c` — the shard's vectors from the column's values in one numpy conversion (byte-identical, tested per
+   list type), and the next row group read and decoded on a daemon thread, two batches ahead, bounded.
+
+**Synthetic, measured here** (4 vCPU VM; the real `stage_fts`/`stage_rdf` rounds, SQLite and tantivy, a real pool of
+11 spawned children; each document's parse SLEEPS a modelled cost in its child — lognormal chunks, mean 5.6, 3 ms +
+1.5 ms a chunk — and metadata 1 ms; 40,000 documents; each fts batch also waits 1.5 s GIL-free, the node's other
+thread work, so main's interleaved case reads ~64 % busy as the node's 53–59 %. *Children busy* integrates the
+children's own per-row spans; *in flight* is `parallel.occupancy()`, the "parse pool" line. main 12e0ee8 against
+the chain, both `FTS_OVERLAP=1`, alternated, two runs each. The harness is not in the tree: the parse is replaced in
+the children by importing a module that patches `parallel._one`, which no tool of the node should do.)
+
+| case | docs/s main → chain | children busy (of 11) | in flight | fts batches (carry alone) | 0.5 s bins < half busy |
+|---|---|---|---|---|---|
+| A. fts alone | 809 / 811 → **855 / 856** | 9.36 → **9.89** | 9.68 → 10.0 | 12 (0) → 12 (0) | 13.1 % → 9.6 % |
+| B. rdf 1,000 a batch | 548 / 547 → **582 / 582** | 6.93 → **7.37** | 7.15 → 7.62 | 20 (10) → **12 (0)** | 33 % → 29 % |
+| C. rdf 4,000 a batch | 551 / 553 → 552 / 549 | 6.98 → 6.97 | 7.18 → 7.16 | 20 (10) → **12 (0)** | 34 % → 34 % |
+
+- A: the tail filled (+5.6 %). B: the carry no longer a batch of its own, the parse run during the rdf rounds
+  (fts batch median 4.75 → 3.03 s; +6.3 %). C: rdf makes the whole next batch pending in one commit and fts takes it
+  at once, so its parse is waited for in full either way; the pool idles only while the thread does its own work
+  (p10 of the busy children per 0.5 s: 0.0 in B and C, both sides). Which case the node is in is the length of its
+  rdf lines ("extracted N documents in one transaction"): `RDF_BATCH_DOCS` is sized up to 4,000 like fts.
+- The archive pass's read (`readbench.py`: 60,000 1,024-dim vectors, row groups of 10,000, best of 3): alone
+  4.469 → **0.542 s** (float32; reader CPU 3.851 → 0.042 s), 4.603 → 0.768 s (float64); with 0.5 ms of GIL-free work a
+  document, 10.94 → **6.30 s**, the read hidden behind the work.
+- The warm: three drains with a 10 s load in flight return in under 2 s, nothing imported, one warm sent (test).
+- Residual and next lever, not done: in case C the pool waits for the thread's own work. Filling it needs rdf's
+  next batch (selection and metadata) in the pool while fts writes — an rdf look-ahead — or the index adds streamed
+  as parts answer; both change what runs when, and are for their own measurement.
+
+**Deploy order (§6.8), each measured alone.** (1) `8e7bf75` first: every minute of wikipedia's fts sees it; 20 min,
+the same commands as #346's AFTER plus the count of fts lines that are the carry alone (a batch well under the
+median right after a full one) and the "parse pool" line. (2) `d604f24` next, over a window that holds an archive
+pass (they came every 1–2 h): py-spy on the pipeline thread — `ensure_loaded` / `_warm_first` must be gone from it —
+and the line "the encoder is loading for the same-function proof". (3) `bac309c` last, over the next pass:
+`_read_corpus_embedded_shard` / `to_pylist` / `read_row_group` gone from the pipeline thread, and the pass's own
+duration. (2) and (3) show in different frames of the same profile, so if passes are rare (3) may follow (2) as soon
+as (2)'s first pass is read.
+
+**AFTER (München, to fill on the node).**
+
+| | fts docs/s (wall) | chunks/s | chunks/doc | fts batches (carry alone) | parse pool in flight | py-spy: pool wait / warm / genesis read |
+|---|---|---|---|---|---|---|
+| BEFORE B (cda6e126, `FTS_OVERLAP=1`) | 481.6 | 2,690 | 5.58 | — | 5.8 of 11 | 53.6 % / — / — |
+| BEFORE A (cda6e126, `FTS_OVERLAP=0`) | 511.8 | 2,833 | 5.54 | — | 6.5 of 11 | 44.7 % / 21.7 % / 17.7 % |
+| AFTER (1) 8e7bf75 | | | | | | |
+| AFTER (2) d604f24 | | | | | | |
+| AFTER (3) bac309c | | | | | | |
