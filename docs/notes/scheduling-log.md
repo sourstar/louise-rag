@@ -2376,7 +2376,7 @@ as (2)'s first pass is read.
 | AFTER (2) d604f24 | | | | | | |
 | AFTER (3) bac309c | | | | | | |
 
-## 2026-11-07 — a reranked list holds one claim, from its warm to its last variant — BEFORE (deploy pending)
+## 2026-11-07 — a reranked list holds one claim, from its warm to its last variant — MEASURED
 
 **Scenario (BEFORE, München, 2026-11-07).** Searches beside wikidata's Nemotron embedding (on the card, ~2 s a
 request, 4 in flight), against searches with no corpus embedding. `timings.rerank` of the live searches:
@@ -2415,9 +2415,22 @@ line over the same window.
 | | n | median | p95 | stood aside (wikidata) |
 |---|---|---|---|---|
 | BEFORE, with embedding | 50 | 8,475 ms | 13,762 ms | — (not counted then) |
-| AFTER, with embedding | | | | |
+| AFTER, with embedding (69eda8b) | 50 | **5,491 ms** | **7,843 ms** (max 8,518) | 235 requests, 928.5 s since 07:10 |
+| unloaded, node paused (11-06) | 320 | 5,359 ms | 7,913 ms | — |
 
-**Open, NOT decided here: gap (b).** The 2026-10-25 trade assumed a corpus request of 0.43 s with 2 in flight
+AFTER: München, 2026-11-07 08:24:50–08:35:47. The 50 searches of searches-gutenberg-2.jsonl
+replayed live, one after another (`louise_search` in the web container), with wikidata embedding;
+per-search timings in /data/chat-eval/rerank-claim-69eda8b.jsonl. The rerank is back to the
+unloaded level and the p95 is under the 12.8 s bound: no search loses its rerank.
+
+What it cost wikidata, in chunks per ~2-min line: 4,604 / 4,435 / 4,005 / 3,828 / 4,356 before the
+replay (~35/s), then 2,013 / 1,565 / 1,395 / 1,497 / 1,506 during it (~12.5/s). That is the worst
+case, a search every 13 s without a pause; a person's occasional query costs it only for its own
+seconds.
+
+**Gap (b), settled by the AFTER row: no question for the operator.** With the gaps between variants
+closed, the rerank is at its unloaded time, so what corpus does in gap (b) costs the reranker
+nothing measurable. What follows was the open question before the measurement: The 2026-10-25 trade assumed a corpus request of 0.43 s with 2 in flight
 (gutenberg on demand, batch 1). Today wikidata's are ~2 s with 4 in flight. Gap (b) is the dense search, fusion,
 attach and tokenize before the first rerank, 0.7–1.1 s. A corpus request sent there now shares the card with the
 first rerank call for up to ~2 s, against ~0.43 s then. Whether the claim should cover it is the operator's
