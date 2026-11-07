@@ -368,7 +368,8 @@ def test_with_a_verified_archive_the_engine_a_codex_names_is_removed(node):
     kept.unlink()
     assert ab.archive_backend(backends / OLD, c.archive)["verified"]
     rc, out = _run(backends, models, proc)
-    assert "codexes: 1 read" in out and "codex: named by wikidata; archived: yes" in out
+    assert "codexes: 1 read (1 with an engine, 0 without)" in out
+    assert "codex: named by wikidata; archived: verified (unpacked)" in out
     rc, out = _run(backends, models, proc, "--delete")
     assert rc == 0 and f"removed  {OLD}" in out, out
     assert not (backends / OLD).exists() and kept.is_file(), "the archive stays"
@@ -415,3 +416,122 @@ def test_a_codex_that_cannot_be_read_refuses_the_deletion_whole(node, bad, capsy
     rc, out = _run(backends, models, proc)
     assert rc == 0 and "codexes: not read" in out and "--delete would refuse" in out
     assert "codex: named by not known; archived: no" in out
+
+
+# ---- the node's host has no zstd: an archive's sidecar stands in for its unpack -------------
+# München, 2026-11-07: `--delete` as root on the TrueNAS host refused
+# backends-bak-20261027/louise-sycl-f16-llama-cpp ("NoZstd: no zstd here"),
+# though its archive had verified in the worker image that morning.
+
+@pytest.fixture
+def no_zstd(monkeypatch):
+    """archive_backend's three codecs made absent, as on the host: no
+    zstandard, no pyarrow, no `zstd` program. Called once the archive is made."""
+    ab = rb._repository()
+    find_spec, which = ab.importlib.util.find_spec, ab.shutil.which
+
+    def gone():
+        monkeypatch.setattr(ab.importlib.util, "find_spec", lambda name, *a: None if name in (
+            "zstandard", "pyarrow") else find_spec(name, *a))
+        monkeypatch.setattr(ab.shutil, "which",
+                            lambda name, *a: None if name == "zstd" else which(name, *a))
+        with pytest.raises(ab.NoZstd):
+            ab._codec()
+    return gone
+
+
+def _named_and_archived(backends: Path) -> Path:
+    """OLD named by wikidata's Codex, its archive made where zstd is (the
+    worker image): the archive, and beside it its sidecar."""
+    c = _codexes(backends)
+    _codex(c.collections / "wikidata" / "shard" / "codex.json",
+           _engine_object(f"localai/{OLD}", "sha256:" + "22" * 32))
+    out = rb._repository().archive_backend(backends / OLD, c.archive)
+    assert out["verified"] and Path(out["sidecar"]).is_file()
+    return Path(out["path"])
+
+
+def test_without_zstd_a_matching_sidecar_verifies_the_archive(node, no_zstd):
+    backends, models, proc = node
+    _named_and_archived(backends)
+    no_zstd()
+    rc, out = _run(backends, models, proc)
+    assert "codex: named by wikidata; archived: verified (sidecar, sha256 matches)" in out, out
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 0 and f"removed  {OLD}" in out, out
+    assert not (backends / OLD).exists()
+
+
+def test_without_zstd_a_sidecar_whose_sha256_differs_refuses(node, no_zstd):
+    """The archive's bytes changed since they verified (one byte flipped, the
+    size the same): refused."""
+    backends, models, proc = node
+    kept = _named_and_archived(backends)
+    data = bytearray(kept.read_bytes())
+    data[-1] ^= 0xFF
+    kept.write_bytes(bytes(data))
+    no_zstd()
+    rc, out = _run(backends, models, proc)
+    assert "archived: NOT verified" in out and "not the bytes that verified" in out, out
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and f"refused  {OLD}: {OLD}: named by the Codex of wikidata" in out
+    assert "cannot be unpacked here (no zstd here" in out and "its sidecar" in out
+    assert (backends / OLD / "run.sh").is_file()
+
+
+def test_without_zstd_a_sidecar_naming_another_tree_refuses(node, no_zstd):
+    backends, models, proc = node
+    kept = _named_and_archived(backends)
+    sidecar = rb._repository().sidecar_of(kept)
+    doc = json.loads(sidecar.read_text())
+    sidecar.write_text(json.dumps({**doc, "tree": "sha256:" + "33" * 32}))
+    no_zstd()
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and f"names the tree sha256:{'33' * 32}, not" in out
+    assert (backends / OLD).is_dir()
+
+
+def test_without_zstd_a_missing_sidecar_refuses(node, no_zstd):
+    """An archive made before the sidecar existed: the host cannot check it,
+    and says what writes the sidecar."""
+    backends, models, proc = node
+    kept = _named_and_archived(backends)
+    rb._repository().sidecar_of(kept).unlink()
+    no_zstd()
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and "there is no sidecar" in out and "--sidecar" in out, out
+    assert (backends / OLD).is_dir()
+
+
+def test_with_zstd_a_failed_unpack_never_falls_back_to_the_sidecar(node):
+    """The sidecar stands in for an unpack only where none can be done: a
+    sidecar matching junk bytes admits nothing."""
+    backends, models, proc = node
+    kept = _named_and_archived(backends)
+    ab = rb._repository()
+    kept.write_bytes(b"not an archive")
+    doc = json.loads(ab.sidecar_of(kept).read_text())
+    ab.sidecar_of(kept).write_text(json.dumps(
+        {**doc, "bytes": kept.stat().st_size, "sha256": ab.file_sha256(kept)}))
+    assert ab.check_sidecar(kept, doc["tree"]) is None
+    rc, out = _run(backends, models, proc, "--delete")
+    assert rc == 1 and f"{kept} unpacks to nothing" in out
+    assert (backends / OLD).is_dir()
+
+
+def test_the_codex_count_says_which_name_an_engine(node):
+    """München read "codexes: 6" with 7 collections holding a codex.json: an
+    annotations Codex (`space` null, 09 §9.3) is read and names no engine."""
+    backends, models, proc = node
+    c = _codexes(backends)
+    _codex(c.collections / "gutenberg" / "shard" / "codex.json",
+           _engine_object(f"localai/{LIVE}", "sha256:" + "11" * 32))
+    _codex(c.shards / "pubmed" / "codex.json", _engine_object("localai/x", "sha256:" + "44" * 32))
+    (c.collections / "gutenberg-book-editions" / "shard").mkdir(parents=True)
+    (c.collections / "gutenberg-book-editions" / "shard" / "codex.json").write_text(json.dumps(
+        {"version": 9, "space": None, "layers": [], "annotates": [{"collection_id": "x"}]}))
+    engines, read = rb.codex_engines(c.collections, c.shards, c.container_shards)
+    assert read == ["gutenberg", "gutenberg-book-editions", "pubmed"]
+    assert sorted({e.collection for e in engines}) == ["gutenberg", "pubmed"]
+    rc, out = _run(backends, models, proc)
+    assert "codexes: 3 read (2 with an engine, 1 without: gutenberg-book-editions)" in out, out
