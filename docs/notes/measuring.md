@@ -107,6 +107,7 @@ report the interval, not just the point; measure at the depth the system uses
 ## 6. Before you publish a result
 
 - [ ] Ran on the deployed flags **and** env, stated in the write-up
+- [ ] The engine named by reading the deployed wrapper's vega.json (`python3 -I deploy/vega/retired_backends.py --engine [WRAPPER]`), never from a note or a message. On 2026-11-07 a measurement ran on the retired louise-sycl-f16-llama-cpp-16acc89 while ea2417d91dcc was deployed (approved-encoders.md, "Retiring an engine after a swap")
 - [ ] The vendor's deterministic mode on, and bit-exactness measured (invariant 12)
 - [ ] Used the existing harness, or said why not
 - [ ] Inputs are real production shapes, not synthetic stand-ins

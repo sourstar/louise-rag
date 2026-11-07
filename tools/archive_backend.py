@@ -43,15 +43,21 @@ ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "deploy" / "vega" / "vega_wrapper.py"
 
 
-def tree_digest(directory: Path) -> str:
-    """vega_wrapper's own function, loaded from its file: ONE definition."""
+def wrapper():
+    """deploy/vega/vega_wrapper.py, loaded from its file once: ONE definition
+    of the tree digest (and of the engine's whole image, `engine_manifest`)."""
     name = "vega_wrapper_for_archive"
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, WRAPPER)
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         spec.loader.exec_module(module)
-    return sys.modules[name].tree_digest(Path(directory))
+    return sys.modules[name]
+
+
+def tree_digest(directory: Path) -> str:
+    """vega_wrapper's own function, loaded from its file: ONE definition."""
+    return wrapper().tree_digest(Path(directory))
 
 
 class NoZstd(RuntimeError):

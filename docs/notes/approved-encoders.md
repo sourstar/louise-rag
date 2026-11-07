@@ -25,6 +25,59 @@ DIGEST and the row below is added; on rejection the build is listed under
 Rejected with the reason. The worker's backend gate then independently
 confirms baseline reproduction on the first embed after the swap.
 
+## Retiring an engine after a swap (operator, 2026-11-07)
+
+The operator, 2026-11-07: **"It is important to delete the retired backends
+as a practice, to avoid reusing a wrong one"**; and, on whether each deletion
+needs a yes: **"Standing permission"**.
+
+Why. A card measurement that day (nemotron-embed.md, the `parallel` rows)
+loaded `louise-sycl-f16-llama-cpp-16acc89`, an engine a swap had retired and
+left installed, while the deployed one is
+`louise-sycl-f16-llama-cpp-ea2417d91dcc`. Its numbers had to be re-run.
+LocalAI's backends path also held `backends-retired-20261102` (3.4 GB) and
+five `louise-python*` engines with their `vega-louise-python*` wrappers
+(20.8 GB). The operator had them deleted the same day.
+
+A swap (a new engine or wrapper in place of an old one) ends like this:
+1. The new engine passes its gate: the fixed inputs byte for byte through the
+   live packages, then `hold embedder check` per collection (as localai-bugs.md
+   P6's gates did).
+2. Every model file and wrapper names the new one, and every model loaded on
+   the old one is unloaded (`POST /backend/shutdown`, measuring.md §9).
+3. If a Codex names the retired engine, its archive is made first:
+   `python -m tools.archive_backend <engine dir> <archive dir>` (09 §9.3: the
+   node keeps a Codex's backend engine for the Codex's life).
+4. On the node, as root, from the deployed tree (`/mnt/ssd4/apps/louise-rag/src`):
+   `python3 -I deploy/vega/retired_backends.py` lists every backend, wrapper
+   and directory of the backends path that no model file names, directly or
+   through a wrapper's vega.json, with its size. For each retired engine it
+   also says which collections' Codexes name it and whether its archive
+   exists. `--delete` removes exactly those and prints what it removed and the
+   bytes freed. It refuses:
+   - one that a running process uses;
+   - an engine a Codex names (by `localai/<name>`, or by an image of its tree,
+     alone or with a wrapper's code), unless `<tree hex>.tar.zst` under
+     `--archive` unpacks to the engine's tree digest;
+   - everything, if /proc or any Codex cannot be read.
+
+   A twin (the CPU engine a `-cpu` wrapper names) is kept, because something
+   names it. The archive directory's default is
+   `/mnt/tank/apps/louise-platform-images/backends` (confirmed on the node,
+   2026-11-07).
+5. That output is the record. It goes into the swap's note, or into
+   scheduling-log.md.
+
+**Standing permission.** A retired backend or wrapper is deleted without a
+per-deletion yes once the new engine has passed its gate. **Data is not
+covered:** collections and their files still need the operator's yes, with
+the size.
+
+Between the swap and the removal, nobody measures or loads the retired
+engine. A measurement names its engine by reading the deployed wrapper's
+vega.json (`retired_backends.py --engine [WRAPPER]`, measuring.md §6), never
+from a note or a message.
+
 ## Intel GPU (SYCL) — Arc Pro B70 (Battlemage), llama.cpp `server-intel`
 
 | build | digest | verdict | evidence |
@@ -244,7 +297,9 @@ wraps them and with `louise-` when it does not.
 - The old installs (-p5, -up, -gen, -t5 and their engines, and the two old
   python package names) are moved out of LocalAI's backends/ into
   backends-retired-20261102. They are not deleted; the bytes go on the
-  operator's own yes, with the size.
+  operator's own yes, with the size. *Deleted 2026-11-07 (3.4 GB). Since
+  then a retired engine is deleted after its successor's gate, under a
+  standing permission: "Retiring an engine after a swap", above.*
 
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:

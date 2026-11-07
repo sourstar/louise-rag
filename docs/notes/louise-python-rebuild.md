@@ -125,9 +125,14 @@ Order matters; each step waits for the one before.
    of the old tree and record identical / differing counts; the old tree
    flipped two segments between its own runs, so "41/42" is the bar, not
    "42/42".
-7. `louise node resume`. The node is back on the new tree; the old one
-   stays installed and unused until the operator says to remove it
-   (`POST /backends/delete/<name>`, as 2026-10-17).
+7. `louise node resume`. The node is back on the new tree. *Amended
+   2026-11-07* (operator: "It is important to delete the retired backends as
+   a practice, to avoid reusing a wrong one"; "Standing permission"): once
+   steps 5 and 6 pass, the old tree and its wrapper are removed with
+   `deploy/vega/retired_backends.py --delete`, and its output goes into the
+   report. Until then nothing measures or loads them. This follows
+   approved-encoders.md, "Retiring an engine after a swap". It was: "stays
+   installed and unused until the operator says to remove it".
 
 ## 3. Fallback — on ANY failure in step 5 or 6
 
