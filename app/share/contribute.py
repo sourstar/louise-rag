@@ -765,7 +765,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
          live: Sequence[rendezvous.Peer], con, node_con, now: float | None = None, stop=None,
          log: Callable[[str], None] | None = None, batch: int = 64,
          before_write: Callable[[], None] | None = None, serving: bool = True,
-         collection=None, held_books=None, build: bool = True) -> dict[str, Any]:
+         collection=None, held_books=None, build: bool = True,
+         parts: Callable[[Any], bool] | None = None) -> dict[str, Any]:
     """One pass (07 §7.3 `--once`): first the vectors this peer already
     holds for the open shards it does not lead, bundled (no GPU beyond the
     challenge rows); then the shards this peer leads, built, exported,
@@ -777,7 +778,13 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     shards this peer leads go through the held path like the others, so
     what the embed stage has finished leaves as bundles; a led shard with
     no vector held yet is `awaiting` the embed stage. `write` and
-    `before_write` are not used then."""
+    `before_write` are not used then.
+
+    `parts` keeps only the open shards it accepts: a FROZEN collection's
+    publisher bundles only its parts still current upstream (04 §4.3, §4.5,
+    amended 2026-11-07; app/share/frozen.py), so no `bundle` event names a
+    part of a version the network has left. The others are listed under
+    `frozen_withheld`."""
     root = Path(root)
     now = time.time() if now is None else now
     say = log or (lambda *_a: None)
@@ -792,13 +799,19 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     deprecated = deprecate_mod.deprecated(root, name, codex)
     view = counting.view_kwargs(root, name, codex, con)
     mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now, **view)
+    withheld: list[str] = []
+    if parts is not None:
+        withheld = [f"{s.slice}/{s.n:05d}" for s in mine + others if not parts(s)]
+        mine, others = [s for s in mine if parts(s)], [s for s in others if parts(s)]
     out: dict[str, Any] = {"snapshot_id": snapshot.snapshot_id, "peers": len(me_live),
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
                            "marked": 0, "claimed": [], "awaiting": [], "unreadable": [], "refused_recently": [],
-                           "set_aside": 0}
+                           "set_aside": 0, "frozen_withheld": withheld}
     out["set_aside"] = sweep_refused(root, name, codex, con, own_key=own_key, say=say)
+    if withheld:
+        say(f"[{name}] publish: frozen — {len(withheld)} open shard(s) changed upstream are not bundled")
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving, held_books=held_books, stop=stop)
     if not mine and not others:

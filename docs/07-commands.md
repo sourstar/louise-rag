@@ -159,7 +159,7 @@ louise hold
                                                                        write it; the lists' signatures, XAdES and revocation the same day)
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole part as JSON Lines
-  snapshot    create <collection>                                      freeze the current records as this month's snapshot
+  snapshot    create <collection>                                      fix the current records as this month's snapshot
               create <to> --shards-from <from>[:<snapshot>] [--snapshot ID]
                                                                        seed the parts from another collection's byte-identical ones — refused unless every field
                                                                        that decides a record (02 §2.7), record_line, facets and the layers' chunkers agree — each
@@ -258,6 +258,10 @@ louise node
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
   pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]
+  freeze <collection>                                                  a runtime override: the collection keeps the version it holds — nothing fetched from its origin, its origin not scanned, nothing
+                                                                       taken in from peers; parsed, indexed, embedded here, searched and checked as it is; shared, only its parts
+                                                                       still current upstream (04 §4.3); it survives a restart (§7.8) (added 2026-11-07, operator)
+  unfreeze <collection>                                                the collection follows its origin and its peers again and catches up: a fetch, a scan, the newer snapshot and its members
   health [<collection>] [--errors]                                     every stage's state per collection; exit 1 when a stage has work it cannot start (added 2026-10-08)
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
@@ -782,6 +786,26 @@ reader needs at the command line:
   (§7.7), exit 0.
   `pause` and `resume` are runtime overrides: they live in the state
   database and survive a restart until `resume` (§7.8).
+- **`node freeze`, `node unfreeze`.** *Added 2026-11-07* (operator: "no
+  updated are fetched and it stays as it is (you can still embed locally)";
+  docs/notes/collection-freeze.md). A frozen collection keeps the version it
+  holds. Its fetch stage does nothing — a fetch already running ends at its
+  unit (§7.7) —, its origin is not scanned, so no document is re-opened or
+  added because a file changed on disk, and nothing is taken in from peers:
+  no member, no newer snapshot, no bundle. Each is a deferral, said in the
+  collection's log, never an error on a document. Everything else runs on
+  the version held: parsing, indexing, local embedding of what is pending
+  (under `p2p` as under `all`: it takes no bundle in, so it leaves no part
+  to a leader, and leads none, 04 §4.5), search, the plan's checks. Shared,
+  it serves and announces only its ALIGNED parts (04 §4.3). It is not a
+  pause, which runs nothing, and not a daughter: no Codex is written and no
+  id changes (02 §2.7). The two compose by the stricter, each with its own
+  command. `unfreeze` resumes everything, and the worker asks the fetch and
+  the scan the freeze held back. `freeze` refuses (exit 2) a name this node
+  holds no file for. Who froze and when is recorded as for `pause`, and
+  read by `node_state.frozen_since`. A command a person types — `records
+  fetch`, `share fetch`, `records build` — is not stopped: freeze governs
+  what the node does on its own.
 - **`dev migrate schema`.** Creating the schema of a new state database
   is not a migration and happens on first open. Changing an existing
   schema happens here only; a process that finds a schema other than its
@@ -1366,7 +1390,7 @@ one home.
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **files** — desired state | `users.toml` beside `platform.toml` (*amended 2026-10-22*): the users of §7.4, each token as its SHA-256 only; when each was last seen is `state/users-seen.json`, not desired state | `louise user …`, the admin API — never by hand |
 | **files** — desired state | `recipes/<plugin>.toml` beside `collections/` (*amended 2026-10-25, RULE 2*): this node's recipe for a plugin (06 §6.6) — what the Library's *new collection*, which names a plugin and a local name only, creates from | editing the file |
-| **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
+| **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume`; a collection's pause until `resume <collection>`, and its freeze until `unfreeze <collection>` (*amended 2026-11-07*) | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
 never survives the node applying the files — at start, at `hold config
@@ -1374,7 +1398,10 @@ apply`, and when a file changes. The one exception is the node's mode
 (§7.3) — which no file sets, so there is nothing to
 apply over it: it survives a restart until `resume`. An expiry would turn
 a node the operator holds at acquire-only back into a running one, encoder
-and all, on every restart (operator decision, 2026-09-13). What `hold config show` prints comes
+and all, on every restart (operator decision, 2026-09-13). A collection's
+pause and its freeze survive a restart for the same reason: no file sets
+either, and an expiry would let a restart fetch the updates a freeze held
+out (*amended 2026-11-07*). What `hold config show` prints comes
 from the same resolution the node uses, each value labelled with its
 tier; a value shown anywhere else comes from that resolution too.
 
@@ -1651,7 +1678,7 @@ collection is another name.
 │   ├── pubmed.toml
 │   └── pubmed/
 │       ├── shard/           the copy, the SHARD (`drag/` until 2026-10-11): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
-│       ├── state/           manifest.sqlite (with the origin's flagged issues, 06 §6.1), cursor, ack.json, attestations/, bundles/, lock — this peer's alone
+│       ├── state/           manifest.sqlite (with the origin's flagged issues, 06 §6.1), cursor, ack.json, attestations/, bundles/, lock — this peer's alone; frozen/: while the collection is frozen, the newer snapshot its alignment is read against, never in the copy (04 §4.3, added 2026-11-07)
 │       ├── index/           the text index of the parts held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
 │       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here

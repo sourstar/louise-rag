@@ -229,6 +229,14 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
         node_state.set_paused(new, True, by=f"rename {old} -> {new}")
         node_state.set_paused(old, False, by=f"rename {old} -> {new}")
     done["paused"] = paused
+    # 4a. the freeze, if any (07 §7.3 `node freeze`): runtime state keyed on
+    # the name, carried as the pause is — a renamed frozen collection must not
+    # come back following its origin
+    frozen = old in node_state.frozen_collections()
+    if frozen:
+        node_state.set_frozen(new, True, by=f"rename {old} -> {new}")
+        node_state.set_frozen(old, False, by=f"rename {old} -> {new}")
+    done["frozen"] = frozen
     # 4b. the derived caches keyed on what moved
     # (a cache already at both keys is left: nothing moved over another, and
     # a cache is re-creatable, so it never stops the rename half-way)

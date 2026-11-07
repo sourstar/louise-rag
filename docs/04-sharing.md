@@ -299,6 +299,25 @@ member, this root, in this snapshot — and nothing more; what a peer has
 checked about the collection is in its attestations, not in the fact
 that it serves it.
 
+**A frozen copy shares what is still current** (*amended 2026-11-07*,
+operator: "you can still share (if you check the shared box) the parts that
+are still aligned with the non frozen state"; docs/notes/collection-freeze.md).
+A collection its peer froze (07 §7.3 `node freeze`) keeps the version it
+holds: it fetches nothing from the origin and takes nothing in — no member,
+no snapshot, no bundle. Shared, it serves and announces only what is
+ALIGNED: a file a snapshot lists whose torrent (09 §9.16: member, path,
+size, root) is that file's in the newest snapshot it has read — its own, or
+a newer one a neighbour's digest lists, which it pulls (`pull snapshot`,
+verified as any fetched snapshot) and keeps aside under `state/frozen/`,
+never in the copy — and a bundle whose part is aligned. Until a newer
+snapshot announced is read, the last one read applies: a digest naming a
+snapshot nobody hands over changes nothing. Its digest lists a member only
+when every file of it is aligned, and names no collection with nothing
+aligned; a file of a member partly aligned is served by torrent all the
+same, reached in the swarm through the digest's hints. With no newer
+snapshot read, everything held is aligned. The digest names the snapshot
+the peer holds, as any digest does.
+
 **The encoder travels too.** A collection's encoder is named by the
 digest of its weights, and its reference engine by the digest of the
 image holding it (02 §2.4). So both are artefacts like any other and
@@ -625,7 +644,10 @@ it hears: a neighbour whose digest offers no member of the collection is
 not scored for it, whatever benchmark it carries, so a peer running older
 code is excluded the same way. Switching to `p2p` or `all` with sharing
 on is the reverse: the next digest carries the benchmark, and the peer is
-scored from the others' next recomputation.
+scored from the others' next recomputation. A frozen copy (§4.3) leads
+nothing: its digest carries no benchmark on its account, and it embeds
+every pending part itself, under `p2p` as under `all`, since it takes no
+bundle in; it bundles only its aligned parts (*amended 2026-11-07*).
 
 **Partial publication.** A contributor emits a signed bundle **about
 every fifteen thousand chunks**, not at the end of the part — 09 §9.10's

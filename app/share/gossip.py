@@ -72,10 +72,14 @@ def own_port(cfg=None) -> int:
     return int(config.PORT)
 
 
-def leads(collection) -> bool:
+def leads(collection, frozen=None) -> bool:
     """Does this peer EMBED the collection under rendezvous and PUBLISH what
     it embeds — `embed = "p2p"` or `"all"` in its file, and `share = true`
-    (07 §7.8; 04 §4.5, amended 2026-10-20)? Only then is its benchmark for
+    (07 §7.8; 04 §4.5, amended 2026-10-20) — and is the collection not
+    FROZEN (04 §4.5, amended 2026-11-07: a frozen copy takes no bundle in and
+    may not hold a part of the newer version a peer would rank to it; it
+    leads nothing)? `frozen` is the frozen set when the caller read it,
+    else it is read here. Only then is its benchmark for
     the space in its digest, and only then is it scored for the collection's
     parts. A peer whose mode does not embed (`off`, `on-demand`), or that
     does not share, publishes no bundle and must lead nothing: the dev PC's
@@ -87,6 +91,9 @@ def leads(collection) -> bool:
     moves on to the next in the ordering, which embeds only what still
     lacks a bundle; the partial work the peer bundled stays."""
     from app import collections as collections_mod
+    from app.share import frozen as frozen_mod
+    if getattr(collection, "name", None) in (frozen if frozen is not None else frozen_mod.frozen_names()):
+        return False
     share = bool(getattr(collection, "share", False))
     mode, _why = collections_mod.effective_embed_mode(
         getattr(collection, "embed_mode_default", None) or collections_mod.DEFAULT_EMBED_MODE,
@@ -99,12 +106,14 @@ def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, A
     09 §9.9) — the latest run per space — for the collections this peer
     LEADS (`leads`): embeds under rendezvous and shares."""
     from app.hold import embedder as emb, runs
+    from app.share import frozen as frozen_mod
     out: dict[str, dict[str, Any]] = {}
     if own_key is None:
         return []
+    frozen = frozen_mod.frozen_names()
     for c in collections:
         codex = getattr(c, "codex", None)
-        if codex is None or not leads(c):
+        if codex is None or not leads(c, frozen):
             continue
         if not runs.applies(codex):
             # a version-2 collection: its one statement, the row in §9.9's
@@ -137,8 +146,10 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
     amended 2026-10-21, operator)."""
     from app import collections as collections_mod
     from app.hold.codex import lineage_id
+    from app.share import frozen as frozen_mod
     out = []
     resolve = col.resolver(root)
+    frozen = frozen_mod.frozen_names()
     # the annotations collections held are listed like any (02 §2.10)
     names = {c.name for c in collections}
     try:
@@ -176,6 +187,16 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
         # served (2026-10-18; 04 §4.2 "announcing what you do not serve would
         # be a lie")
         members = [m for m in members if seeder.serves(c, m.name)]
+        # A FROZEN COLLECTION offers what is still current upstream (04 §4.3,
+        # amended 2026-11-07): a member a snapshot lists only when every file
+        # of it is aligned, a bundle only when its part is; a collection with
+        # nothing aligned is not announced at all — what cannot be taken is
+        # not announced (amended 2026-10-21)
+        aligned = frozen_mod.alignment_for(root, c, snap, frozen=frozen)
+        if aligned is not None:
+            members = frozen_mod.offered(aligned, members)
+            if not aligned.any_aligned:
+                continue
         # a bundle its producer deprecated is still served for a while and
         # listed apart, so no peer starts a fetch of it (operator, 2026-10-19)
         deprecated_members: list = []

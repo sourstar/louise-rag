@@ -1429,7 +1429,11 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
     # ("all local") this node embeds every part itself, whoever leads it
     if mode is None:
         mode = db.get_scope(con).get("embed_mode")
-    skip = leading.skip_test(collection, con) if collection is not None and mode == "p2p" else None
+    # A FROZEN collection takes no bundle in, so a part it left to a leader
+    # would never get vectors here: it embeds every pending part itself, as
+    # under `all`, and leads none (04 §4.5, amended 2026-11-07)
+    skip = leading.skip_test(collection, con) \
+        if collection is not None and mode == "p2p" and not _is_frozen(collection.name) else None
     keep = None if skip is None else (lambda r: not skip(r))
     if not ranges:
         if keep is None:
@@ -2293,7 +2297,10 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
         # recorded by `_upsert_aborted` — no error, no retry burned — and
         # the next run resumes by Range. `acquire-only` does not set
         # `_paused`, so it keeps fetching, which is that mode's whole point.
-        stop = _AnyStop(_stop, _gone_event(collection.name), _paused)
+        # A FREEZE IS PART OF THE STOP too (07 §7.3 `node freeze`): a fetch
+        # already running when the collection is frozen ends at its unit, its
+        # `.part` kept and the offset committed; the unfreeze asks it again
+        stop = _AnyStop(_stop, _gone_event(collection.name), _paused, _frozen_event(collection.name))
         result = acquire_engine.run_acquisition(
             con, collection, spec, profile, stop=stop)
         fetched_any = bool(result.get("fetched"))
@@ -2350,6 +2357,104 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
                 _paused_aborts.add(collection.name)
 
 
+# ---- frozen collections (07 §7.3 `node freeze`; docs/notes/collection-freeze.md) ----
+#
+# A frozen collection is RUN on the version it holds; what stops is its
+# updates: the fetch (`_acquire`, `_acquire_archive`, and the stop of a fetch
+# in flight), the scan of its origin (`_scan_only`), and — in app/share — every
+# intake from peers. The set is read from state/node.sqlite once a round by
+# the main loop (`_sync_frozen`), as the pause is, and every gate here reads
+# that one copy.
+_frozen_names: frozenset[str] = frozenset()
+#: per collection: set while it is frozen, so a fetch or a scan in flight ends at its unit
+_frozen_events: dict[str, threading.Event] = {}
+_frozen_lock = threading.Lock()
+#: collections unfrozen and not yet caught up: a discovery with its fetch is
+#: asked for each once the node runs it (a paused one waits for its resume)
+_catch_up_owed: set[str] = set()
+
+
+def _frozen_event(name: str) -> threading.Event:
+    with _frozen_lock:
+        return _frozen_events.setdefault(name, threading.Event())
+
+
+def _is_frozen(name: str) -> bool:
+    return name in _frozen_names
+
+
+def _sync_frozen(node_con=None) -> tuple[set[str], set[str]]:
+    """The frozen set read from the node's store and published to every gate
+    here: `(frozen now, unfrozen since the last read)`. An unreadable store
+    keeps the last set — a freeze is never lifted by a read that failed."""
+    global _frozen_names
+    try:
+        now = frozenset(node_state.frozen_collections(node_con))
+    except Exception:   # noqa: BLE001 — the last set stands
+        return set(_frozen_names), set()
+    with _frozen_lock:
+        before = _frozen_names
+        _frozen_names = now
+        for name in now:
+            _frozen_events.setdefault(name, threading.Event()).set()
+        for name, ev in _frozen_events.items():
+            if name not in now:
+                ev.clear()
+        unfrozen = set(before - now)
+        _catch_up_owed.update(unfrozen)
+        _catch_up_owed.difference_update(now)
+    return set(now), unfrozen
+
+
+def _catch_up_unfrozen(active, last_discover, pipeline: bool, cons=None) -> list[str]:
+    """UNFREEZE: everything resumes and catches up. For each collection
+    unfrozen that the node runs now: a discovery WITH its fetch — what the
+    freeze held back, and whatever a stopped fetch left — as the resume after
+    a pause asks (`_rearm_paused_aborts`). A stale queued request is taken
+    first: requests are first-reason-wins, and an `acquire=False` left in the
+    queue would beat this one. One that is not run now (paused) stays owed."""
+    with _frozen_lock:
+        if not _catch_up_owed:
+            return []                       # the idle round costs nothing
+        live = {c.name: c for c in active}
+        due = sorted(n for n in _catch_up_owed if n in live)
+        _catch_up_owed.difference_update(due)
+    for name in due:
+        _take_discovery_request(name)
+        try:
+            if pipeline:
+                _request_discovery(name, "unfrozen", acquire=True)
+            elif cons is not None and name in cons:
+                _discover(cons[name], live[name], "unfrozen")
+            last_discover[name] = time.time()
+        except Exception as e:   # noqa: BLE001 — one collection's catch-up, not the round
+            with _frozen_lock:
+                _catch_up_owed.add(name)
+            try:
+                db.log_event(cons[name], "warn", "acquire",
+                             f"unfrozen: the catch-up discovery failed, retried next round: "
+                             f"{type(e).__name__}: {e}"[:400])
+            except Exception:   # noqa: BLE001 — the log is a courtesy
+                pass
+    return due
+
+
+def _say_frozen(con, collection, what: str) -> None:
+    """A frozen collection's deferral, said once an hour per kind (CLAUDE.md:
+    deferral is not failure — nothing is written to any document)."""
+    if time.time() - _said.get((collection.name, f"frozen-{what}"), 0.0) <= 3600.0:
+        return                              # said this hour: not even the store is read
+    since = node_state.frozen_since(collection.name) or {}
+    by = f" by {since['by']!r}" if since.get("by") else ""
+    when = f" since {since['when']}" if since.get("when") else ""
+    says = {"fetch": "nothing is fetched from its origin",
+            "scan": "its origin is not scanned: no document is re-opened or added because a file changed"}
+    _say_once(con, collection.name, f"frozen-{what}",
+              f"{collection.name} is frozen{when}{by}: {says.get(what, what)}; it is parsed, indexed, "
+              f"embedded and searched as it is, and catches up when unfrozen "
+              f"(`louise node unfreeze {collection.name}`)")
+
+
 def _acquire(con, collection, reason: str) -> None:
     """Starts (or skips, if one is already running) the background fetch for
     a collection that has opted in. Off by default (acquire_enabled False) so
@@ -2358,6 +2463,11 @@ def _acquire(con, collection, reason: str) -> None:
         return
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
+        return
+    if _is_frozen(collection.name):
+        # FROZEN (07 §7.3 `node freeze`): the fetch stage does nothing — a
+        # deferral, said once an hour; the unfreeze asks the fetch again
+        _say_frozen(con, collection, "fetch")
         return
     if not collection.profile:
         # `collection.profile or "demo"` used to stand below. A collection
@@ -2420,7 +2530,7 @@ def _archive_worker(collection, reason: str) -> None:
         # STARTING one — so a shard already downloading ignored a pause.
         result = bundle_genesis_fetch.run_fetcher(
             con, collection,
-            stop=_AnyStop(_stop, _gone_event(collection.name), _paused),
+            stop=_AnyStop(_stop, _gone_event(collection.name), _paused, _frozen_event(collection.name)),
             log_state=state)
         if result.get("fetched"):
             db.log_event(con, "info", "genesis",
@@ -2452,8 +2562,8 @@ def _acquire_archive(con, collection, reason: str, force: bool = False) -> None:
     and freed a cache slot)."""
     if not collection.acquire_enabled or not collection.genesis_archive:
         return
-    if _paused.is_set():
-        return
+    if _paused.is_set() or _is_frozen(collection.name):
+        return                  # frozen: no archive shard is downloaded (07 §7.3 `node freeze`)
     archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
     if archive is None or archive.local:
         return
@@ -3030,6 +3140,10 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
                 # everything runs again (app/node_state.py: MODE_RUNS)
                 _owe_scan(collection.name)
                 continue
+            if _is_frozen(collection.name):
+                # frozen under the fetch: what it landed is the unfreeze's to
+                # scan (`_catch_up_unfrozen`), never read into the version held
+                continue
             db.log_event(cons[collection.name], "info", "discover",
                          "background fetch finished — scanning")
             stats = discovery.sync_collection(cons[collection.name], collection)
@@ -3208,9 +3322,25 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
     if _parse_held.is_set():
         _owe_scan(collection.name)
         return
-    db.log_event(con, "info", "discover", f"corpus scan ({reason})")
-    held = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
-    stats = discovery.sync_collection(con, collection, stop=held)
+    frozen = _frozen_event(collection.name)
+    if _is_frozen(collection.name):
+        # FROZEN (07 §7.3 `node freeze`): the origin is not enumerated, so no
+        # document is re-opened because its file changed on disk and none is
+        # added — a corpus mounted from elsewhere changes without a fetch. The
+        # scan waits WHOLE: its cursor moves past what it reads, and a scan
+        # that read a change and left the row alone would lose it for the
+        # unfreeze (docs/notes/collection-freeze.md §1). The slice scope and
+        # the embed selection below run over the manifest as it is, under
+        # the stop without the freeze
+        _say_frozen(con, collection, "scan")
+        held = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
+        stats: dict = {}
+    else:
+        # a freeze set under a running scan ends it at its next batch, its
+        # cursor committed that far: the rest is the unfreeze's
+        held = _AnyStop(stop, _parse_held, frozen) if stop is not None else _AnyStop(_parse_held, frozen)
+        db.log_event(con, "info", "discover", f"corpus scan ({reason})")
+        stats = discovery.sync_collection(con, collection, stop=held)
     if not held.is_set():
         # WHAT THE NODE HOLDS IS WHAT IT PROCESSES (app/slice_scope.py): a
         # collection whose one origin holds every slice is narrowed to the
@@ -3227,6 +3357,9 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
                                      log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
             if out.get("deferred"):
                 db.log_event(con, "info", "discover", f"embed selection waits: {out['deferred'][:400]}")
+    if held.fired is frozen:
+        db.log_event(con, "info", "discover",
+                     "corpus scan stopped: the collection is frozen; it goes on from here when unfrozen")
     if held.fired is _parse_held:
         # the mode changed under a running scan: it ended at its next ref,
         # its progress committed and its cursor that far — and the rest is owed
@@ -5353,6 +5486,13 @@ def _publish_pass(collection, codex, con, *, stop, log) -> dict:
     # 04 §4.2: announced only where it is served — the file shares and the mode seeds
     serving = bool(getattr(collection, "share", False)) and \
         node_state.runs(node_state.worker_state(), node_state.SEED)
+    # A FROZEN collection bundles only its parts still current upstream (04
+    # §4.3, §4.5, amended 2026-11-07): judged against the newest snapshot it
+    # has read (app/share/frozen.py); not frozen, nothing is filtered
+    from .hold import collection as col
+    from .share import frozen as frozen_mod, seeder
+    aligned = frozen_mod.alignment_for(root, collection,
+                                       seeder.current_snapshot(col.shard_dir_of(root, collection.name)))
     with closing(peers.connect()) as node_con:
         live = cov.live_peers(codex, node_con, now=now, own_key=own,
                               own_benchmarks=cov.own_benchmarks(root, collection.name, codex, own))
@@ -5362,7 +5502,8 @@ def _publish_pass(collection, codex, con, *, stop, log) -> dict:
                 vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=collection),
                 held_books=lambda ids: embeddings.books_with_vectors(ids, collection=collection),
                 write=None, live=live, con=con, node_con=node_con, now=now, stop=stop, log=log,
-                batch=config.EMBED_SLICE_CHUNKS, serving=serving, collection=collection, build=False)
+                batch=config.EMBED_SLICE_CHUNKS, serving=serving, collection=collection, build=False,
+                parts=aligned.shard if aligned is not None else None)
         finally:
             encoder_use.release(holder)
 
@@ -5916,6 +6057,11 @@ def run_forever():
     job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
     job_thread.start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)
+    # the frozen set before the first discovery: a frozen collection's
+    # startup discovery fetches and scans nothing (07 §7.3 `node freeze`)
+    _sync_frozen(node_con)
+    with _frozen_lock:
+        _catch_up_owed.clear()              # a boot is no unfreeze: the startup discovery runs anyway
     # restart = new documents are considered. With pipeline threads this is
     # QUEUED rather than run here: scanning five collections serially before
     # the loop starts meant nothing processed at all until the slowest scan
@@ -5944,6 +6090,8 @@ def run_forever():
             # paused or another writer holds is not run this round
             active = _hold_locks(all_collections,
                                  node_state.paused_collections(node_con), cons)
+            # the frozen set, once a round, as the pause is (07 §7.3 `node freeze`)
+            _sync_frozen(node_con)
             _finish_completed_acquires(cons, all_collections, last_discover,
                                         pipeline=pipeline)
             if not all_collections:
@@ -5985,6 +6133,8 @@ def run_forever():
             # Re-arm the fetches a pause stopped, BEFORE the interval check
             # below — without pipeline threads, that check is what runs them.
             _rearm_paused_aborts(active, last_discover, pipeline, cons=cons)
+            # and catch up what a freeze held back, once it is lifted
+            _catch_up_unfrozen(active, last_discover, pipeline, cons=cons)
             # download/seeding only: fetching continues — the pipeline
             # threads still drain discovery requests, which is what starts a
             # fetch — and NOTHING reads what lands: the scan is owed
