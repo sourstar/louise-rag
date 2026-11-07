@@ -75,6 +75,13 @@ inventory found, fixed.**
   | wikidata | its own byte cap | 256 MiB in the shared cache |
 
 - A test refuses any `_MAX_GROUPS` or `_MAX_FRAMES` in `app/`.
+- **2026-11-07: ONE budget per process.** The five budgets above were five caches, 704 MiB a process, and a parse
+  child serves several collections: eleven children at ~1.05 GB RssAnon and the worker OOM-killed at its 24 GiB cap.
+  `backend.READ_CACHE` is now the process's one `GroupCache` (`READ_CACHE_BYTES`, 256 MiB by default); each reader
+  holds a namespaced handle (`backend.read_cache(name)`), so its `forget` and `clear` are its own while the least
+  recent unit of any reader goes first. An eviction calls pyarrow's `release_unused()`
+  (`backend.release_arrow_memory`), guarded. The worker's beat logs the process's cache (`read cache (this
+  process)`); a child's numbers stay in the child. docs/notes/scheduling-log.md has the BEFORE and the risk.
 - **Left: the per-file layouts** (wikidata 8, archive 64, `pack/records` 64 indexes). wikidata's 8 re-opens a ParquetFile per line on a sparse family: 3.6 % of a build child (München, 2026-10-30). A chunk file's footer is ~3 MB in memory, so the fix is not a bigger count. It is the footer's own `metadata=` reuse under a byte budget, measured first. While the build is parent-bound (47 % of the children idle, #95), it does not bind.
 
 **S3, DONE: the CONTAINER_PACK class.**

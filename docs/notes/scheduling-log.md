@@ -2292,3 +2292,190 @@ windows, and gutenberg fts had work in both (123.9 and 93.6 ms/doc). Neither win
   rate over 17–19 min is the number here.
 - Next: take the encoder warm-up and the genesis read off the pipeline thread (A's 39 %), and find why a batch
   keeps only ~6 of 11 slots in flight. py-spy A: /root/measure/spy-A-overlap0.raw, B: spy-B-overlap1.raw.
+
+## 2026-11-07 — wikipedia fts: the pool fed across batches and by rdf's commits; the archive pass's load and read off the thread — BEFORE (deploy pending)
+
+**Scenario (BEFORE).** The #346 AFTER above: B (`FTS_OVERLAP=1`, live) 481.6 docs/s, the pool 5.8 of 11 slots in
+flight, the pipeline thread waiting on it 53.6 %; A 511.8 docs/s with 21.7 % in an encoder warm-up and 17.7 % in a
+genesis Parquet read on the same thread. wikipedia: 11.13 M documents still to extract (rdf), so rdf and fts
+interleave on its thread (`_next_book`: fts takes the turn once `want` = 4,000 are pending, rdf otherwise).
+
+**Why the pool is half idle (found on a synthetic run, below).**
+1. *The tail.* The next batch went to the pool only once ALL of this batch's results were back (`Ahead` was
+   started after `_fts_take_ahead`), so nothing was queued behind a batch's last parts: the children that finished
+   early idled until the round came back.
+2. *The interleave, the larger term.* When a batch ends, the rows the next one needs do not exist yet: rdf makes
+   them pending later, a batch at a time. The look-ahead then held only the carry past the chunk cap; the next fts
+   round wrote that carry as a batch of its own (an extra tantivy commit) and only then started the full batch's
+   parse, which the round after waited for, hidden behind nothing but the carry's own small writes. Synthetic:
+   **10 of 20 fts batches were the carry alone**.
+3. *What no fts change fills.* While the thread does its own work — rdf's selection and writes, fts's index commit
+   and marks, the rest of the round — nothing parseable exists. With rdf batches as large as fts's (4,000), this
+   is all that is left (case C below).
+4. *Inline on the thread, A's 39 %:* the archive pass (`_drain_remote_archive` > `drain_next_shard` >
+   `import_shard`) waited the encoder's LOAD inside its same-function proof (`prove` > `_sample_re_encode` >
+   `embed_chunks` > `_warm_first`; `embed = "off"`, so the encoder is unloaded between passes), and decoded its
+   shard's vectors as Python floats (`to_pylist`, a million per 1,024 vectors) after reading each row group inline.
+   Not the embed stage: the archive pass, on the thread its text stages share.
+
+**The changes, one commit each, deployable alone.**
+1. `8e7bf75` — the look-ahead is a `lookahead.Chain` of `Ahead` links (each a `parallel.compute` on a daemon thread,
+   unchanged: PARSE_TIMEOUT_S, the in-process fall-back, the profile cap), held up to two batches of rows: a batch's
+   carry and the rows after the cursor, and the rows each rdf commit makes pending, added in the commit's step
+   (`_fts_after_rdf`). A round takes whole links within one bound, cuts at the chunk cap and its size, puts back
+   what it does not write. Selection, order and what is indexed unchanged; each batch's commit, then its marks.
+2. `d604f24` — the pass asks `embeddings.warm_behind` before it starts: a cold model loads on a daemon thread
+   (`model_load.warm_behind`, `ensure_loaded`'s own flight and bound), the drain returns, rdf/fts run, and the pass
+   starts once the model is loaded. A load that ends without the model lets the next pass go (BEHIND_GRACE_S, 60 s).
+3. `bac309c` — the shard's vectors from the column's values in one numpy conversion (byte-identical, tested per
+   list type), and the next row group read and decoded on a daemon thread, two batches ahead, bounded.
+
+**Synthetic, measured here** (4 vCPU VM; the real `stage_fts`/`stage_rdf` rounds, SQLite and tantivy, a real pool of
+11 spawned children; each document's parse SLEEPS a modelled cost in its child — lognormal chunks, mean 5.6, 3 ms +
+1.5 ms a chunk — and metadata 1 ms; 40,000 documents; each fts batch also waits 1.5 s GIL-free, the node's other
+thread work, so main's interleaved case reads ~64 % busy as the node's 53–59 %. *Children busy* integrates the
+children's own per-row spans; *in flight* is `parallel.occupancy()`, the "parse pool" line. main 12e0ee8 against
+the chain, both `FTS_OVERLAP=1`, alternated, two runs each. The harness is not in the tree: the parse is replaced in
+the children by importing a module that patches `parallel._one`, which no tool of the node should do.)
+
+| case | docs/s main → chain | children busy (of 11) | in flight | fts batches (carry alone) | 0.5 s bins < half busy |
+|---|---|---|---|---|---|
+| A. fts alone | 809 / 811 → **855 / 856** | 9.36 → **9.89** | 9.68 → 10.0 | 12 (0) → 12 (0) | 13.1 % → 9.6 % |
+| B. rdf 1,000 a batch | 548 / 547 → **582 / 582** | 6.93 → **7.37** | 7.15 → 7.62 | 20 (10) → **12 (0)** | 33 % → 29 % |
+| C. rdf 4,000 a batch | 551 / 553 → 552 / 549 | 6.98 → 6.97 | 7.18 → 7.16 | 20 (10) → **12 (0)** | 34 % → 34 % |
+
+- A: the tail filled (+5.6 %). B: the carry no longer a batch of its own, the parse run during the rdf rounds
+  (fts batch median 4.75 → 3.03 s; +6.3 %). C: rdf makes the whole next batch pending in one commit and fts takes it
+  at once, so its parse is waited for in full either way; the pool idles only while the thread does its own work
+  (p10 of the busy children per 0.5 s: 0.0 in B and C, both sides). Which case the node is in is the length of its
+  rdf lines ("extracted N documents in one transaction"): `RDF_BATCH_DOCS` is sized up to 4,000 like fts.
+- The archive pass's read (`readbench.py`: 60,000 1,024-dim vectors, row groups of 10,000, best of 3): alone
+  4.469 → **0.542 s** (float32; reader CPU 3.851 → 0.042 s), 4.603 → 0.768 s (float64); with 0.5 ms of GIL-free work a
+  document, 10.94 → **6.30 s**, the read hidden behind the work.
+- The warm: three drains with a 10 s load in flight return in under 2 s, nothing imported, one warm sent (test).
+- Residual and next lever, not done: in case C the pool waits for the thread's own work. Filling it needs rdf's
+  next batch (selection and metadata) in the pool while fts writes — an rdf look-ahead — or the index adds streamed
+  as parts answer; both change what runs when, and are for their own measurement.
+
+**Deploy order (§6.8), each measured alone.** (1) `8e7bf75` first: every minute of wikipedia's fts sees it; 20 min,
+the same commands as #346's AFTER plus the count of fts lines that are the carry alone (a batch well under the
+median right after a full one) and the "parse pool" line. (2) `d604f24` next, over a window that holds an archive
+pass (they came every 1–2 h): py-spy on the pipeline thread — `ensure_loaded` / `_warm_first` must be gone from it —
+and the line "the encoder is loading for the same-function proof". (3) `bac309c` last, over the next pass:
+`_read_corpus_embedded_shard` / `to_pylist` / `read_row_group` gone from the pipeline thread, and the pass's own
+duration. (2) and (3) show in different frames of the same profile, so if passes are rare (3) may follow (2) as soon
+as (2)'s first pass is read.
+
+**AFTER (München, to fill on the node).**
+
+| | fts docs/s (wall) | chunks/s | chunks/doc | fts batches (carry alone) | parse pool in flight | py-spy: pool wait / warm / genesis read |
+|---|---|---|---|---|---|---|
+| BEFORE B (cda6e126, `FTS_OVERLAP=1`) | 481.6 | 2,690 | 5.58 | — | 5.8 of 11 | 53.6 % / — / — |
+| BEFORE A (cda6e126, `FTS_OVERLAP=0`) | 511.8 | 2,833 | 5.54 | — | 6.5 of 11 | 44.7 % / 21.7 % / 17.7 % |
+| AFTER (1) 8e7bf75 | | | | | | |
+| AFTER (2) d604f24 | | | | | | |
+| AFTER (3) bac309c | | | | | | |
+
+## 2026-11-07 — a reranked list holds one claim, from its warm to its last variant — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, 2026-11-07).** Searches beside wikidata's Nemotron embedding (on the card, ~2 s a
+request, 4 in flight), against searches with no corpus embedding. `timings.rerank` of the live searches:
+
+| | n | median | p95 |
+|---|---|---|---|
+| with wikidata embedding | 50 | 8,475 ms | 13,762 ms |
+| without embedding | 320 | 5,359 ms | 7,913 ms |
+
+The p95 with embedding is over the rerank's 12.8 s bound, so about 1 search in 20 loses its rerank.
+
+**The defect.** `_rerank_list` calls the reranker once per language variant, 9–37 ms apart (2026-10-25's
+timing). Each call held the claim alone (`dispatch.call`), so it cleared between two variants. A corpus request
+standing aside polls every GATE_POLL_S (0.1 s). One that polled in that gap went out and shared the card with the
+next variant. Before the fix, `tests/test_rerank_claim.py` read the claim inactive at the warm, the cut and before
+each call, and recorded a clear (`0.0`) between the two variants' calls.
+
+**The change (web; `retrieval._rerank_list`).** One claim per reranked list, at RERANK, from `_warm_reranker`
+through the cut (`fit_to_window`'s tokenizer calls) to the last variant's call. Each call's own `dispatch.call`
+nests in it. The plan, the legs, the attach and Ask's prompt (gaps (a), (b), (c) of 2026-10-25) are unchanged:
+corpus still fills them, as the operator decided that day.
+
+**The idle this adds** is the card idle inside a list that corpus could have filled:
+- the spacing between variants: at most 5 × 37 ms = 185 ms a list, for the 6 calls 2026-10-25 measured;
+- a 5xx retried once: its 0.25 s pause (0.21 % of calls on 2026-10-28);
+- the tokenizer calls, which 2026-10-25 counted in gap (b). They are made only for a candidate over 4,096 bytes at
+  the default window of 2,048, so usually there are none.
+
+**Deploy unit.** The web, for the claim (and any `chat_eval` process, which searches in its own process). The
+worker, for the stand-aside counter of 46008b7. Its line is `[sched] stood aside for a person's query (since
+start) — <collection>: N requests, S s[, D deferred]`.
+
+**AFTER (München, to fill).** The same `timings.rerank` median and p95 with wikidata embedding, and the stand-aside
+line over the same window.
+
+| | n | median | p95 | stood aside (wikidata) |
+|---|---|---|---|---|
+| BEFORE, with embedding | 50 | 8,475 ms | 13,762 ms | — (not counted then) |
+| AFTER, with embedding | | | | |
+
+**Open, NOT decided here: gap (b).** The 2026-10-25 trade assumed a corpus request of 0.43 s with 2 in flight
+(gutenberg on demand, batch 1). Today wikidata's are ~2 s with 4 in flight. Gap (b) is the dense search, fusion,
+attach and tokenize before the first rerank, 0.7–1.1 s. A corpus request sent there now shares the card with the
+first rerank call for up to ~2 s, against ~0.43 s then. Whether the claim should cover it is the operator's
+question. The AFTER row shows how much of BEFORE's +3.1 s median is left once the gaps between variants are closed.
+
+## 2026-11-07 — the read cache: one byte budget per process, Arrow memory released on eviction — BEFORE (deploy pending)
+
+**Scenario (BEFORE, München, the live node).** The worker was OOM-killed at 03:23 (cgroup 24 GiB) and came back by
+itself. 13 pool processes (the worker's 11 parse children and 2 of the scheduled check) and the parent. Each of the
+11 children sat at **~1.05 GB RssAnon**. Each process kept FIVE read caches, each with its own byte budget: wikidata
+pack 256 MiB, wikipedia archive 256, pubmed pack 64, page_props 64, records frames 64. That is **704 MiB a
+process**, ~9.6 GiB over 14 processes. One child serves several collections: wikipedia's rdf/fts reads archive row
+groups (~49 MB each, `archive._group_table`), and wikidata's embed stage cuts its short candidates in the pool from
+its pack (`EMBED_PREPARE_MAX_CHUNKS` → `parallel.chunks_for_rows`). Both read through the records' frames
+(`record_source`). München's probe, one spawned child, wikipedia rows only: RssAnon ≈ 290 MB +
+`pa.total_allocated_bytes()`. The latter grows in 49 MB steps (one row group each) and is never released. At 10,000
+rows: 436 MB RssAnon, 146 MB pa. The Arrow pool is mimalloc. Throughput: wikipedia fts **~528 docs/s** at
+`FTS_BATCH_DOCS=100`; wikidata embed **~18 chunks/s**, bound by the card.
+
+**The change (one deploy).**
+1. One `GroupCache` per process (`backend.READ_CACHE`, budget `READ_CACHE_BYTES`, 256 MiB by default). Each reader
+   holds a handle on it whose keys carry the reader's name: `forget`, `clear`, `nbytes` and `len` stay the reader's
+   own, the least recent unit of any reader goes first, and the unit just read is still always kept.
+2. A `put` that evicts calls `pa.default_memory_pool().release_unused()` (`backend.release_arrow_memory`). The call
+   is guarded and never imports pyarrow, and a get or a put that evicts nothing does not call it.
+3. The beat's `_log_shares` logs `read cache (this process) — …`: bytes, units, evictions, releases, and per reader
+   bytes, units, hits and misses since start. This is the parent's cache only. A child's numbers stay in the child
+   (a part answers with its rows' results, nothing else), so read the children from `/proc`.
+
+Not changed: `PARTS_PER_CHILD`, the pool size, the fts batching, what is read.
+
+**Measured here, not on the node** (pyarrow 25.0.1, mimalloc; three row groups kept, the oldest dropped per read,
+200 reads):
+
+| groups of | RssAnon, no release | RssAnon, release per drop | release call (median) | read median, no release → release |
+|---|---|---|---|---|
+| ~24 MB | 180–185 MB | 104 MB | 0.24 ms | 9.6–10.1 → 18.8 ms |
+| ~0.5 MB | 184–190 MB | 37 MB | 0.035 ms | 0.28–0.31 → 0.59 ms |
+
+- The cache's ceiling goes from 704 to 256 MiB a process, ~9.6 to ~3.5 GiB over the 14 processes.
+- The release has a price. Memory handed back must be faulted in again by the next read, which here doubled a read.
+  At the node's read rate (a few MB/s of row groups across all children) that is about a millisecond of CPU a
+  second. This is an estimate, not a measurement.
+
+**THE RISK.** A child that alternates between collections now shares 256 MiB between them. wikidata's lines can
+evict the archive groups wikipedia is about to read again, and the reverse. A re-read is a re-decompression, and
+`PARTS_PER_CHILD`'s history is a 4.6× regression that came from re-decompression. The AFTER's like-for-like docs/s
+decides. If it falls, or the archive's misses climb in the parent's line, the first lever is `READ_CACHE_BYTES`
+(env, a restart, no deploy), before a revert.
+
+**AFTER (München, to fill on the node).**
+- Each child's RssAnon after an hour: `grep RssAnon /proc/<pid>/status`.
+- The cgroup's `anon`: `grep -w anon /sys/fs/cgroup/memory.stat`.
+- wikipedia fts docs/s at `FTS_BATCH_DOCS=100`, like for like (chunks/doc beside it).
+- wikidata embed chunks/s.
+- The worker's `read cache (this process)` line.
+
+| | child RssAnon (1 h) | cgroup anon | wikipedia fts docs/s (chunks/doc) | wikidata embed chunks/s | OOM kills |
+|---|---|---|---|---|---|
+| BEFORE (live, 2026-11-07) | ~1.05 GB × 11 | — | ~528 | ~18 | 1 (03:23) |
+| AFTER | | | | | |

@@ -157,11 +157,14 @@ def stop_all() -> None:
 
 
 def reset() -> None:
-    """Tests: forget every gate, the claim memo, the stop and the default."""
+    """Tests: forget every gate, the claim memo, the stand-aside counts, the
+    stop and the default."""
     global _default_level
     _stopping.clear()
     _gates.clear()
     _claim_seen.clear()
+    with _stood_lock:
+        _stood.clear()
     _default_level = Level.QUERY
 
 
@@ -268,7 +271,7 @@ class Gate:
         started = time.monotonic()
         deadline = None if timeout is None else started + timeout
         if lvl == Level.CORPUS:
-            _stand_aside(self.name, deadline, timeout)
+            _stand_aside(self.name, deadline, timeout, plg)
         with self._cv:
             self._join(plg)
             before = self._limit()
@@ -451,24 +454,66 @@ def stand_aside(name: str, timeout: float | None) -> None:
     """`_stand_aside` for a caller about to do corpus work outside a gate
     (the warm that loads a corpus encoder): nothing at any other level."""
     if current()[0] == Level.CORPUS:
-        _stand_aside(name, None if timeout is None else time.monotonic() + timeout, timeout)
+        _stand_aside(name, None if timeout is None else time.monotonic() + timeout, timeout,
+                     current()[1])
 
 
-def _stand_aside(name: str, deadline: float | None, timeout: float | None) -> None:
+@dataclass
+class _Stood:
+    waits: int = 0          # corpus requests that stood aside at all
+    seconds: float = 0.0    # the time they stood
+    deferred: int = 0       # of them, the ones their own deadline ended (a deferral)
+
+
+#: WHAT STANDING ASIDE COST CORPUS WORK, per plugin, since the process
+#: started. Counted here, by the waiting thread; published by the worker's
+#: stats beat (`stood_aside`, worker._log_shares), never logged from here —
+#: telemetry is published by someone other than the thread doing the work.
+#: Until 2026-11-07 nothing counted it: München found no line saying whether
+#: wikidata's embedding stood aside at all while a person searched.
+_stood: dict[str, _Stood] = {}
+_stood_lock = threading.Lock()
+
+
+def stood_aside() -> dict[str, dict]:
+    """Per plugin, since start: `waits` (corpus requests that stood aside
+    for a person's query), `seconds` (the time they stood) and `deferred`
+    (those whose own deadline ended the wait). A request that found no
+    claim is not counted."""
+    with _stood_lock:
+        return {p: vars(s).copy() for p, s in sorted(_stood.items())}
+
+
+def _stand_aside(name: str, deadline: float | None, timeout: float | None,
+                 plugin: str = "") -> None:
     """Corpus work's next request waits while a person's query holds the
     node's claim (any of its steps, on any model of the card): bounded by the
     request's own deadline — then `GateTimeout`, a deferral — and woken by
     stop. The claim is read memoised (`interactive_active`), so the wait
-    costs one store read per GATE_POLL_S, not per request."""
-    while interactive_active():
-        if _stopping.is_set():
-            raise GateTimeout(f"{name}: the process is stopping")
-        now = time.monotonic()
-        if deadline is not None and now >= deadline:
-            raise GateTimeout(f"{name}: stood aside for a person's query for the whole "
-                              f"{timeout:.0f}s (level corpus)")
-        _stopping.wait(config.GATE_POLL_S if deadline is None
-                       else max(0.0, min(config.GATE_POLL_S, deadline - now)))
+    costs one store read per GATE_POLL_S, not per request. A wait is counted
+    for `plugin` (`stood_aside`)."""
+    began: float | None = None
+    deferred = False
+    try:
+        while interactive_active():
+            if began is None:
+                began = time.monotonic()
+            if _stopping.is_set():
+                raise GateTimeout(f"{name}: the process is stopping")
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                deferred = True
+                raise GateTimeout(f"{name}: stood aside for a person's query for the whole "
+                                  f"{timeout:.0f}s (level corpus)")
+            _stopping.wait(config.GATE_POLL_S if deadline is None
+                           else max(0.0, min(config.GATE_POLL_S, deadline - now)))
+    finally:
+        if began is not None:
+            with _stood_lock:
+                s = _stood.setdefault(plugin, _Stood())
+                s.waits += 1
+                s.seconds += time.monotonic() - began
+                s.deferred += int(deferred)
 
 
 class _Board:

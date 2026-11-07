@@ -28,7 +28,7 @@ the part that prevents the seventh.
 | **main loop** (`run_forever`) | node control state, discovery requests, telemetry publish, and keeping the embed producers matched to the collections (§12; with `WORKER_EMBED_PRODUCERS=0`, the old encoder rotation and bundles) | run a long CPU or IO job |
 | **embed producer**, one per collection (`_embed_producer`, nice 0) | that collection's embedding: selection, chunks, held rows, the commit; its requests pass the encoder's gate (§12) | drain bundles or archives, or do anything that does not feed its encoder |
 | **pipeline thread**, one per collection (`_pipeline_worker`) | that collection's rdf/fts (rdf also commits each batch's catalog-index entries, app/catalog.py, before the marks), its archive passes, and — when the collection `owns_own_embed` (its encoder is its own container) — its embed step | touch another collection's manifest, index or Lance table |
-| **fts look-ahead** (a daemon thread per fts batch, `app/lookahead.py`; only under a pipeline thread with a parse pool and no binding profile, `FTS_OVERLAP=0` turns it off) | waiting on the pool for the NEXT fts batch while the pipeline thread commits and marks this one (2026-11-07) | write anything — the pipeline thread takes the result, re-reads its rows, and writes; or abandons it, and the result is dropped |
+| **fts look-ahead** (a chain of links, a daemon thread per link, `app/lookahead.py`; only under a pipeline thread with a parse pool and no binding profile, `FTS_OVERLAP=0` turns it off) | waiting on the pool for the NEXT fts batches while the pipeline thread commits and marks this one (2026-11-07), up to two batches of rows: a batch's carry and the rows after it, and the rows each rdf commit makes pending, the moment it commits | write anything — the pipeline thread takes whole links, re-reads their rows, and writes; or abandons them, and the results are dropped |
 | **index maintainer** (one thread, `_index_maintainer`, at `nice 10` like the parse pool — and the pylance runtime it creates with it) | the vector index and the `book_id` index of every collection, one at a time; and each collection's catalog-index BACKFILL (app/catalog.py) until it is complete, in rowid windows, `CATALOG_BACKFILL_BUDGET_S` per turn | run on a pipeline thread (a refresh took 41 minutes and idled wikivec), hold a manifest write transaction while it works |
 | **stats publisher** | telemetry, the seeding table | do any pipeline work |
 | **publisher** (one thread, `_publisher`, every `PUBLISH_BEAT_S`) | for every SHARED collection, where the mode embeds: the open parts whose vectors the node holds, bundled, laddered, recorded and announced (`contribute.once(build=False)`), one collection at a time, each pass bounded by `PUBLISH_BUDGET_S` and resumable; `embed = "p2p"` adds the build, which is the embed stage's | embed anything beyond a bundle's sixteen challenge rows; run on a pipeline thread (a pass is minutes of part reads and hashing) |
@@ -541,7 +541,7 @@ taken at once: that is what caught this one within the hour.
 | the round, stage selection, batching, pipeline threads, prefetch, embed producers | `app/worker.py` |
 | model requests by priority: levels, gates, the interactive claim (§12) | `app/rage/dispatch.py` |
 | the parse pool | `app/parallel.py` |
-| the next fts batch parsed while this one is written (double buffering) | `app/lookahead.py`, `app/worker.py` (`_fts_start_ahead`, `_fts_take_ahead`) |
+| the next fts batches parsed while this one is written, and as rdf commits their rows (a chain of look-aheads) | `app/lookahead.py` (`Chain`), `app/worker.py` (`_fts_start_ahead`, `_fts_take_ahead`, `_fts_after_rdf`) |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
 | the embedder sweep and the encoder leases that hold it off | `app/worker.py` (`_sweep_unheld_embedders`), `app/node_state.py` (`encoder_leases`), `app/encoder_use.py` |
@@ -1066,6 +1066,20 @@ the previous steps."**
 - The device-wide yield removed on 2026-09-20 returns, because the GPU
   governor now holds the clock that its absence cost chat.
 - Why: the night of 2026-10-24 (scheduling-log.md).
+- **The claim is a STEP's, not the whole query's** (operator, the same
+  day: "subsequent steps first does not mean keep the gpu unloaded for a
+  long time"). A whole-query claim (04b4f50) was reverted the same morning
+  (1b8d8cc): a query's gaps between steps — the text legs, the dense
+  search and fusion, Ask's prompt — totalled 3.4–4.1 s of 11.6–16.7 s, and
+  a corpus request then took 0.43 s, so corpus fills the gaps. Changing it
+  is the operator's decision, not a fix (scheduling-log.md, 2026-10-25).
+- **A reranked list is ONE step (2026-11-07).** Its warm, its cut (the
+  tokenizer calls) and every language variant's call hold one claim, at
+  RERANK (`retrieval._rerank_list`); each call's own claim nests in it.
+  Per call, the claim cleared in the 9–37 ms between two variants, and a
+  corpus request standing aside could go there. The idle it adds is the
+  variants' spacing: at most 5 × 37 ms a list for the 6 calls measured.
+  Gaps (a), (b) and (c) are unchanged (scheduling-log.md, 2026-11-07).
 
 ### What was measured first
 
@@ -1178,10 +1192,12 @@ claim is live, which was its behaviour before any of this.
 | levels, gates, the claim | `app/rage/dispatch.py` | `tests/test_dispatch.py` |
 | every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
 | the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
+| a reranked list, one claim from its warm to its last variant | `retrieval._rerank_list` | `tests/test_rerank_claim.py` |
 | producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
 | the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
+| corpus's stand-aside in the log (2026-11-07) | `[sched] stood aside for a person's query (since start) — <collection>: N requests, S s[, D deferred]`, from `dispatch.stood_aside` by the worker's beat | `tests/test_dispatch.py` |
 | the clock held while a person waits | `app/gpu_governor.py`, its own TrueNAS app (`deploy/truenas-gpu-governor.yaml`); the System tab's GPU panel | `tests/test_gpu_governor.py` |
 
 ### What to measure after deploying

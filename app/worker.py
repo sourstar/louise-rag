@@ -35,7 +35,7 @@ from typing import Callable
 
 import httpx
 
-from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
+from . import (backend, catalog, chunking, collections as collections_mod, config, cpu_limit, db,
                discovery, embed_select, layers as layers_mod, parallel, embeddings,
                encoder_timeouts, entities,
                fts, issues as issues_mod, lookahead, model_load, model_pins, origin_missing,
@@ -511,6 +511,19 @@ def _with_rid(con, row) -> dict:
 # it is parsed again in the batch after, from its new state, or left alone
 # when it is no longer pending. Anything else abandons the look-ahead and the
 # stage selects and parses as it always did.
+#
+# A CHAIN, NOT ONE BATCH (2026-11-07, after the AFTER of #346: 512 / 482
+# docs/s against ~503, the pool 5.8-6.5 of 11 slots in flight). The look-ahead
+# is a `lookahead.Chain` of links, each an `Ahead` computing the moment it is
+# added, held up to `_FTS_AHEAD_BATCHES` batches of rows:
+#   - after a batch: its carry at the head, then the rows after the cursor;
+#   - after an rdf COMMIT (`_fts_after_rdf`): the rows it just made pending.
+# The second is the one the node needed. With rdf still extracting (wikipedia:
+# 11 M documents), a batch ends with nothing pending past it; the rows the
+# next one needs appear one rdf batch at a time, and were parsed only when fts
+# came round again, while the pipeline thread waited. The synthetic run of
+# scheduling-log.md (2026-11-07) shows it: 10 of 20 fts batches were the carry
+# alone, written as a batch of its own.
 _FTS_NEXT = (
     "SELECT rowid AS rid, * FROM documents "
     "WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 AND embed_done=0 AND rowid>? "
@@ -558,59 +571,131 @@ def _fts_recheck(con, rids: list[int]) -> dict[int, dict]:
     return out
 
 
+#: how many batches of rows the look-ahead holds at most (computed or
+#: computing, not yet taken): the batch the next round takes, and one behind
+#: it whose parts fill its tail. While a batch is written the chain is
+#: extended behind it, so the parent holds up to THREE batches' rows and
+#: results at once (one written, two held), against #346's two: a batch is
+#: tens of MB of chunk text, small beside the worker's cap, and München's
+#: AFTER reads the parent's anon memory with the docs/s
+_FTS_AHEAD_BATCHES = 2
+
+
+def _fts_link(collection, rows: list, known: list, names: bool) -> lookahead.Ahead:
+    """One link of the look-ahead: `rows`' parse, the ones not `known`
+    computed by `parallel.fts_for_rows` on a daemon thread from now on."""
+    return lookahead.Ahead(
+        rows, known, lambda todo: parallel.fts_for_rows(collection, todo, names=names),
+        name=f"fts-ahead-{collection.name}")
+
+
+def _fts_enough(pairs: list) -> bool:
+    """A batch's chunk cap reached by what is in hand (stage_fts cuts there)."""
+    return sum(len(v["chunks"]) for _r, (ok, v) in pairs if ok) >= config.FTS_BATCH_CHUNKS
+
+
+def _fts_extend(con, collection, chain: lookahead.Chain, want: int, names: bool) -> int:
+    """The pending rows after the chain's cursor, up to its bound, added as
+    links of at most `want` rows — a batch's own size, so a link is cut into
+    the parts a batch always was (parallel.PARTS_PER_CHILD). A SQLite read
+    on the pipeline thread, outside any transaction (`_FTS_NEXT`, the scope
+    index from a rowid). Returns the rows added."""
+    room = _FTS_AHEAD_BATCHES * want - chain.held()
+    added = 0
+    while room > 0:
+        n = min(room, want)
+        rows = [dict(r) for r in con.execute(_FTS_NEXT, (chain.cursor, config.MAX_RETRIES, n))]
+        if not rows:
+            break
+        chain.add(_fts_link(collection, rows, [None] * len(rows), names),
+                  max(int(r["rid"]) for r in rows))
+        added += len(rows)
+        room -= len(rows)
+        if len(rows) < n:
+            break                           # the pending set ends here, for now
+    return added
+
+
 def _fts_take_ahead(con, row, collection) -> list | None:
-    """The look-ahead's rows with their results, `row` first — when this
-    round's selected row is the one it starts at and is unchanged; None
-    otherwise, and then the stage selects and parses as it always did."""
-    ahead = _fts_ahead.take(str(collection.manifest_path))
-    if ahead is None:
+    """The look-ahead's rows with their results, `row` first, as many links
+    as a batch takes — when this round's selected row is the one it starts
+    at and is unchanged; None otherwise (the look-ahead is then let go of),
+    and the stage selects and parses as it always did."""
+    key = str(collection.manifest_path)
+    chain = _fts_ahead.get(key)
+    if chain is None:
         return None
-    if row["fts_done"] or not ahead.rows or ahead.rows[0]["uid"] != row["uid"]:
-        ahead.abandon()
+    head = chain.head()
+    if row["fts_done"] or head is None or head["uid"] != row["uid"]:
+        _fts_ahead.drop(key)
         return None
-    # BOUNDED (§3 rule 2): the parse is `parallel.compute`, whose own watchdog
-    # and in-process fall-back run inside it; a batch not answered by then is
-    # abandoned and parsed here, as a batch always was
-    results = ahead.results(timeout=config.PARSE_TIMEOUT_S)
-    if results is None:
+    # BOUNDED (§3 rule 2): ONE bound for every link the batch waits for; the
+    # parse is `parallel.compute`, whose own watchdog and in-process fall-back
+    # run inside it; a batch not answered by then is abandoned and parsed
+    # here, as a batch always was
+    want = batch_docs(collection, "fts", config.FTS_BATCH_DOCS)
+    taken = chain.take(want, _fts_enough, timeout=config.PARSE_TIMEOUT_S)
+    if taken is None:
+        _fts_ahead.drop(key)
         return None
-    current = _fts_recheck(con, [int(r["rid"]) for r in ahead.rows])
+    current = _fts_recheck(con, [int(r["rid"]) for r, _ in taken])
     out = []
-    for r, res in zip(ahead.rows, results):
+    for r, res in taken:
         now = current.get(int(r["rid"]))
         if now == r:
             out.append((r, res))
         elif now is not None and now["uid"] == r["uid"] and _fts_pending(now):
             out.append((now, _CHANGED))
     if not out or out[0][0]["uid"] != row["uid"] or out[0][1] is _CHANGED:
-        return None                         # the selected row itself changed: parse it now
+        _fts_ahead.drop(key)                # the selected row itself changed: parse it now
+        return None
     return out
 
 
 def _fts_start_ahead(con, collection, computed: list, written: set, want: int,
                      names: bool) -> None:
-    """Leave the next batch parsing (see above). `computed`: this batch's
-    selection with its results, in order; `written`: the uids it writes."""
+    """Leave the next batches parsing (see above). `computed`: this batch's
+    rows with their results, in order; `written`: the uids it writes. What it
+    does not write goes back to the head of the chain, its parse carried (a
+    failed peer or a changed row parsed again); then the chain is extended."""
     key = str(collection.manifest_path)
     if not _fts_overlap():
         _fts_ahead.drop(key)
         return
     if any(r["rid"] is None or r["embed_done"] for r, _ in computed):
+        _fts_ahead.drop(key)
         return
+    anchor = max(int(r["rid"]) for r, _ in computed)
+    chain = _fts_ahead.get(key)
+    if chain is None or chain.broken:
+        chain = lookahead.Chain(anchor)
+        _fts_ahead.put(key, chain)
+    else:
+        chain.cursor = max(chain.cursor, anchor)
     left = [(r, res) for r, res in computed if r["uid"] not in written]
-    fresh = []
-    if len(left) < want:
-        anchor = max(int(r["rid"]) for r, _ in computed)
-        fresh = [dict(r) for r in con.execute(
-            _FTS_NEXT, (anchor, config.MAX_RETRIES, want - len(left)))]
-    rows = sorted([r for r, _ in left] + fresh, key=lambda r: int(r["rid"]))
-    if not rows:
+    if left:
+        chain.prepend(_fts_link(collection, [r for r, _ in left],
+                                [res if res[0] else None for _, res in left], names))
+    _fts_extend(con, collection, chain, want, names)
+
+
+def _fts_after_rdf(con, collection) -> None:
+    """An rdf commit's rows are text-index candidates now: to the look-ahead
+    at once, while the thread goes on (see above). Only where a look-ahead is
+    held — after this collection's first fts batch on its pipeline thread —
+    and never a round's problem: an optimisation that fails is let go of."""
+    key = str(collection.manifest_path)
+    chain = _fts_ahead.get(key)
+    if chain is None or chain.broken:
         return
-    carried = {r["uid"]: res for r, res in left if res[0]}
-    _fts_ahead.put(key, lookahead.Ahead(
-        rows, [carried.get(r["uid"]) for r in rows],
-        lambda todo: parallel.fts_for_rows(collection, todo, names=names),
-        name=f"fts-ahead-{collection.name}"))
+    if not _fts_overlap():
+        _fts_ahead.drop(key)
+        return
+    try:
+        _fts_extend(con, collection, chain, batch_docs(collection, "fts", config.FTS_BATCH_DOCS),
+                    fts.names_capable(collection))
+    except Exception:   # noqa: BLE001 — the next fts round selects and parses afresh
+        _fts_ahead.drop(key)
 
 
 def drop_fts_ahead(collection=None) -> None:
@@ -640,13 +725,15 @@ def stage_fts(con, row, collection) -> None:
     cannot be entity-tagged, is dropped rather than blamed on `row`: it keeps
     its pending state and records its own error when its own turn comes.
 
-    THE NEXT BATCH PARSES WHILE THIS ONE IS WRITTEN (on a pipeline thread
-    with a pool: the look-ahead above). It is handed to the pool once this
-    batch's parse is in hand and before its index commit, and taken on the
-    next round. The ORDER above holds per batch: this batch's marks name only
-    this batch's documents, written after this batch's commit; the next
-    batch has written nothing at all until its own turn, so a stop or a crash
-    in between loses only a parse.
+    THE NEXT BATCHES PARSE WHILE THIS ONE IS WRITTEN (on a pipeline thread
+    with a pool: the look-ahead above, a chain of links). This batch's rows
+    past its cut go back to the head of the chain and the rows after it are
+    added, before its index commit; an rdf commit adds its rows too
+    (`_fts_after_rdf`); the next round takes whole links from the head. The
+    ORDER above holds per batch: this batch's marks name only this batch's
+    documents, written after this batch's commit; the batches behind it have
+    written nothing at all until their own turn, so a stop or a crash in
+    between loses only a parse.
     """
     # LOADS AND THE TANTIVY COMMIT RUN OUTSIDE ANY SQLITE TRANSACTION
     # (CLAUDE.md: long non-DB work stays outside the transaction). Chunking
@@ -691,16 +778,18 @@ def stage_fts(con, row, collection) -> None:
     batch = [(first_row, chunks)]
     n_chunks = len(chunks)
     for peer, (ok, peer_value) in computed[1:]:
-        if n_chunks >= config.FTS_BATCH_CHUNKS:
+        # the chunk cap, and the batch's own size: what the look-ahead hands
+        # over is whole links, and may hold more rows than a batch takes
+        if n_chunks >= config.FTS_BATCH_CHUNKS or len(batch) >= want:
             break
         if not ok:
             continue            # a peer never fails the round
         peer_chunks = _unpack(peer, peer_value)
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
-    # THE NEXT BATCH TO THE POOL NOW, before this one's index commit and
-    # marks: the children parse it while this thread writes (a SQLite read
-    # here, outside any transaction; nothing of it is written this round)
+    # THE NEXT BATCHES TO THE POOL NOW, before this one's index commit and
+    # marks: the children parse them while this thread writes (a SQLite read
+    # here, outside any transaction; nothing of them is written this round)
     if not row["fts_done"]:
         _fts_start_ahead(con, collection, computed, {r["uid"] for r, _ in batch}, want,
                          with_names)
@@ -3884,6 +3973,10 @@ def _execute_step(con, collection, stage, row) -> bool:
             encoder_timeouts.answered(
                 encoder_timeouts.endpoint_of(_recipe_or_none(collection)),
                 str(collection.manifest_path), row["uid"])
+    if stage == "rdf":
+        # committed: its rows are text-index candidates, parsed from now on
+        # while this thread goes on (the look-ahead's chain, stage_fts)
+        _fts_after_rdf(con, collection)
     dt = round(time.time() - t0, 2)
     if stage not in ("rdf", "fts") or int(row["native_id"]) % 500 == 0:
         db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
@@ -4974,6 +5067,20 @@ def _sizing_label(key: str) -> str:
     return f"{stage} {name}".strip()
 
 
+def read_cache_line(stats: dict) -> str | None:
+    """`backend.READ_CACHE.stats()` as one log line, or None when no reader
+    has used it in this process."""
+    readers = {n: r for n, r in stats["readers"].items() if r["units"] or r["hits"] or r["misses"]}
+    if not readers:
+        return None
+    mib = 1 << 20
+    return (f"read cache (this process) — {stats['bytes'] / mib:.1f} of {stats['budget'] / mib:.0f} MiB, "
+            f"{stats['units']} units, {stats['evictions']} evictions, {stats['releases']} Arrow releases; "
+            + "; ".join(f"{n}: {r['bytes'] / mib:.1f} MiB in {r['units']} units, "
+                        f"{r['hits']:,} hits / {r['misses']:,} misses since start"
+                        for n, r in sorted(readers.items())))
+
+
 def _log_shares(con, live_paths=None) -> None:
     """Publish what each collection actually GOT from each contended
     resource. Without this the fair share is an assertion; with it, a
@@ -5021,6 +5128,15 @@ def _log_shares(con, live_paths=None) -> None:
                      f"parse pool — {pool['slots_in_flight']:.1f} of "
                      f"{pool['processes']} slots in flight "
                      f"({pool['utilisation']:.0%}) over {pool['elapsed_s']:.0f}s")
+    # THE READ CACHE of THIS process (app/backend.py `READ_CACHE`): one byte
+    # budget for every reader, what each holds, and its hits and misses
+    # since start. The parse children's caches are their own, and their
+    # numbers do not reach this process: a part answers with its rows'
+    # results and nothing else, and no channel is built for this. A child
+    # is read from outside: `grep RssAnon /proc/<pid>/status`.
+    cache_line = read_cache_line(backend.READ_CACHE.stats())
+    if cache_line:
+        db.log_event(con, "info", "sched", cache_line)
     # ...and what the units themselves now cost, which is what the sizes
     # above are derived from (app/sizing.py). A batch that drifts away from
     # BATCH_TARGET_S is visible here before it is visible as unfairness.
@@ -5059,6 +5175,16 @@ def _log_shares(con, live_paths=None) -> None:
             db.log_event(con, "info", "sched", f"gate {name} — " + "; ".join(
                 f"{lvl}: {s['admitted']} admitted, waited {s['waited_s']:.0f}s, "
                 f"served {s['served_s']:.0f}s" for lvl, s in g["levels"].items()))
+    # ...and what corpus work's stand-aside for a person's query cost each
+    # collection (dispatch.stood_aside, §12), cumulative since start: the
+    # requests that waited, how long, and how many of them it deferred. The
+    # wait happens BEFORE a gate, so the gate lines above never showed it.
+    stood = dispatch.stood_aside()
+    if stood:
+        db.log_event(con, "info", "sched", "stood aside for a person's query (since start) — "
+                     + "; ".join(f"{p or '(unnamed)'}: {s['waits']} requests, {s['seconds']:.1f}s"
+                                 + (f", {s['deferred']} deferred" if s["deferred"] else "")
+                                 for p, s in stood.items()))
 
 
 #: set while run_forever's loop runs. The stats beat acts on the node state

@@ -155,6 +155,7 @@ def reset() -> None:
         _probe_locks.clear()
         _flights.clear()
         _recent.clear()
+        _behind.clear()
         _bounds = None
 
 
@@ -434,6 +435,59 @@ def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], 
     if flight.error is not None:
         raise flight.error
     return flight.seconds
+
+
+#: the loads started behind a caller: (server, model) -> [thread, when it ended]
+_behind: dict[tuple[str, str], list] = {}
+#: how long after a load behind a caller ended its caller is told to go on:
+#: the load was tried, and a model still not loaded is then the request's to
+#: meet, bounded, as before — a load that keeps failing must not hold its
+#: caller back for ever
+BEHIND_GRACE_S = 60.0
+
+
+def warm_behind(url: str, model: str | None, warm: Callable[[float], object], *,
+                caller: str) -> bool:
+    """`ensure_loaded` on a DAEMON THREAD, for a caller with other work to do
+    while the model loads: True when the model may be asked now (loaded, a
+    runner that cannot say, no model, or a load behind this caller that ended
+    under `BEHIND_GRACE_S` ago); False while it loads behind the caller — the
+    first call that finds it cold starts the load (one per server and model,
+    `ensure_loaded`'s own flight), and the caller asks again on its next turn.
+
+    Bounded as the inline warm is: the load by the model's `load_timeout_s`,
+    the question by `/system`'s PROBE_TIMEOUT_S (cached SYSTEM_TTL_S)."""
+    if not model:
+        return True
+    server = server_of(url)
+    ids = loaded_models(server)
+    if ids is None or model in ids:
+        return True
+    key = (server, model)
+    with _lock:
+        got = _behind.get(key)
+        if got is not None and got[0].is_alive():
+            return False
+        if got is not None and got[1] is not None and time.monotonic() - got[1] < BEHIND_GRACE_S:
+            return True
+        thread = threading.Thread(target=_load_behind, args=(key, url, model, warm, caller),
+                                  name=f"model-load-{model}", daemon=True)
+        _behind[key] = [thread, None]
+    thread.start()
+    return False
+
+
+def _load_behind(key: tuple[str, str], url: str, model: str,
+                 warm: Callable[[float], object], caller: str) -> None:
+    try:
+        ensure_loaded(url, model, warm, caller=caller)
+    except (LoadTimeout, LoadRefused):
+        return                  # recorded as a cold start; the next request meets it again
+    finally:
+        with _lock:
+            got = _behind.get(key)
+            if got is not None:
+                got[1] = time.monotonic()
 
 
 def _reason(model: str, bound: float) -> str:

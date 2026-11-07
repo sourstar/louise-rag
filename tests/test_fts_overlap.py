@@ -568,3 +568,214 @@ def test_through_the_real_pool_the_overlap_indexes_what_the_serial_stage_does(
     assert sum(ahead_batches) >= 2, ahead_batches
     assert state(con, c) == state(serial_con, serial_c)
     assert all(r[1] == 1 for r in state(con, c)[0])
+
+
+# ---- 5. the chain: the pool fed across batches, and by rdf's commits --------
+#
+# After #346 the pool still held only 5.8-6.5 of its 11 slots in flight
+# (München, 2026-11-07). One look-ahead per batch went to the pool only once
+# the batch before was in hand, so nothing was queued behind a batch's last
+# parts; and while rdf and fts interleave, the rows the next batch needs did
+# not exist when the batch before ended, so the look-ahead held only the
+# carry past the chunk cap. These pin the feed as COUNTS: links queued at
+# once, rows handed over by an rdf commit, batch sizes, parses per document.
+
+def _chain(c):
+    return worker._fts_ahead.get(str(c.manifest_path))
+
+
+def _ahead_calls(parse) -> list[list[int]]:
+    with parse.lock:
+        return [sorted(int(r["native_id"]) for r in rows)
+                for t, rows in parse.calls if t.startswith("fts-ahead-")]
+
+
+def test_the_batch_after_next_is_queued_behind_the_next_one_while_it_parses(
+        tmp_path, monkeypatch, parse, overlap):
+    """After one batch, the next TWO batches' rows are parsing at once, none
+    of them answered yet: the second's parts wait behind the first's and take
+    each child it frees, where one look-ahead per batch queued nothing behind
+    a batch's last parts."""
+    monkeypatch.setattr(config, "FTS_BATCH_DOCS", 5)
+    parse.hold = threading.Event()
+    c, con = _synthetic(tmp_path, 30)
+    try:
+        assert _round(con, c)                                   # 1-5, on the thread
+        chain = _chain(c)
+        assert chain.computing() == worker._FTS_AHEAD_BATCHES == 2
+        assert chain.held() == 10 and chain.head()["uid"] == "s:6"
+        deadline = time.monotonic() + 5
+        while len(_ahead_calls(parse)) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)                                    # both threads started
+        assert sorted(_ahead_calls(parse)) == [[6, 7, 8, 9, 10], [11, 12, 13, 14, 15]]
+    finally:
+        parse.hold.set()
+    _drain(con, c)
+    _assert_all_indexed_once(con, c, 30)
+    assert set(parse.parsed().values()) == {1}
+
+
+def _synthetic_rdf(tmp_path, n: int, monkeypatch, *, fts_want: int, rdf_want: int):
+    """`_synthetic`, every row still to extract (rdf_done=0): rdf and fts
+    interleave (`_next_book`), rdf a batch of `rdf_want` at a time."""
+    c, con = _synthetic(tmp_path, n)
+    con.execute("UPDATE documents SET rdf_done=0, title=NULL")
+    monkeypatch.setattr(worker, "batch_docs", lambda collection, stage, default:
+                        fts_want if stage == "fts" else rdf_want if stage == "rdf" else default)
+    monkeypatch.setattr(config, "FTS_BATCH_DOCS", fts_want)
+    monkeypatch.setattr(parallel, "metadata_for_rows", lambda collection, rows: [
+        (True, {"title": f"title {r['native_id']}", "authors": "", "lang": "en",
+                "subjects": "", "bookshelves": ""}) for r in rows])
+    from app import catalog
+    monkeypatch.setattr(catalog, "write", lambda collection, rows: len(list(rows)))
+    return c, con
+
+
+def _interleave(con, c, rounds: int = 500) -> list[tuple[str, int]]:
+    """Every round to the end, rdf or fts: (stage, rows that stage marked)."""
+    out = []
+    for _ in range(rounds):
+        stage, row = worker._next_book(con, db.get_scope(con), embed_allowed=False, collection=c)
+        if row is None:
+            break
+        col = "rdf_done" if stage == "rdf" else "fts_done"
+        count = f"SELECT COUNT(*) FROM documents WHERE {col}=1"
+        before = con.execute(count).fetchone()[0]
+        worker._execute_step(con, c, stage, row)
+        out.append((stage, con.execute(count).fetchone()[0] - before))
+    return out
+
+
+def test_an_rdf_commit_hands_its_rows_to_the_look_ahead_at_once(
+        tmp_path, monkeypatch, parse, overlap):
+    """rdf still extracting: once the first fts batch has a look-ahead, every
+    rdf commit adds the rows it made pending to it, in the same step — they
+    parse while the thread runs the next rdf batch, not when fts comes round."""
+    c, con = _synthetic_rdf(tmp_path, 60, monkeypatch, fts_want=10, rdf_want=4)
+    rounds = _interleave(con, c, rounds=4)                      # rdf 4, 8, 12; fts 10
+    assert rounds == [("rdf", 4), ("rdf", 4), ("rdf", 4), ("fts", 10)]
+    held = _chain(c).held()
+    assert held == 2                                            # 11-12: extracted, not indexed
+    added = []
+    for _ in range(2):                                          # 2 + 4 + 4 pending: fts's turn
+        stage, row = worker._next_book(con, db.get_scope(con), embed_allowed=False, collection=c)
+        assert stage == "rdf"
+        worker._execute_step(con, c, stage, row)
+        added.append(_chain(c).held() - held)
+        held = _chain(c).held()
+    assert added == [4, 4]
+    # the next fts batch is those ten, every one of them parsed ahead
+    assert worker._next_book(con, db.get_scope(con), embed_allowed=False, collection=c)[0] == "fts"
+    assert sorted(n for rows in _ahead_calls(parse) for n in rows) == list(range(11, 21))
+
+
+def test_while_rdf_and_fts_interleave_every_batch_is_full_and_parsed_once(
+        tmp_path, monkeypatch, parse, overlap, instrumented):
+    """The count that was wrong: with one look-ahead per batch, the round
+    after a batch cut at its size wrote the carry as a batch of its own and
+    left the next full one to be parsed while it waited (the synthetic run,
+    scheduling-log.md 2026-11-07: 10 of 20 batches). Now every fts batch but
+    the last is a full one, each document parsed once, each batch's marks
+    after its own commit."""
+    c, con = _synthetic_rdf(tmp_path, 97, monkeypatch, fts_want=10, rdf_want=4)
+    rounds = _interleave(con, c)
+    sizes = [n for s, n in rounds if s == "fts"]
+    assert sum(sizes) == 97 and all(n == 10 for n in sizes[:-1]), sizes
+    _assert_all_indexed_once(con, c, 97)
+    assert set(parse.parsed().values()) == {1}, parse.parsed().most_common(3)
+    on_thread = [t for t, _rows in parse.calls if not t.startswith("fts-ahead-")]
+    assert len(on_thread) == 1, on_thread
+    commits = [set(ids) for kind, ids in instrumented["events"] if kind == "commit"]
+    marks = [set(ids) for kind, ids in instrumented["events"] if kind == "mark"]
+    assert len(commits) == len(marks) and all(m <= k for m, k in zip(marks, commits))
+
+
+def test_a_stop_with_two_batches_queued_marks_nothing_of_either(
+        tmp_path, monkeypatch, parse, overlap, instrumented):
+    """The pipeline thread leaves (its `finally`) with the next two batches
+    parsing: nothing of them is indexed or marked, and the next start indexes
+    everything once."""
+    monkeypatch.setattr(config, "FTS_BATCH_DOCS", 5)
+    parse.hold = threading.Event()
+    c, con = _synthetic(tmp_path, 20)
+    assert _round(con, c)
+    assert _chain(c).computing() == 2
+    worker.drop_fts_ahead(c)                                    # the pipeline thread's exit
+    parse.hold.set()
+    time.sleep(0.2)
+    marked = {int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents WHERE fts_done=1")}
+    assert marked == instrumented["committed"] == {1, 2, 3, 4, 5}
+    assert set(fts.chunk_counts(c, list(range(1, 21)))) == {1, 2, 3, 4, 5}
+    parse.hold = None
+    _drain(con, c)
+    _assert_all_indexed_once(con, c, 20)
+
+
+def test_one_bound_covers_every_link_a_batch_waits_for(tmp_path, monkeypatch, parse, overlap):
+    """A batch that needs two links waits for them within ONE PARSE_TIMEOUT_S:
+    the second not answering, the batch is what came in time, and the rest
+    is parsed afresh by the rounds after — nothing waits without a bound."""
+    monkeypatch.setattr(config, "FTS_BATCH_DOCS", 5)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.3)
+    c, con = _synthetic(tmp_path, 25)
+    never = threading.Event()
+    real = parse.__call__
+
+    def stuck_past_10(collection, rows, *, names):
+        if threading.current_thread().name.startswith("fts-ahead-") and \
+                any(int(r["native_id"]) > 10 for r in rows):
+            never.wait(10)
+        return real(collection, rows, names=names)
+    monkeypatch.setattr(parallel, "fts_for_rows", stuck_past_10)
+    try:
+        assert _round(con, c)                                   # 1-5; 6-10 answer, 11-15 do not
+        deadline = time.monotonic() + 5
+        while _chain(c).computing() > 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        monkeypatch.setattr(worker, "batch_docs", lambda collection, stage, default: 8)
+        t0 = time.monotonic()
+        assert _round(con, c)                                   # wants 8: 6-10 in time, 11-13 not
+        assert time.monotonic() - t0 < 3
+        done = {int(r[0]) for r in con.execute("SELECT native_id FROM documents WHERE fts_done=1")}
+        assert done == set(range(1, 11))
+        assert _chain(c) is None or not _chain(c).broken        # a broken chain is replaced
+    finally:
+        never.set()
+    _drain(con, c)
+    _assert_all_indexed_once(con, c, 25)
+
+
+def test_a_chain_takes_whole_links_until_a_batch_is_in_hand():
+    """The take itself: links in order, whole, until `want` rows or
+    `enough`; a first link that does not answer abandons the chain, a later
+    one ends the take with what came and leaves the chain broken."""
+    from app import lookahead
+
+    def link(rows, answer: threading.Event | None = None):
+        def compute(todo):
+            if answer is not None:
+                answer.wait(5)
+            return [r * 10 for r in todo]
+        return lookahead.Ahead(rows, [None] * len(rows), compute)
+
+    chain = lookahead.Chain(0)
+    chain.add(link([1, 2]), 2)
+    chain.add(link([3, 4, 5]), 5)
+    chain.add(link([6]), 6)
+    assert chain.head() == 1 and chain.held() == 6 and chain.cursor == 6
+    got = chain.take(4, lambda pairs: False, timeout=5)
+    assert got == [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50)]
+    assert chain.held() == 1 and chain.head() == 6 and not chain.broken
+    assert chain.take(9, lambda pairs: len(pairs) >= 1, timeout=5) == [(6, 60)]
+
+    never = threading.Event()
+    chain = lookahead.Chain(0)
+    chain.add(link([1]), 1)
+    chain.add(link([2], never), 2)
+    t0 = time.monotonic()
+    assert chain.take(5, lambda pairs: False, timeout=0.2) == [(1, 10)]
+    assert time.monotonic() - t0 < 2 and chain.broken and chain.held() == 0
+    chain = lookahead.Chain(0)
+    chain.add(link([1], never), 1)
+    assert chain.take(5, lambda pairs: False, timeout=0.2) is None and chain.held() == 0
+    never.set()
