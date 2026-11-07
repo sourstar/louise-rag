@@ -1172,3 +1172,41 @@ arms loop and presence 1.5 costs quality.
     then "Use the unsloth recommend model for 4 bits"; Qwen's own Q4_K_M was withdrawn);
   - each probed, run whole at 0.7, read blind against the Q8 at 0.7, and timed on an unloaded node;
   - two more seeds for the Q8 at 0.7.
+
+## Several texts in one pass (`parallel`) on wikidata's chunks (München, 2026-11-07) — MEASURED, NOT ADOPTED
+
+The question: wikidata's Nemotron embedding runs at ~34 chunks/s with the card
+at 100 %, after the request-side levers (batch 16, 4 lanes, requests filled
+across documents). Under VeGa, llama.cpp runs one sequence at a time
+(`parallel:1`, the contract since 2026-10-20, when parallel:4 moved 16 of 20
+reranker scores, before the SYCL multi-sequence fix P5). Would several texts in
+one pass fill the card better, and would they keep the bytes?
+
+**Measured.**
+- Engine: the raw louise-sycl-f16-llama-cpp-16acc89, the live YAML except
+  `parallel` and the context (8,192 a slot), DNN=0, node paused.
+- Data: 2,000 real wikidata chunks with "passage: ", 687,333 tokens, **343.7
+  tokens a text**, counted with the model's own /v1/tokenize.
+- Load: requests of 16, max(4, N + 2) in flight.
+- Passes: 2 fresh loads × forward and reverse per setting. Bytes are compared
+  with parallel:1's first pass; "near" = cos ≥ 0.99999 and not identical.
+
+| parallel | texts/s | tokens/s | card busy | identical / near / worse (of 2,000, per pass) | worst cos |
+|---|---|---|---|---|---|
+| 1 | 39.5–39.7 | ~13,600 | 92.7–98.0 % | 2,000 / 0 / 0 | 1.0 |
+| 4 | 42.6–43.8 | ~14,980 | 91.0–99.4 % | 2–9 / 1,990–1,997 / 1 | 0.9999784 |
+| 8 | 38.7–40.9 | ~13,470 | 86.8–97.5 % | 3–16 / 1,984–1,997 / 0–1 | 0.9999899 |
+| 16 | 26.6–27.0 | ~9,200 | 90.3–94.2 % | 1–5 / 1,994–1,998 / 0–1 | 0.9999873 |
+
+**Reading.**
+- parallel:1 already keeps the card at ~96 %. The premise that wikidata's
+  chunks are ~100 tokens was wrong: with the prefix they are 344, so there is
+  no short-sequence loss to recover.
+- parallel:4 is +10 %, but it is not exact, and not even near-exact: one text
+  in every pass falls below 0.99999.
+- 8 and 16 are no faster, or slower.
+
+The contract stays `parallel:1`; no operator question. Live, wikidata embeds at
+34 chunks/s, 86 % of this unloaded rate: card-bound. Files:
+/mnt/ssd4/apps/louise-rag/data/bakeoff/nemo-par/ (rows.jsonl, busy.txt, the 16
+.npy passes), /root/measure/nemo-par.log.
