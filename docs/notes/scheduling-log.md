@@ -2274,4 +2274,21 @@ look-ahead, and in `_mark_indexed_many` / `write_tags_many`); the fts lines now 
 | | fts docs/s (wall) | chunks/s | chunks/doc | fts ms/doc (`unit costs`) | py-spy: waiting on pool / marks / tags |
 |---|---|---|---|---|---|
 | BEFORE (live, 2026-11-07) | ~503 | — | 5.9 (batch medians) | — | 52.4 % / 37.6 % / 7.0 % |
-| AFTER (this branch) | _ | _ | _ | _ | _ |
+| AFTER A, `FTS_OVERLAP=0` (cda6e126, 02:14–02:31) | 511.8 | 2,833 | 5.54 | 8.5 | 44.7 % / — / — |
+| AFTER B, `FTS_OVERLAP=1` (restart only, 02:39–02:59) | 481.6 | 2,690 | 5.58 | 1.4 | 53.6 % / — / — |
+
+**AFTER (2026-11-07, the node).** Same profile (night, 12 cores), same mode. Wikidata embedding ran beside both
+windows, and gutenberg fts had work in both (123.9 and 93.6 ms/doc). Neither window gives a gain at wall:
+512 and 482 docs/s against ~503.
+- The marks and tags are GONE from the profile: `_mark_indexed_many` and `write_tags_many` are under 1 % in both,
+  against 37.6 % + 7.0 % before. The statement change works as designed.
+- The time they freed did not become throughput. In A it went to other work on the same thread: 21.7 % in
+  `model_load.ensure_loaded` → `embeddings._warm_first` (an HTTP warm-up of an encoder, waited on in the pipeline
+  thread), and 17.7 % in genesis's `import_shard` → `_read_corpus_embedded_shard` (reading an archive shard's
+  Parquet). In B the pool wait grew instead (53.6 %), and the parse pool was only 5.8–6.5 of 11 slots in flight.
+- So the limit now is what the pool is fed, not the writes. The pool is half idle while the one pipeline thread
+  waits on it, then does the next stage's work. The overlap (B) did not fill it: 53 % in flight against 59 %.
+- `unit costs` (8.5 vs 1.4 ms/doc) is a 10-minute window's mean and moves with what the window caught. The wall
+  rate over 17–19 min is the number here.
+- Next: take the encoder warm-up and the genesis read off the pipeline thread (A's 39 %), and find why a batch
+  keeps only ~6 of 11 slots in flight. py-spy A: /root/measure/spy-A-overlap0.raw, B: spy-B-overlap1.raw.
