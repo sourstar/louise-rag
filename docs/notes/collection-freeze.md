@@ -296,7 +296,7 @@ Considered and not done, each needing a wire change, so asked before built
 Status quo, built: neither; the aligned files are reached in the swarm
 through the digest's hints.
 
-## 10. Open: a question for the operator
+## 10. Decided: no bundle intake while frozen (operator, 2026-11-07: "Option A")
 
 **What it is:** whether a frozen collection takes in other peers' vectors
 (bundles) for the version it holds — vectors only, its records unchanged.
@@ -306,8 +306,11 @@ through the digest's hints.
 | **A — no bundle intake while frozen** (built; the task's reading of "no updates are fetched") | only this node's own encoder adds vectors | the copy stays exactly as frozen; nothing of anyone else's arrives | a node frozen because it has no encoder gets no vectors for what is pending |
 | B — bundles whose records are the ones held are taken in (the ladder's T0 already checks it, accept.take) | vectors from peers fill the version held | the operator's own example ("no embedding engine available") gets its vectors | the vector table changes while "frozen" |
 
-Recommendation: B, since a bundle that passes T0 here describes the
-version held and is no update of it. If the operator says nothing, A stays.
+Recommended was B, since a bundle that passes T0 here describes the version
+held and is no update of it. **The operator chose A** (2026-11-07, verbatim:
+"Option A"): a frozen collection takes nothing in from peers, vectors
+included; only this node's own encoder adds to it. A node frozen for want of
+an encoder unfreezes to receive peers' vectors.
 
 ## 11. What the Library card and the status display should show
 
