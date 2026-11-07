@@ -18,6 +18,35 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+### 2026-11-07: one status — `app/status.py`
+
+- **The operator**: "The interface with which a model status is queried
+  must me common, as the fetching, parsing, indexing and embedding". The
+  card's code was common; its numbers and reasons were computed three
+  times (web.py's scan, health.py's bounded counts and reasons, api.py's
+  own SQL) plus `node_state.embedding_blockers`. `app/status.py` is now the
+  one definition (docs/07 §7.3, "One status"); `tests/test_one_status.py`
+  renders the card, `node show`, `node health`, `/api/status` and `hold
+  collection show` over one manifest — 11 of its 12 tests fail on 960bb09.
+- **The divergences it found**: a collection paused on its own was RUNNING
+  in `node show` (no reason); acquire-only and `embed = "off"` had two
+  sentences each; a document at an older embedding version was "awaiting
+  the encoder" on the card and idle in `node show` (2 against 3 on the
+  fixture). Declined documents were NOT counted waiting by `node show`
+  (`embed_done=0` leaves `-1` out, in the index) — that one was already right.
+- **Superseded, grey** (operator, same day): not done at a stage, its
+  earlier version still held and searched — `<stage>_done=0 AND
+  <stage>_version<>0 AND chunks>0 AND NOT unindexable`, fts and embed.
+  Over-counts only during `dev drop-rows` / `dev carry` drops (rows gone,
+  version kept, until re-embedded).
+- **Cost, measured** (4 M synthetic rows, SQLite 3.45): the card's scan
+  3.12 s on 960bb09; with the twelve new counts as SUM(CASE) 5.45 s; as
+  `COUNT(*) FILTER`, most selective column first, 2.47 s — every old key
+  identical, every new one equal to a direct COUNT(*). `node show`'s
+  bounded count: 45 ms both ways at 4 M (over the bound, no new lookups);
+  9 → 23 ms on 80 k rows with 17 k documents at a stage (the superseded
+  lookups, bounded by ERRORED_EXACT_BELOW).
+
 ### 2026-11-02 (morning): harrier evaluation under acquire-only; the web alone on 938c525
 
 - **The node is acquire-only for the harrier evaluation** (operator: "Suspend

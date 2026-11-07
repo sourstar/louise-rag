@@ -61,6 +61,7 @@ from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .verify import backend_gate
 from . import stats as stats_mod
+from . import status as status_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -148,38 +149,10 @@ TEMPLATES.env.filters["ago"] = _ago
 
 
 #: What the ETA slot shows when work REMAINS and there is no rate to stand
-#: behind. A dash, not "TBD" (operator, 2026-09-12): the card is read to
-#: see whether anything is moving, and a word the reader has to look up is
-#: worse than an honest blank. "TBD" also stood for four different states —
-#: no history yet, one window so far, stalled, and not scheduled — none of
-#: which it distinguished. The dash carries its reason in the tooltip.
-#:
-#: Nothing at all is shown once a stage is DONE. That half was already the
-#: intent (`_human_eta` returns None "so the card shows NOTHING rather than
-#: a placeholder") and it was unreachable on the dense row, which completed
-#: against a denominator no stage could ever reach — see `stage_targets`.
-ETA_UNKNOWN = "-"
-
-
-def _human_eta(seconds: float | None) -> str | None:
-    """Compact ETA for the Library bars — None when it cannot be known
-    (no rate, nothing left), so the card shows NOTHING rather than a
-    placeholder. Deliberately coarse: a rolling-sample ETA is accurate to
-    a factor, not a minute."""
-    if not seconds or seconds <= 0:
-        return None
-    if seconds < 90:
-        return f"~{int(seconds)}s"
-    minutes = seconds / 60
-    if minutes < 90:
-        return f"~{int(minutes)}min"
-    hours = minutes / 60
-    if hours < 48:
-        return f"~{hours:.0f}h"
-    days = hours / 24
-    if days < 400:
-        return f"~{days:.0f}d"
-    return f"~{days / 365:.0f}y"
+#: behind, and the compact ETA itself: THE STATUS MODULE'S (app/status.py,
+#: 2026-11-07 — one definition of a collection's status for every surface).
+ETA_UNKNOWN = status_mod.ETA_UNKNOWN
+_human_eta = status_mod.human_eta
 
 
 # the same coarse duration in the Library's confirmations ("reprocess
@@ -1507,7 +1480,7 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
 _COUNTS_TTL_S = 120.0
 #: control key holding the last counts, so a restarted process can show
 #: what was true instead of zeros while it re-scans (see _stored_counts)
-_COUNTS_CONTROL_KEY = "document_counts"
+_COUNTS_CONTROL_KEY = status_mod.STORED_KEY
 #: every count a Library card reads (`_document_counts_query` writes them)
 _COUNT_KEYS = ("total", "in_scope", "rdf_done", "fts_done", "embed_done", "declined", "blocked",
                "unindexable", "embed_ready", "chunks_pending", "docs_unindexed")
@@ -1530,7 +1503,7 @@ _counts_cache: dict[str, tuple[float, dict]] = {}
 _counts_lock = threading.Lock()
 # Stage-rate samples (see _collection_shelf): memory-first, keyed on the
 # manifest path. GIL-atomic dict ops; a rare lost update costs one sample.
-_stage_rate_memo: dict[str, dict] = {}
+_stage_rate_memo: dict[str, dict] = status_mod.STAGE_RATE_MEMO
 # in-flight refresh per collection, WITH its start time: a refresh thread
 # that hangs (or dies un-noticed) must not hold the guard forever, or the
 # counters freeze at an ever-growing age with no refresh ever starting
@@ -1591,107 +1564,11 @@ def _counted_over_another_range(collection, counts: dict) -> bool:
 
 
 def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
-    """THE scan's SQL and parameters. `spans` (an archive's declared id
-    range, `_archive_spans`) adds four SUMs; without them the SQL is the
-    base scan byte for byte."""
-    # blocked vs unindexable: stage failures are prefixed with their stage
-    # (worker._execute_step), so an UNPREFIXED error came from discovery and
-    # describes the CORPUS — no text in the mirror, retracted upstream.
-    # "Clear errors & retry" cannot fix those (the next scan re-applies
-    # them), so reporting them as failures promised an impossible remedy.
-    stage_error = ("(" + " OR ".join(
-        f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed")) + ")")
-    pending = (f"in_scope=1 AND fts_done=1 AND error IS NULL AND retries<:max "
-               f"AND (embed_done=0 OR (embed_done=1 AND embed_version<:ver))")
-    params: dict = {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}
-    archive_sums = ""
-    if spans:
-        from .bundles.genesis import NUMERIC_ID_SQL, in_spans_sql
-        spans_sql, span_params = in_spans_sql(spans, named=True)
-        params.update(span_params, span_top=spans[-1][1])
-        # a non-numeric id casts to 0: inside a range from 0 unless excluded
-        in_range = f"({spans_sql} AND {NUMERIC_ID_SQL})"
-        # THE ARCHIVE'S DECLARED RANGE, for the pre-embedded row: documents
-        # that HOLD a vector inside it, over in-scope documents inside it.
-        # Vectors held, not the import ledger (SUM(genesis_imports.docs)),
-        # which is pass bookkeeping and read 80,654 short on pubmed. Four
-        # more SUMs on the pass this already makes — deliberately NOT a
-        # walk of idx_documents_native_int, which needs a row lookup per
-        # document for in_scope/embed_done (40.6 s on live pubmed, health.py).
-        # Measured on 4M synthetic rows (2026-09-14): base scan 2.13 s; the
-        # SUMs 2.76 s (two or four cost the same); with the numeric-id check
-        # that keeps a non-numeric id out of the range, 3.23 s — +52% over
-        # the base, the TTL stretching with it (_counts_ttl_for).
-        #
-        # arch_in_range_waiting is the gap `louise node health` reports (its
-        # _WAITING['embed'], past indexing), so the card can say how much of
-        # its own gap health will explain; arch_past_range is what is ABOVE
-        # the range — the rest of what lies outside it (a gap between files,
-        # an id below the first, an id that is not a number) is not "past".
-        archive_sums = f""",
-          SUM(CASE WHEN in_scope=1 AND {in_range} THEN 1 ELSE 0 END) arch_in_range,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 AND {in_range}
-                   THEN 1 ELSE 0 END) arch_in_range_embedded,
-          SUM(CASE WHEN in_scope=1 AND embed_done=0 AND rdf_done=1 AND fts_done=1
-                        AND {in_range} THEN 1 ELSE 0 END) arch_in_range_waiting,
-          SUM(CASE WHEN in_scope=1 AND CAST(native_id AS INTEGER) > :span_top
-                        AND {NUMERIC_ID_SQL} THEN 1 ELSE 0 END) arch_past_range,
-          -- Of what lies OUTSIDE the range, the documents with NO TEXT:
-          -- `chunks` is written by the fts stage, so an indexed document
-          -- with none has nothing for an encoder to embed. Wikipedia's
-          -- redirects are that — a record of their target and no more —
-          -- and the card said all 30.9 M pages past the range were the
-          -- local encoder's work (2026-09-15). An UNINDEXED row is not
-          -- counted: its chunk count is unknown, never zero.
-          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND fts_done=1
-                        AND COALESCE(chunks, 0) = 0
-                   THEN 1 ELSE 0 END) arch_outside_empty,
-          -- The local encoder's progress on THE REST: embedded, and not one
-          -- of those. The embed stage marks a document with no chunk done
-          -- without writing a vector, and the card, which derived this as
-          -- embed_done minus the range's, counted 37 of pubmed's 53 empty
-          -- records both as "nothing to embed" and as "done" (2026-09-18).
-          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND embed_done=1
-                        AND NOT (fts_done=1 AND COALESCE(chunks, 0) = 0)
-                   THEN 1 ELSE 0 END) arch_outside_embedded"""
-    return f"""
-        SELECT COUNT(*) total, SUM(in_scope) in_scope,
-          SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
-          SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
-          -- not embedded here by choice (07 §7.8 `embed_slices`): out of the
-          -- dense stage's target, never counted as embedded
-          SUM(CASE WHEN in_scope=1 AND embed_done=-1 THEN 1 ELSE 0 END) declined,
-          SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked,
-          -- PER STAGE, because "blocked" is collection-wide and says
-          -- nothing about WHICH stage a document is stuck at. A document
-          -- blocked at fts has already passed rdf, so counting it against
-          -- rdf's remaining work makes a stage that is actively running
-          -- look like it has nothing left to do. Three more SUMs on a scan
-          -- that is already walking every row.
-          SUM(CASE WHEN in_scope=1 AND rdf_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_rdf,
-          SUM(CASE WHEN in_scope=1 AND fts_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_fts,
-          SUM(CASE WHEN in_scope=1 AND embed_done=0
-                        AND ({stage_error} OR retries>=:max)
-                   THEN 1 ELSE 0 END) blocked_embed,
-          SUM(CASE WHEN in_scope=1 AND error IS NOT NULL
-                        AND NOT {stage_error} AND retries<:max
-                   THEN 1 ELSE 0 END) unindexable,
-          SUM(CASE WHEN {pending} THEN 1 ELSE 0 END) embed_ready,
-          SUM(CASE WHEN {pending} THEN chunks ELSE 0 END) chunks_pending,
-          -- Documents that still have to pass rdf/fts before they can be
-          -- embedded. `chunks` is written BY the fts stage, so for these the
-          -- chunk count is not zero — it is unknown, and a page that renders
-          -- it as 0 says "nothing to do" about a collection with thousands of
-          -- contigs still to index.
-          SUM(CASE WHEN in_scope=1 AND fts_done=0 AND error IS NULL
-                        AND retries<:max THEN 1 ELSE 0 END) docs_unindexed{archive_sums}
-        FROM documents""", params
+    """THE scan's SQL and parameters — app/status.py `full_scan_sql`, the one
+    definition of every count a status surface reads (2026-11-07). `spans`
+    (an archive's declared id range, `_archive_spans`) adds the range's
+    SUMs; without them the SQL is the base scan byte for byte."""
+    return status_mod.full_scan_sql(spans)
 
 
 def _counts_key(collection) -> str:
@@ -1772,6 +1649,19 @@ def _document_counts(collection) -> tuple[dict | None, float]:
     return None, 0.0
 
 
+def document_counts_now(collection) -> tuple[dict, float]:
+    """(counts, age_seconds) for a caller that must answer with numbers —
+    `/api/status`, which scanned on every request until 2026-11-07: the
+    card's cached counts when there are any (fresh, or stored and labelled
+    by age), else the scan itself, now, as it always did."""
+    counts, age = _document_counts(collection)
+    if counts is None or any(k not in counts for k in status_mod.SCAN_KEYS):
+        # cold, or a row stored before the counts this route reads were in
+        # the scan: they would read 0 until the next refresh lands
+        return _document_counts_query(collection), 0.0
+    return counts, age
+
+
 def _stored_counts(collection) -> tuple[dict, float] | None:
     """The last counts this collection wrote to its manifest, with when.
 
@@ -1781,16 +1671,13 @@ def _stored_counts(collection) -> tuple[dict, float] | None:
     """
     try:
         con = db.connect(collection)
-        raw = db.get_control(con, _COUNTS_CONTROL_KEY)
-        if not raw:
-            return None
-        got = json.loads(raw)
-        counts, at = got.get("counts"), float(got.get("at") or 0)
-        scan_s = float(got.get("scan_s") or 0)
+        # the row's one reader (app/status.py), which `node show` reads too
+        got = status_mod.read_stored(con)
     except Exception:      # noqa: BLE001 — a missing or malformed row is
         return None        # simply no answer, never a broken page
-    if not isinstance(counts, dict) or not at:
+    if got is None:
         return None
+    counts, at, scan_s = got
     if scan_s > 0:
         # a cold process learns the scan's cost from the row, so its TTL and
         # its "every N min" are the scan's, not the floor (see _persist_counts)
@@ -2131,242 +2018,33 @@ def _collection_shelf(collection: collections_mod.Collection,
     else:
         freshness = "never scanned"
 
-    # PROOF OF MOTION and synthetic ETAs, one mechanism for EVERY bar:
-    # each stage's advance is measured across page loads (persisted per
-    # collection) and turned into a compact ETA shown after the counter. A
-    # 40M-document collection advancing at a healthy rate moves its bar
-    # fractions of a percent per hour, which reads as STUCK (operator
-    # report, verified live against the events table). A rate that
-    # measures zero over the window yields NOTHING — no placeholder, and
-    # never a stale number beside a genuinely stalled stage.
-    # Samples live in PROCESS MEMORY first (all page loads share the web
-    # process); the control-table write is best-effort persistence for the
-    # next restart only. Memory is not optional: on a manifest under
-    # continuous pipeline writes the 200 ms _sample_write loses the lock
-    # race nearly every time (observed live on pubmed after the throughput
-    # fix — the baseline could not land for an hour), and a sampler that
-    # needs a WRITE to function turns a reader into a lock contender.
-    _RATE_FIELDS = ("fetch", "rdf", "fts", "embed")
+    # ONE STATUS (operator, 2026-11-07: "The interface with which a model
+    # status is queried must me common"): each stage's target, done,
+    # waiting, blocked, declined, superseded, and the rate and ETA from the
+    # persisted samples, are app/status.py's — the definitions `node show`,
+    # `/api/status` and `hold collection show` read too. This function only
+    # lays them out for the card.
+    _RATE_FIELDS = status_mod.STAGES
     stage_rates = {k: None for k in _RATE_FIELDS}
     stage_etas = {k: None for k in _RATE_FIELDS}
-    #: Why the ETA slot says what it says, in words, for the tooltip. The
-    #: template used to build this itself and could only guess: it rendered
-    #: `title="+/h"` — a literal `+` and `/h` around nothing — on every row
-    #: whose rate was unknown, which is exactly the rows an operator asks
-    #: about.
+    #: Why the ETA slot says what it says, in words, for the tooltip — built
+    #: in app/status.py `rates`, the only place that knows which of the
+    #: reasons applies (the template once rendered `title="+/h"`).
     stage_eta_why = {k: None for k in _RATE_FIELDS}
-    #: THE TARGET EACH STAGE IS MEASURED AGAINST, computed once here so the
-    #: bar, the "complete" colour and the ETA cannot disagree about what
-    #: done means. They did: the template derived `indexable = in_scope -
-    #: unindexable` for rdf and fts and used raw `in_scope` for the dense
-    #: row, while this function computed `remaining` from `in_scope` for
-    #: all three. On gutenberg — 79,320 in scope, 33 unindexable — that
-    #: made the dense row's target 33 documents no stage will ever finish,
-    #: so its ETA slot could never go quiet. "A bar that cannot reach its
-    #: end is not a progress bar" is the note already above the rdf row;
-    #: this is that note applied to the one row that was missing it.
-    #: Always present, zeros while the counts are still being scanned, so
-    #: the template can read it unconditionally instead of keeping its own
+    #: THE TARGET EACH STAGE IS MEASURED AGAINST (status `progress`), so the
+    #: bar, the "complete" colour and the ETA cannot disagree about what done
+    #: means. Always present, zeros while the counts are still being scanned,
+    #: so the template reads it unconditionally instead of keeping its own
     #: copy of the arithmetic — which is how the two came to disagree.
     stage_targets: dict[str, int] = {k: 0 for k in _RATE_FIELDS}
+    embed_mode = db.get_scope(con)["embed_mode"]
+    stages = status_mod.from_counts(None if counts_pending else counts, fetched=fetched)
     if not counts_pending:
-        now_i = int(time.time())
-        # WHEN EACH NUMBER WAS TRUE (2026-11-07). The document counts are a
-        # scan that lands every TTL (5-6 min on wikidata) and is served from
-        # cache between, so a rate measured against the RENDER time divided
-        # a delta counted over one span by another: the card said
-        # +184.021/h while the worker embedded ~120k documents an hour, and
-        # the first window after a restart — baselined on stored counts
-        # minutes old — read 1.5x high. A stage's sample carries the time its
-        # count was taken; the fetch counter is read live, at now.
-        counted_at = now_i - int(counts_age or 0)
-        seen_at = {"rdf": counted_at, "fts": counted_at, "embed": counted_at, "fetch": now_i}
-        cur = {
-            "rdf": counts["rdf_done"] or 0,
-            "fts": counts["fts_done"] or 0,
-            "embed": counts["embed_done"] or 0,
-            # FILES, always — the unit that moves when bytes move, and the
-            # one `fetched["complete"]` is judged on, so the rate, the ETA,
-            # the stall and the green label finally agree about one thing.
-            #
-            # This counted DOCUMENTS for a one-dir-per-doc layout, and a
-            # document is a DIRECTORY: a pass that fills missing files into
-            # directories already present cannot move that counter at all.
-            # Live on gutenberg — 4,696 files and 1 GB landed into existing
-            # book directories — the card reported "no progress in the last
-            # 30 minutes" on a fetch running at full speed, which is worse
-            # than a dash: it asserts a stall that is not happening.
-            "fetch": ((fetched or {}).get("done") or 0),
-        }
-        indexable = max(0, (counts["in_scope"] or 0) - unindexable)
-        stage_targets = {
-            "rdf": indexable, "fts": indexable,
-            "embed": max(0, indexable - (counts["declined"] or 0)),
-            # `remote_total` is the file count `complete` compares against:
-            # max(the origin's recorded listing, the ledger). Same unit as
-            # `cur["fetch"]` above, by construction.
-            "fetch": ((fetched.get("remote_total") or 0) if fetched else 0),
-        }
-        remaining = {k: max(0, stage_targets[k] - cur[k]) for k in _RATE_FIELDS}
-        # WHAT A STAGE CAN STILL TAKE. A blocked document waits for a human
-        # ("clear errors & retry"), so while the only thing left is blocked
-        # the stage is as finished as it can be on its own — and a dash
-        # that never resolves is the noise this change is removing. Unlike
-        # `unindexable` it is NOT taken out of the target: retrying can fix
-        # it, so the bar legitimately stops short and the badge says why.
-        #
-        # PER STAGE. This subtracted the COLLECTION-WIDE `blocked` from all
-        # three document stages, and `blocked` counts a document stuck at
-        # ANY stage. A document blocked at fts has already passed rdf — so
-        # two of them were enough to make rdf's slot go silent while the
-        # worker was actively parsing two other documents. Counted against
-        # the stage it is actually stuck at, which is what `blocked_<stage>`
-        # is for.
-        workable = {k: max(0, remaining[k]
-                           - int(counts.get("blocked_" + k) or 0))
-                    for k in _RATE_FIELDS}
-        # THE FETCH ROW IS JUDGED THE WAY ITS OWN LABEL IS. Its counter is
-        # in DOCUMENTS (`docs_done`) and its target came from the origin
-        # listing's `docs_total`, which counts directories the origin
-        # publishes including the ones holding nothing readable — so the
-        # counter tops out below the target and the slot never went quiet.
-        # Live on gutenberg: 79,287 against 79,389, an eternal dash on a
-        # finished fetch. `fetched["complete"]` is the same test the row's
-        # green label already uses — no pass running and every listed file
-        # landed — so the two now agree by construction.
-        if fetched and fetched.get("complete"):
-            workable["fetch"] = 0
-        # A STAGE THE NODE HAS BEEN TOLD NOT TO RUN HAS NOTHING TO SAY. With
-        # embedding off, the dense row reported "no progress in the last 30
-        # minutes" — true, and read as a fault on a collection doing exactly
-        # what it was configured to do. The row's own label already carries
-        # the mode; the estimate slot has no business guessing at a stage
-        # nobody asked to run. "Work it can take on its own" is the
-        # invariant's wording and this is part of what it means.
-        if db.get_scope(con)["embed_mode"] == "off":
-            workable["embed"] = 0
-        memo_key = str(collection.manifest_path)
-        rec_sr = _stage_rate_memo.get(memo_key)
-        if rec_sr is None:
-            # warm start after a web restart: the last persisted sample
-            raw_sr = db.get_control(con, "stage_rate")
-            if raw_sr:
-                try:
-                    rec_sr = json.loads(raw_sr)
-                except (ValueError, TypeError):
-                    rec_sr = None
-        if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS):
-            # first sight or a pre-upgrade record: fresh baseline
-            baseline = {**cur, "ts": now_i,
-                        **{k + "_pts": seen_at[k] for k in _RATE_FIELDS},
-                        **{k + "_pc": cur[k] for k in _RATE_FIELDS}}
-            _stage_rate_memo[memo_key] = baseline
-            _sample_write(con, "stage_rate", json.dumps(baseline))
-            for k in _RATE_FIELDS:
-                if workable[k] > 0:
-                    stage_etas[k] = ETA_UNKNOWN  # work remains, no history yet
-                    stage_eta_why[k] = "measuring — no rate yet"
-        else:
-            # A COUNT THAT SHRANK RE-BASELINES ITS OWN STAGE, not all four.
-            # This used to be `any(cur[k] < rec_sr[k] ...)` over every
-            # field, so a single dip — a reset, a re-mint, a corpus whose
-            # fetch total was revised down — discarded the accumulated
-            # rate and sample count of the other three stages as well, and
-            # every one of them went back to a placeholder for the next
-            # two windows. Each stage's history is its own.
-            for k in _RATE_FIELDS:
-                if cur[k] < int(rec_sr.get(k) or 0):
-                    # `_stalled` clears with the rest of it: a stage whose
-                    # history was just thrown away has not been observed
-                    # standing still, and a sticky flag made it claim so.
-                    rec_sr = {**rec_sr, k: cur[k], k + "_ph": None,
-                              k + "_n": 0, k + "_stalled": False,
-                              k + "_pts": seen_at[k], k + "_pc": cur[k]}
-            # LOW-PASS FILTERED rate: an exponential moving average over the
-            # per-window rates (alpha 0.3 -> a new window carries 30 %), and
-            # an ETA is shown only once TWO windows have contributed.
-            # Operator report: raw window-to-window rates swung the ETA from
-            # wildly optimistic (a 1000-document batch landing just inside
-            # the window) to wildly pessimistic (the window catching the
-            # quiet tail of a batch). A zero-progress window drops the rate
-            # entirely — TBD until motion resumes — rather than decaying a
-            # stale number into an ever-growing ETA.
-            _EMA_ALPHA = 0.3
-            _MIN_WINDOWS = 2
-            # A stage that commits in BURSTS (a 1,000-chunk book every six
-            # minutes) shows no progress in many 5-minute windows. Such a
-            # window is not evidence of a zero rate: the measurement
-            # window STRETCHES until the stage moves again — the rate is
-            # progress over the time since the LAST progress — and only a
-            # stall longer than _STALL_S drops the rate to TBD.
-            _STALL_S = 1800
-            samples = {k: int(rec_sr.get(k + "_n") or 0) for k in _RATE_FIELDS}
-            stalled = {k: bool(rec_sr.get(k + "_stalled")) for k in _RATE_FIELDS}
-            for k in _RATE_FIELDS:
-                stage_rates[k] = rec_sr.get(k + "_ph")
-            elapsed = now_i - int(rec_sr.get("ts") or now_i)
-            if elapsed >= 300:
-                progress_ts, progress_count = {}, {}
-                for k in _RATE_FIELDS:
-                    # since the last PROGRESS-bearing sample (older records:
-                    # the last sample)
-                    p_ts = int(rec_sr.get(k + "_pts") or rec_sr.get("ts") or now_i)
-                    p_count = int(rec_sr.get(k + "_pc") if rec_sr.get(k + "_pc") is not None
-                                  else (rec_sr.get(k) or 0))
-                    delta = cur[k] - p_count
-                    span = max(1, seen_at[k] - p_ts)
-                    prev = rec_sr.get(k + "_ph")
-                    if delta > 0:
-                        raw = delta * 3600.0 / span
-                        ema = raw if not prev else _EMA_ALPHA * raw + (1 - _EMA_ALPHA) * prev
-                        # A STAGE SLOWER THAN ONE DOCUMENT AN HOUR still has
-                        # a rate. `round(ema)` gave 0 for anything under
-                        # 0.5/h, and 0 is falsy — so the slot said
-                        # "measuring — no rate yet" forever on a stage that
-                        # was demonstrably moving, and could never reach the
-                        # stall reason either (that needs a prior window).
-                        stage_rates[k] = round(ema) if ema >= 1 else round(ema, 2)
-                        samples[k] += 1
-                        stalled[k] = False
-                        p_ts, p_count = seen_at[k], cur[k]
-                    elif span >= _STALL_S:
-                        stage_rates[k] = None       # stalled: no number to stand behind
-                        samples[k] = 0
-                        stalled[k] = True
-                    progress_ts[k], progress_count[k] = p_ts, p_count
-                updated = {**cur, "ts": now_i,
-                           **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS},
-                           **{k + "_n": samples[k] for k in _RATE_FIELDS},
-                           # PERSISTED, because the stall has to outlive the
-                           # render that noticed it. The reason used to be
-                           # inferred from the PREVIOUS record's sample count
-                           # being non-zero — true on the detecting render and
-                           # false on every one after it, since the stall
-                           # itself writes that count to zero. So a stage dead
-                           # for hours said "measuring — no rate yet".
-                           **{k + "_stalled": stalled[k] for k in _RATE_FIELDS},
-                           **{k + "_pts": progress_ts[k] for k in _RATE_FIELDS},
-                           **{k + "_pc": progress_count[k] for k in _RATE_FIELDS}}
-                _stage_rate_memo[memo_key] = updated
-                _sample_write(con, "stage_rate", json.dumps(updated))
-            for k in _RATE_FIELDS:
-                if workable[k] <= 0:
-                    continue
-                if stage_rates[k] and samples[k] >= _MIN_WINDOWS:
-                    stage_etas[k] = _human_eta(remaining[k] * 3600.0 / stage_rates[k])
-                    stage_eta_why[k] = f"+{stage_rates[k]:,}/h".replace(",", ".")
-                else:
-                    # work remains and the rate is not yet trustworthy:
-                    # say so, never a number that will be revised 10x.
-                    # WHICH of the reasons it is goes in the tooltip — the
-                    # one token used to cover all of them.
-                    stage_etas[k] = ETA_UNKNOWN
-                    stage_eta_why[k] = (
-                        "no progress in the last 30 minutes"
-                        if stalled[k]
-                        else "measuring — one window so far, waiting for a second"
-                        if stage_rates[k]
-                        else "measuring — no rate yet")
+        cur, stage_targets, remaining, workable = status_mod.progress(
+            stages, fetched=fetched, embed_mode=embed_mode)
+        stage_rates, stage_etas, stage_eta_why, _samples = status_mod.rates(
+            con, str(collection.manifest_path), cur, remaining, workable,
+            counts_age=counts_age, sample_write=_sample_write)
         # rdf is not stalled when it is simply AHEAD: the worker gives the
         # thread to fts whenever a full batch is ready (_next_book), so a
         # stage whose output already outruns its consumer by a batch or
@@ -2398,16 +2076,34 @@ def _collection_shelf(collection: collections_mod.Collection,
                   "resumes when indexing catches up")
 
     recipe = _shelf_recipe(collection)
-    embed_mode = db.get_scope(con)["embed_mode"]
+    paused = node_state.pause_of(collection.name)
+    # judged against the mode the page read once for every card, the pause
+    # just read, the setting: THE holds `node show` names (status `holds`)
+    if stages:
+        status_mod.judged(stages, collection.name, collection=collection, mode=worker_state,
+                          pause=paused, embed_mode=embed_mode)
+        embed_holds = stages["embed"].holds
+    else:
+        embed_holds = [h.to_json() for h in status_mod.holds(
+            collection.name, "embed", collection=collection, mode=worker_state, pause=paused,
+            embed_mode=embed_mode)]
     return {
         "embed_mode": embed_mode,
         # RULE 2 (2026-11-06: wikidata turned on here sat paused for hours,
         # the card silent): a collection paused on its own says so, by whom
         # and when, and what stops it embedding is said where the setting is
         # shown. "off" is the select's own word, so it adds nothing there.
-        "paused": node_state.pause_of(collection.name),
+        "paused": paused,
+        # what stops it embedding, every hold in its sentence (status
+        # `holds`); "off" is the select's own word, so it adds nothing there
         "embed_blocked": ([] if embed_mode == "off"
-                          else node_state.embedding_blockers(collection.name, embed_mode)),
+                          else [h["says"] for h in embed_holds]),
+        # THE STATUS, per stage, as `node show` reads it (app/status.py)
+        "status": {k: v.to_json() for k, v in stages.items()},
+        # the earlier version still held and searched (operator, 2026-11-07:
+        # grey on the bar, "present but not active"); None: not counted yet
+        "stage_superseded": {k: (stages[k].superseded if stages else None)
+                             for k in ("fts", "embed")},
         # the file's word and the file's `share`, for the Library's two
         # controls and their confirmations; the note when the file's pair is
         # one the node will not run as written (07 §7.8, 2026-10-19)

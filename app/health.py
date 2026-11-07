@@ -48,58 +48,26 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import db
+from . import db, status
 
-#: Documents that have cleared the previous stage and not this one.
-#:
-#: EVERY COLUMN HERE IS A PREFIX OF `idx_documents_scope` (in_scope,
-#: rdf_done, fts_done, embed_done), and `error IS NULL` is deliberately
-#: NOT among them, because it is not in that index. MEASURED on the live
-#: pubmed manifest, same answer both ways:
-#:
-#:     ... AND error IS NULL              4,577,101   10.27 s
-#:     covering index, no error clause    4,577,101    0.45 s
-#:
-#: 23x, and the slow one's plan reads as indexed — "SEARCH documents
-#: USING INDEX idx_documents_scope (in_scope=?)" — which is the exact
-#: false positive CLAUDE.md warns about. One table lookup per counted
-#: row, 4.58M of them.
-#:
-#: The cost of leaving it out is that an errored document counts as
-#: waiting. That is a handful (33 on gutenberg, 0 on pubmed) against
-#: millions, it is reported beside the count rather than hidden, and
-#: unlike the genesis backlog query this feeds no scheduling decision —
-#: nothing starves because a report is 33 high.
-_WAITING = {
-    "rdf": "in_scope=1 AND rdf_done=0",
-    "fts": "in_scope=1 AND rdf_done=1 AND fts_done=0",
-    "embed": "in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0",
-}
-_INDEXED = "documents INDEXED BY idx_documents_scope"
-#: A stage count stops here and says "over": COUNT(*) walks the waiting rows
-#: along the covering index, 16.6 s for wikidata's 72.9 M during discovery
-#: and 24 s for wikipedia-v8 mid-build, so `node show` took 20-33 s (München,
-#: 2026-10-27). Exact below the cap, ~0.25 s at it. The standard bounded
-#: count (a LIMIT under the COUNT); the stage's state does not depend on
-#: the size, only on whether there is any.
-WAITING_CAP = 1_000_000
-#: Below this many rows the count is made exact: the errored rows among them
-#: are read through the table (one lookup each, which is what the cheap count
-#: avoids) and counted apart. gutenberg's 33 "waiting" rdf documents were all
-#: errored since September — out of every selection — and read as stuck work
-#: (München, 2026-10-30). Above it the errored few stay inside the count.
-ERRORED_EXACT_BELOW = 100_000
+#: Documents that have cleared the previous stage and not this one — THE
+#: STATUS MODULE'S (app/status.py `AT`, with the measurement that chose
+#: them), where every surface reads them since 2026-11-07. The cost of
+#: leaving `error IS NULL` out is that an errored document counts as
+#: waiting above ERRORED_EXACT_BELOW: a handful (33 on gutenberg, 0 on
+#: pubmed) against millions, reported beside the count rather than hidden.
+_WAITING = status.AT
+_INDEXED = status.INDEXED
+#: the cap and the exact bound (app/status.py), read HERE at call time so a
+#: caller that narrows them for this check narrows them for this check
+WAITING_CAP = status.WAITING_CAP
+ERRORED_EXACT_BELOW = status.ERRORED_EXACT_BELOW
 
-IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"
+IDLE, RUNNING, HELD, BLOCKED = status.IDLE, status.RUNNING, status.HELD, status.BLOCKED
 
-#: What each node mode holds back — READ OFF THE ONE TABLE of what a mode
-#: runs (app/node_state.py: MODE_RUNS; operator, 2026-09-19), never a second
-#: list that could come to disagree with the worker. rdf is parsing; fts and
-#: the archive's imports are indexing; embedding runs only where everything
-#: does. `running` holds nothing, and a mode this does not know ('unknown')
-#: holds nothing either: better to report work as running than to invent a
-#: reason it is not.
-_STAGE_NEEDS = {"rdf": "parse", "fts": "index", "embed": "embed", "archive": "index"}
+#: What each stage needs the node to run — app/status.py `STAGE_NEEDS`,
+#: read off THE ONE TABLE of what a mode runs (app/node_state.py MODE_RUNS)
+_STAGE_NEEDS = {k: v for k, v in status.STAGE_NEEDS.items() if k != "fetch"}
 
 
 def _held_by_mode(mode: str) -> tuple[str, ...]:
@@ -110,74 +78,18 @@ def _held_by_mode(mode: str) -> tuple[str, ...]:
                  if not node_state.mode_runs(mode, needs))
 
 
-#: the stages the node PROFILE's cpu_cores = 0 pauses (worker._cpu_paused):
-#: the parse pool's work; embedding is held by the profile's `mode`, not its cores
-_PROFILE_PAUSED = ("rdf", "fts", "archive")
+_PROFILE_PAUSED = status.PROFILE_PAUSED
 
 
 def _held_reason(mode: str | None, stage: str) -> str:
-    if mode and stage in _held_by_mode(mode):
-        # no "held" here: a HELD row prints its state word first, and the
-        # live report read "held — held — the node is…" (staged check)
-        return (f"the node is {mode}; this runs when the Library's "
-                f"mode is set to running")
-    if stage in _STAGE_NEEDS:
-        # THE NODE PROFILE (app/cpu_limit.py, the operator's schedule): its
-        # mode suspends processing in the quiet windows (operator,
-        # 2026-11-02), and its cpu_cores = 0 pauses rdf, fts and the archive
-        # pass; the stage read "waiting" with no reason while the worker's
-        # log alone said "profile quiet: paused until 13:30" (operator,
-        # 2026-10-31)
-        try:
-            from . import cpu_limit, node_state
-            lim = cpu_limit.current()
-            if lim.suspends and not node_state.mode_runs(lim.mode or "", _STAGE_NEEDS[stage]):
-                return f"{lim.says()} (the node's schedule, platform.toml)"
-            if stage in _PROFILE_PAUSED and lim.cores == 0:
-                goes_on = "; embedding goes on" if node_state.profile_runs(node_state.EMBED) else ""
-                return f"{lim.says()} (the node's schedule, platform.toml){goes_on}"
-        except Exception:   # noqa: BLE001 — a health check never raises
-            pass
-    return ""
+    """What holds `stage` by the node alone — its mode, then its profile —
+    in the sentence every surface says it in (app/status.py `holds`)."""
+    return status.held_reason(mode, stage)
 
 
-def _withheld(collection) -> str:
-    """Invariant 9, from THE resolution (app/licensing.py): a yellow or red
-    collection with no valid acknowledgement is not scanned, indexed,
-    embedded or imported, in any mode (worker `_license_allows`). "" when
-    nothing is withheld. A collection licensing cannot judge is WITHHELD —
-    search and the worker fail closed too, and three answers to one fault
-    was the disagreement this module exists to end (verification pass)."""
-    try:
-        from . import licensing
-        if licensing.state_for(collection) != licensing.MISSING:
-            return ""
-        cls = licensing.license_class_for(collection)
-    except Exception as e:  # noqa: BLE001 — a health check never raises
-        return (f"withheld: its license state cannot be judged "
-                f"({type(e).__name__}: {e}) — invariant 9")
-    return (f"withheld: license_class={cls} needs an acknowledgement of the "
-            f"terms — invariant 9")
-
-
-def _copy_state(collection) -> tuple[str, str]:
-    """(what blocks embedding and imports, what to say about the copy) —
-    03 §3.6, from THE derivation (app/copy_state.py), the one the worker and
-    the search read. While the node only REPORTS quarantine the first is ""
-    and the second says what enforcing WOULD withhold, so the first of step
-    14's two deploys shows the operator the day it would bite before it does.
-    A health check never raises."""
-    try:
-        from . import copy_state
-        state = copy_state.of(collection)
-        if state.in_use:
-            return "", ""
-        why = f"{state.state}: " + "; ".join(state.reasons)
-        if copy_state.enforced():
-            return f"withheld: {why} — 03 §3.6", f"in {state.state}"
-        return "", f"in {state.state}, REPORTED ONLY (nothing is withheld): {why}"
-    except Exception as e:  # noqa: BLE001
-        return "", f"its state cannot be derived ({type(e).__name__}: {e})"
+#: invariant 9 and 03 §3.6, said as every surface says them (app/status.py)
+_withheld = status.license_says
+_copy_state = status.copy_says
 
 
 @dataclass
@@ -192,6 +104,12 @@ class Stage:
     #: until a person retries them, so NOT waiting — counted apart where the
     #: count is small enough to read exactly (ERRORED_EXACT_BELOW)
     errored: int = 0
+    #: not done here, an earlier version still held and searched until this
+    #: stage redoes it (app/status.py `SUPERSEDED`); None: not counted
+    superseded: int | None = None
+    #: embed: done at an older EMBED_VERSION, re-embedded by the worker's
+    #: version walk — from the last full count (status `bounded`); None: none stored
+    reembed: int | None = None
 
     def line(self) -> str:
         mark = {IDLE: "  ", RUNNING: "->", HELD: "..", BLOCKED: "!!"}[self.state]
@@ -199,6 +117,10 @@ class Stage:
         got = f"{mark} {self.name:<7} {n:>17}  {self.state}"
         if self.errored:
             got += f"  ({self.errored:,} errored, not waiting)"
+        if self.reembed:
+            got += f"  (+{self.reembed:,} to re-embed at the current version)"
+        if self.superseded:
+            got += f"  ({self.superseded:,} earlier version, searched until redone)"
         return f"{got}  — {self.reason}" if self.reason else got
 
 
@@ -220,18 +142,22 @@ class Report:
 
 
 def _embed_reason(collection, scope: dict) -> str:
-    """Why embed cannot start, or "" when it can."""
-    mode = str(scope.get("embed_mode") or "").lower()
-    if mode == "off":
-        return (f"embed is OFF for this collection — set it in "
-                f"config/collections/{collection.name}.toml")
-    from . import disk_guard
-    return disk_guard.vectors_short(collection) or ""
+    """Why embed cannot start, or "" when it can: the setting, then the
+    vector store's floor — the BLOCKED holds `status.holds` names for it."""
+    if str(scope.get("embed_mode") or "").lower() == "off":
+        return status.off_says(collection.name)
+    return status.disk_says(collection)
 
 
-def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -> Report:
+def inspect(con, collection, *, errors: bool = False, mode: str | None = None,
+            pause: dict | None = None) -> Report:
     """One collection's stages, as they stand right now, judged against
-    the node's `mode` when one is given (see HELD, above).
+    the node's `mode` when one is given (see HELD, above) and the
+    collection's own `pause` (`node_state.pause_of`; `check` reads it).
+
+    THE NUMBERS AND THE REASONS ARE app/status.py's: `status.bounded`
+    counts, `status.holds` says what holds each stage — the definitions the
+    Library's card and `/api/status` read (operator, 2026-11-07).
 
     `errors=False` by default because counting them is the single most
     expensive thing here: `error IS NOT NULL` is in no index, so proving
@@ -259,55 +185,34 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     except Exception:       # noqa: BLE001 — a health check never raises
         report.issues = {}
 
-    withheld = _withheld(collection)
-    quarantined, said = _copy_state(collection)
+    said = _copy_state(collection)[1]
     if said:
         report.note = (report.note + "   " if report.note else "") + said
-    for name, where in _WAITING.items():
-        try:
-            waiting = con.execute(
-                f"SELECT COUNT(*) FROM (SELECT 1 FROM {_INDEXED} WHERE {where} "
-                f"LIMIT {WAITING_CAP + 1})").fetchone()[0]
-        except Exception as e:  # noqa: BLE001 — NAMED, never skipped. A stage
-            # that silently vanished from the report would read as an
-            # all-clear, which is the one failure a health check must not
-            # have: it would be the "idle — pipeline is caught up" line
-            # again, in a new place. `INDEXED BY` raises outright when the
-            # index is absent, so this is reachable.
+    counted = status.bounded(con, cap=WAITING_CAP, exact_below=ERRORED_EXACT_BELOW)
+    for name in _WAITING:
+        st = counted.get(name)
+        if not isinstance(st, status.StageStatus):
+            # NAMED, never skipped. A stage that silently vanished from the
+            # report would read as an all-clear, which is the one failure a
+            # health check must not have: it would be the "idle — pipeline
+            # is caught up" line again, in a new place. `INDEXED BY` raises
+            # outright when the index is absent, so this is reachable.
             report.stages.append(
-                Stage(name, 0, BLOCKED, f"cannot be counted: {type(e).__name__}: {e}"))
+                Stage(name, 0, BLOCKED, f"cannot be counted: {type(st).__name__}: {st}"))
             continue
-        errored = 0
-        if 0 < waiting <= ERRORED_EXACT_BELOW:
-            try:
-                errored = con.execute(f"SELECT COUNT(*) FROM {_INDEXED} WHERE {where} "
-                                      f"AND error IS NOT NULL").fetchone()[0]
-            except Exception:   # noqa: BLE001 — the cheap count stands
-                errored = 0
-            waiting -= errored
-        # a copy in quarantine is not embedded for; its records and its text
-        # index are what its tests read, and go on (03 §3.6)
-        reason = withheld or (
-            (quarantined or _embed_reason(collection, scope)) if name == "embed" else "")
-        held = _held_reason(mode, name)
-        if not waiting:
-            state = IDLE
-            # A stage with nothing to do is FINE even when switched off:
-            # "off and finished" is not a problem to report, and reporting
-            # it would make the check cry wolf on every idle collection.
-            reason = ""
-        elif reason:
-            state = BLOCKED         # resuming the node would not clear this
-        elif held:
-            state, reason = HELD, held
-        else:
-            state = RUNNING
-        over = waiting > WAITING_CAP
-        report.stages.append(Stage(name, min(waiting, WAITING_CAP), state, reason, over, errored))
+        # no mode given: judged against none — a running node, as always —
+        # rather than read here (`check` reads the node's)
+        found = status.holds(collection.name, name, collection=collection, mode=mode or "running",
+                             pause=pause, embed_mode=scope.get("embed_mode"))
+        work = int(st.waiting or 0) + (int(st.reembed or 0) if name == "embed" else 0)
+        state, reason = status.judge(work, found)
+        report.stages.append(Stage(name, st.waiting or 0, state, reason, st.over, st.errored or 0,
+                                   superseded=st.superseded, reembed=st.reembed))
     return report
 
 
-def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
+def archive_gap(con, collection, mode: str | None = None,
+                pause: dict | None = None) -> Stage | None:
     """Documents the declared archive could serve and has not.
 
     This is the one that hid twice, because it is invisible from the
@@ -418,7 +323,9 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
     except Exception as e:  # noqa: BLE001 — never raise, and never guess "served"
         return Stage("archive", total, BLOCKED,
                      f"the archive's state cannot be judged: {type(e).__name__}: {e}")
-    held = _held_reason(mode, "archive")
+    # the node's mode, the collection's own pause, the profile: what holds
+    # the archive's imports, said as every surface says it (status `holds`)
+    held = _archive_held(collection, mode, pause)
     if stopped:
         return Stage(
             "archive", total, BLOCKED,
@@ -446,10 +353,26 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
                      + "; ".join(parts))
     reason = (f"{owed['open']:,} document(s) wait for the archive's "
               f"{open_shards} open shard(s) to be fetched and imported")
-    held = _held_reason(mode, "archive")
     if held:
         return Stage("archive", total, HELD, f"{reason} — {held}")
     return Stage("archive", total, RUNNING, reason)
+
+
+def _archive_held(collection, mode: str | None, pause: dict | None) -> str:
+    found = [h for h in status.holds(collection.name, "archive", mode=mode or "running", pause=pause)
+             if h.kind == HELD]
+    return found[0].says if found else ""
+
+
+def _pause_of(name: str) -> dict | None:
+    """Collection `name`'s own pause (`node pause <collection>`), read
+    creating nothing — the worker runs nothing for a paused collection, and
+    this check called its stages "running" (2026-11-07)."""
+    try:
+        from . import node_state
+        return node_state.pause_of(name)
+    except Exception:       # noqa: BLE001 — a health check never raises
+        return None
 
 
 def _node_mode() -> str:
@@ -507,8 +430,9 @@ def check(collections, connect=db.connect, *, errors: bool = False,
             reports.append(Report(collection=collection.name, mode=mode,
                                    note=f"cannot open: {type(e).__name__}"))
             continue
-        report = inspect(con, collection, errors=errors, mode=mode)
-        gap = archive_gap(con, collection, mode)
+        pause = _pause_of(collection.name)
+        report = inspect(con, collection, errors=errors, mode=mode, pause=pause)
+        gap = archive_gap(con, collection, mode, pause)
         if gap is not None:
             report.stages.append(gap)
         reports.append(report)
