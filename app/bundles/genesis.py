@@ -468,6 +468,7 @@ def reset_revisit_state() -> None:
     with _residual_lock:
         _residual.clear()
     _forget_demand()
+    _said_loading.clear()
 
 
 #: the residual key of what a local archive's candidate walk RELEASES
@@ -1012,6 +1013,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
             _replace_demand(collection, d)
             if not d.uids or waits(d):
                 continue
+            if not _encoder_ready(con, collection, archive, d.shard):
+                return None             # its encoder loads behind this thread; rdf/fts meanwhile
             try:
                 # `stop=stop` — the remote branch below always passed it and
                 # this one never did, so a LOCAL archive pass observed
@@ -1052,6 +1055,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
         return None
     for shard in _remote_drain_order(archive.shards, rows, now, collection,
                                      archive, con):
+        if not _encoder_ready(con, collection, archive, shard):
+            return None                 # as the local branch above: loading behind the thread
         try:
             result = import_shard(con, collection, archive, shard,
                                   fetch=_not_on_disk, revisit=True, stop=stop)
@@ -1068,6 +1073,34 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
 # per collection (manifest path): when its remote archive may run again
 # after a budget-cut pass — process-local, like the residual sets
 _yield_until: dict[str, float] = {}
+
+#: per collection (manifest path): when it last said its pass waits for its
+#: encoder to load — once a minute at most, not once a round
+_said_loading: dict[str, float] = {}
+
+
+def _encoder_ready(con, collection, archive, shard: str) -> bool:
+    """Whether a pass may start now. Its same-function proof (or staleness
+    screen) asks the collection's encoder sixteen texts, and a model its
+    runner says is not loaded is loaded BEHIND the caller's thread
+    (`embeddings.warm_behind`): the pass waits its turn and the pipeline
+    thread runs rdf/fts meanwhile, where it used to wait the whole load inside
+    the proof — München, 2026-11-07, 21.7 % of wikipedia's pipeline thread in
+    the warm (`embed = "off"`, so its encoder is unloaded between passes).
+    The load keeps its bound (`model_load.load_timeout_s`); a load that ended
+    without the model lets the pass go and meet its fate, as before."""
+    try:
+        if embeddings.warm_behind(collection):
+            return True
+    except Exception:   # noqa: BLE001 — a question about a model never stops a pass
+        return True
+    key = str(collection.manifest_path)
+    if time.monotonic() - _said_loading.get(key, -1e9) >= 60.0:
+        _said_loading[key] = time.monotonic()
+        db.log_event(con, "info", "genesis",
+                     f"{archive.archive_id}/{shard}: the encoder is loading for the "
+                     f"same-function proof — the pass waits for it; rdf/fts go on meanwhile")
+    return False
 
 
 #: per collection (manifest path): when a stalled archive may force one

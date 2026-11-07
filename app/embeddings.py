@@ -388,8 +388,13 @@ def _warm_first(batch: list[Item], recipe: "collections_mod.EmbedRecipe",
     if recipe.api not in PAIR_APIS or not recipe.model:
         return
     pair = bool(batch) and not isinstance(batch[0], str)
+    model_load.ensure_loaded(recipe.url, recipe.model, _warm_request(recipe, pair, level),
+                             caller=_warm_caller())
 
-    def warm(bound_s: float) -> None:
+
+def _warm_request(recipe: "collections_mod.EmbedRecipe", pair: bool, level: dict):
+    """The warm itself: one minimal request of the model's input form."""
+    def warm(bound_s: float):
         probe: list[Item] = [("warm", "warm")] if pair else ["warm"]
         if recipe.api == VEGA:
             body: dict = {"input": list(vclient.tag_batch(probe).inputs),
@@ -398,10 +403,41 @@ def _warm_first(batch: list[Item], recipe: "collections_mod.EmbedRecipe",
             body = _body(recipe, probe)
         return httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s,
                           headers=level)
+    return warm
 
+
+def _warm_caller() -> str:
     lvl, plugin = dispatch.current()
-    model_load.ensure_loaded(recipe.url, recipe.model, warm,
-                             caller=f"{lvl.name.lower()} embedding" + (f" ({plugin})" if plugin else ""))
+    return f"{lvl.name.lower()} embedding" + (f" ({plugin})" if plugin else "")
+
+
+def warm_behind(collection, recipe: "collections_mod.EmbedRecipe | None" = None) -> bool:
+    """For a caller with other work to do while its encoder loads: True when
+    the collection's model may be asked now — loaded, a runner that cannot
+    say, or a model whose load behind the caller has just ended (the request
+    then meets its own fate, bounded, as before); False while the model is
+    LOADING on a daemon thread (`model_load.warm_behind`), and the caller
+    does something else meanwhile and asks again on its next turn.
+
+    WHY (München, 2026-11-07): wikipedia's archive pass runs on the
+    collection's pipeline thread, and its same-function proof asks the
+    encoder sixteen texts. wikipedia does not embed (`embed = "off"`), so its
+    encoder is unloaded between passes and every pass loaded it — 21.7 % of
+    the pipeline thread waited in this module's warm, inside the proof, while
+    the text stages behind it had work (docs/notes/scheduling.md §3 rule 2).
+    Here the load starts behind the thread and the pass waits its turn."""
+    recipe = recipe or collections_mod.recipe_for(collection)
+    if recipe.api not in PAIR_APIS or not recipe.model:
+        return True
+    forms = {layer.form for layer in layers_mod.layers_for(collection)}
+    warm = _warm_request(recipe, forms == {"pair"}, dispatch.level_headers())
+
+    def standing_aside(bound_s: float):
+        # corpus work stands aside on the card while a person's query runs,
+        # its warm included (`_request_vectors`), on whichever thread it is
+        dispatch.stand_aside(recipe.url, bound_s)
+        return warm(bound_s)
+    return model_load.warm_behind(recipe.url, recipe.model, standing_aside, caller=_warm_caller())
 
 
 def _request_vouched(batch: list[Item], timeout: float,
