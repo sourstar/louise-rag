@@ -573,8 +573,11 @@ def _fts_recheck(con, rids: list[int]) -> dict[int, dict]:
 
 #: how many batches of rows the look-ahead holds at most (computed or
 #: computing, not yet taken): the batch the next round takes, and one behind
-#: it whose parts fill its tail — the memory #346 held (one batch written,
-#: one parsing), arranged so the pool never waits for the round to come back
+#: it whose parts fill its tail. While a batch is written the chain is
+#: extended behind it, so the parent holds up to THREE batches' rows and
+#: results at once (one written, two held), against #346's two: a batch is
+#: tens of MB of chunk text, small beside the worker's cap, and München's
+#: AFTER reads the parent's anon memory with the docs/s
 _FTS_AHEAD_BATCHES = 2
 
 
