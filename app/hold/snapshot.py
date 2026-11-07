@@ -611,6 +611,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
                 f"identical bytes")
             mark_frozen(db_path, snapshot_id)
             drop_replaced(shard_dir, previous, snap)
+            _say_past_baseline(name, drop_past_baseline(shard_dir, previous, snap), log)
             return snap
         raise CodexError(
             f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
@@ -627,6 +628,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     if dropped:
         log(f"[snapshot create] {name}: {dropped} replaced version(s) of {previous.snapshot_id} "
             f"dropped (the origin replaces in place, 01 promise 7)")
+    _say_past_baseline(name, drop_past_baseline(shard_dir, previous, snap), log)
     log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
         f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
     return snap
@@ -939,6 +941,47 @@ def drop_replaced(shard_dir, previous: "Snapshot | None", current: "Snapshot") -
             kept.unlink()
             n += 1
     return n
+
+
+def drop_past_baseline(shard_dir, previous: "Snapshot | None", current: "Snapshot") -> int:
+    """Where the origin keeps its history until its next period
+    (`history-until-baseline`, 06 §6.2, amended 2026-11-07, operator: C —
+    PubMed's baseline year), the superseded versions every record of which
+    names a period before the current version's go once this snapshot is
+    frozen: the origin removed the files that verified them
+    (`shard.drop_past_period`, 01 promise 7, 02 §2.3). Only the parts this
+    snapshot re-issued are judged: a part it did not re-issue has the same
+    current version as at the last freeze, which judged it, so the cost
+    follows the work. Run again on an identical re-freeze, which finishes a
+    stopped one; the parts in the parse pool, one task each. The files
+    dropped (relations and figures with their parts)."""
+    from pathlib import Path
+    from app import parallel
+    from . import shard as shard_mod
+    shard_dir = Path(shard_dir)
+    if previous is None or shard_mod.period_rule(shard_dir) is None:
+        return 0
+    before = {e.path: e.root for e in previous.shards}
+    tasks = [(str(shard_dir / e.path), str(shard_dir)) for e in current.shards
+             if before.get(e.path) != e.root]
+    return sum(parallel.each_part(_drop_past_period_at, tasks))
+
+
+def _drop_past_period_at(target: str, shard_dir: str) -> int:
+    """One part of `drop_past_baseline`, in a child of the parse pool."""
+    from pathlib import Path
+    from . import shard as shard_mod
+    rule = shard_mod.period_rule(Path(shard_dir))
+    if rule is None:
+        return 0
+    return len(shard_mod.drop_past_period(Path(target), Path(shard_dir), rule))
+
+
+def _say_past_baseline(name: str, dropped: int, log) -> None:
+    if dropped:
+        log(f"[snapshot create] {name}: {dropped} superseded version file(s) of an earlier origin "
+            f"period dropped (the origin removed the files that verified them, 06 §6.2 "
+            f"history-until-baseline)")
 
 
 #: codex.json path -> (mtime_ns, container): the container read beside a

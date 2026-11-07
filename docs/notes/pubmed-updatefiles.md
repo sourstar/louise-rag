@@ -139,7 +139,7 @@ reachable: from here it is not; NLM's separate annual-baseline repository
 may keep the baselines, not the updates) — and there the two halves of
 invariant 11 pull apart: §5.
 
-## 5. DeleteCitation, and two questions for the operator
+## 5. DeleteCitation, and the operator's two decisions
 
 **What the spec already says.** It is not silent:
 - 06 §6.1, *the deletion signal*: `discover()` reports a `DocRef` with
@@ -150,10 +150,11 @@ invariant 11 pull apart: §5.
   have existed" — which is what a DeleteCitation is (a duplicate, a
   citation made in error; a retracted ARTICLE is not deleted, it gains a
   retraction notice and stays a record).
-- 02 §2.2 and 09 §9.4: the tombstoned record is excluded from search and
-  embedding from that snapshot; its text stays in its CLOSED part until
-  that part is next re-issued, when it is dropped from the file; the
-  version that held it is then kept or dropped by `origin_versions` (§4).
+- 02 §2.2 and 09 §9.4, as they stood: the tombstoned record is excluded
+  from search and embedding from that snapshot; its text stays in its
+  CLOSED part until that part is next re-issued, when it is dropped from
+  the file; the version that held it is then kept or dropped by
+  `origin_versions` (§4). Amended since (decision 1, below).
 
 **Built.** `DocRef.deleted` (09 §9.17 already lists it) with reason
 `retracted`; the row keeps its locator (the unit that last supplied the
@@ -166,38 +167,33 @@ refuse defers the batch. The build records what was retracted and `hold
 snapshot create` tombstones it `retracted`; a record merely gone stays
 `withdrawn`.
 
-**Where the spec and the system pull apart: a deleted record's part.** 02
-§2.2 and 09 §9.4 keep a tombstoned record's text in its CLOSED part until
-the part is re-issued for another reason, and exclude it "from search and
+**Decision 1 — a deleted citation's part (operator, 2026-11-07: B).** 02
+§2.2 and 09 §9.4 kept a tombstoned record's text in its CLOSED part until
+the part was re-issued for another reason, and excluded it "from search and
 from embedding on every peer that holds the snapshot" by the tombstone
 alone. Nothing in the system honours a tombstone for a record still in a
 part: a peer's coverage and contributions read a part's records
 (`app/share/possession.py` `part_records`, `app/share/contribute.py`), the
 vector checks expect every record of a part, and only the as-of search
 (`app/ask/asof.py`) reads `delta.tombstoned`. What keeps a deleted record
-out of every peer's search today is its ABSENCE from the current part. So
-the records build does what main already did for a DeleteCitation: the
-record leaves its part at the next build — the part re-issued for the
-deletion alone, the version that held it kept under `history`, so nothing
-is lost and promise 7 holds by that version — and the tombstone says
-`retracted`. It was never exercised: no plugin emitted the deletion signal
-before, and no DeleteCitation ever reached the node. Which rule binds is
-the operator's — the second question below; until it is answered, no
-pubmed snapshot is built over the update files (§9).
+out of every peer's search is its ABSENCE from the current part. The
+question, as put:
 
-> **When PubMed deletes a citation, does its record leave its part at the
-> next snapshot, or stay in it until the part changes for another reason?**
->
 > | choice | effect | pros | cons |
 > |---|---|---|---|
-> | **A — stay** (02 §2.2 as written) | the text stays in its closed part, tombstoned once; every peer excludes it by the chain's tombstones | no part re-issued for a deletion alone; the spec unchanged | the build, the snapshot delta, a peer's coverage, contributions and checks, and search on peers all learn to read the chain's tombstones; a peer that misses one serves a deleted citation while every check passes |
-> | **B — leave at once** (what the build does; 02 §2.2 and 09 §9.4 amended) | dropped from its part at the next snapshot, tombstoned `retracted`; the version holding it kept under `history` | no current part ever holds a deleted citation; nothing on the peers changes; promise 7 holds by the kept version | each deletion re-issues its part (~1,000–5,000 deletions a month, estimate; most in the recent slices the month's revisions re-issue anyway: perhaps 0–200 more parts, 0–6 GB a month); the spec amended |
->
-> **Recommended: B.** If the operator says nothing: no pubmed snapshot is
-> built over the update files, so the catch-up of §9 stops after the first
-> cutoff's discovery — the update files dated before 2026-09-01 fetched,
-> checked and applied, their records in the text index — and the build and
-> the later cutoffs wait for the answer.
+> | A — stay (02 §2.2 as written) | the text stays in its closed part, tombstoned once; every peer excludes it by the chain's tombstones | no part re-issued for a deletion alone; the spec unchanged | the build, the snapshot delta, a peer's coverage, contributions and checks, and search on peers all learn to read the chain's tombstones; a peer that misses one serves a deleted citation while every check passes |
+> | **B — leave at once** | dropped from its part at the next snapshot, tombstoned `retracted`; the version holding it kept by `origin_versions` | no current part ever holds a deleted citation; nothing on the peers changes; promise 7 holds by the kept version | each deletion re-issues its part (~1,000–5,000 deletions a month, estimate; most in the recent slices the month's revisions re-issue anyway: perhaps 0–200 more parts, 0–6 GB a month); the spec amended |
+
+The operator chose B. The records build already did it (main did the same
+for a DeleteCitation): the record leaves its part at the next build, the
+part re-issued one record shorter, the tombstone `retracted`. 02 §2.2, 09
+§9.4 and 04's erasure paragraph are amended (A5), and the hold this
+question put on pubmed's snapshots over the update files is lifted (§9).
+Tested end to end (tests/hold/test_history_until_baseline.py): the deleted
+record absent from the re-issued part and every other, its tombstone in
+`delta.tombstoned`, the version that held it kept and re-parsed from the
+origin line for line, a re-run changing nothing, and the record out of
+every index before its tombstone commits.
 
 **Where the two halves of invariant 11 pull apart.** Within the baseline
 year they agree: a superseded version or a deleted record's text is held
@@ -208,7 +204,7 @@ origin: then "we cannot hold less than the origin gave" says keep them, and
 ways (01 promise 7: drop what can no longer be checked; 02 §2.7: parts of a
 moved origin "keep verifying internally, their trust level freezes"). It
 binds every version the update files supersede, a deleted record's text
-among them. Hence the first question.
+among them. Hence the second question, as put:
 
 > **What happens, at PubMed's annual baseline (mid-December), to the record
 > versions only that year's files can verify?**
@@ -222,6 +218,53 @@ among them. Hence the first question.
 > **Recommended: C.** If the operator says nothing: A stands — nothing is
 > dropped, which can still be undone — until the decision, which is needed
 > before NLM's 2027 baseline appears (December 2026).
+
+**Decision 2 (operator, 2026-11-07: C).** Old record versions are kept
+while NLM keeps the files that verify them, and dropped at the new
+baseline. Built as a third `origin_versions` value, `history-until-
+baseline` (06 §6.2, 02 §2.3, 09 §9.5, 01 promise 7 amended: A6):
+
+- **The period.** The plugin declares `origin_period(origin)`: the period
+  of the unit a record's `origin` names, later periods larger — pubmed's
+  is the year in the container's name (`pubmed26n1401.xml.gz`: 26). A
+  plugin attribute read where present, like `origin_order`, not a protocol
+  method; declared without it, the value reads as `history` (keeping loses
+  nothing).
+- **The rule** (`app/hold/shard.py` `drop_past_period`). A superseded
+  version is dropped once EVERY record of it names an earlier period than
+  the first record of its part's current version; with its relations part
+  and figures container of the same snapshot. Never the current version;
+  never a version with a record of the current period or later (still
+  checkable), nor one with an origin the plugin cannot place, nor anything
+  at a part whose current period cannot be read. The current period is read
+  from one record — a lower bound of the part's newest — so the rule errs
+  only towards keeping.
+- **When.** The producer, at the freeze of the snapshot that re-issues the
+  part (`snapshot.drop_past_baseline`, beside `drop_replaced`): its build
+  keeps every version until then, since the delta reads the previous one.
+  Only the parts that snapshot re-issued are judged — a part it did not
+  re-issue has the current version the last freeze judged — so the cost
+  follows the work; the parts go through the parse pool, one task each. At
+  NLM's new baseline every record moves to the new year's file (rule 2 of
+  §3), so every part is re-issued at the next snapshot and every version of
+  the year goes at its freeze. A peer, at the promotion of a record part's
+  new version (`shard.promote`); a companion arriving after its record part
+  is not kept once that record version is gone (it serves no snapshot
+  alone).
+- **Idempotent and resumable.** A dropped version is gone and a kept one is
+  judged the same again; a stop between two files leaves the rest, and an
+  identical re-freeze (`hold snapshot create` run again, as
+  `deploy/supervise-pass.sh` does) judges them again.
+- **What it costs.** At the rollover, the year's versions are read once —
+  a version to drop to its end, a version kept to its first record of the
+  current year (its first line, as a rule): of the order of the ~120–300 GB
+  the year held (estimate, §6), once a year, in the parse pool. Every other
+  freeze reads the first frame of each version at the parts it re-issued.
+- **What it leaves.** After the rollover, the snapshots of the year before
+  are no longer servable: their parts are gone, as C says. The corpus copy
+  of the year's files is not touched (the origin copy, invariant 11; what
+  to keep of it is not this rule's). A citation NLM leaves out of a new
+  baseline without a DeleteCitation is still not noticed (§9).
 
 ## 6. What a day costs
 
@@ -260,8 +303,9 @@ fetch pubmed --dry-run` on the node lists the real files and bytes.
 | manifest | row added, or re-pointed and re-opened (marks reset) | row keeps its locator, `error` = the marker, marks reset |
 | text index, catalogue | the rdf/fts stages re-index it | withdrawn before the tombstone commits |
 | vectors | re-encoded in full (pair layer) | withdrawn |
-| records build | its part re-issued; the superseded version kept (`history`) | dropped from its part at once (§5's second question); tombstone `retracted` |
+| records build | its part re-issued; the superseded version kept (`history-until-baseline`) | dropped from its part at the next snapshot (§5, decision 1); tombstone `retracted` |
 | snapshot | `changed` when `content_hash` moved | `delta.tombstoned`, `retracted` |
+| the next baseline | every part re-issued from the new year's files; the year's versions dropped at that freeze (§5, decision 2) | the version that held it dropped with them |
 
 ## 8. Spec amendments
 
@@ -294,11 +338,8 @@ no Codex holds):
 **A3 — 06 §6.2, `origin_versions`**: "pubmed, deposit and embedded declare
 nothing until their origins are checked" becomes:
 
-> pubmed declares `"history"` (*amended 2026-11-07*): NLM keeps the
-> baseline and every update file at its own path for the baseline year;
-> what becomes of them at the next baseline is the operator's
-> (docs/notes/pubmed-updatefiles.md §5). deposit and embedded declare
-> nothing until their origins are checked.
+> pubmed declares `"history-until-baseline"` (A6). deposit and embedded
+> declare nothing until their origins are checked.
 
 **A4 — 06 §6.1, the deletion signal**, appended:
 
@@ -309,8 +350,7 @@ nothing until their origins are checked" becomes:
 > a document's refs by that order, never by arrival: a ref from an earlier
 > unit than the one held changes nothing.
 
-**A5 — only if the operator answers B to §5's second question; NOT
-written into the spec.** 02 §2.2, "a deleted or retracted record becomes a
+**A5 — applied (operator, 2026-11-07: B; §5, decision 1).** 02 §2.2, "a deleted or retracted record becomes a
 tombstone: … and its text stays in its closed part — so the part still
 verifies and 01's promise 7 holds — until that part is next re-issued,
 when it is dropped from the file", becomes:
@@ -318,15 +358,40 @@ when it is dropped from the file", becomes:
 > a deleted or retracted record becomes a tombstone: it is listed in that
 > snapshot's `delta.tombstoned`, and it leaves its part in that snapshot,
 > which re-issues the part one record shorter, as a record the origin no
-> longer supplies does (*amended 2026-11-…*, docs/notes/pubmed-updatefiles.md
-> §5): no current part holds a tombstoned record, so a peer excludes it
-> from search and embedding by its absence; the version that held it is
-> kept or dropped as below, which is where promise 7 holds for it.
+> longer supplies does (*amended 2026-11-07*, operator: B,
+> docs/notes/pubmed-updatefiles.md §5): no current part holds a tombstoned
+> record, so every peer that holds the snapshot excludes it from search and
+> from embedding by its absence, and the version that held it is kept or
+> dropped as below, which is where 01's promise 7 holds for it.
 
 and 09 §9.4's "a tombstoned record stays in its closed part until that
 part is next re-issued and is excluded from search and embedding by the
 tombstone alone" becomes "a tombstoned record leaves its part in the
-snapshot that tombstones it, re-issuing the part (02 §2.2)".
+snapshot that tombstones it, re-issuing the part (02 §2.2)", and 04's
+erasure paragraph says the same.
+
+**A6 — applied (operator, 2026-11-07: C; §5, decision 2).** 06 §6.2 gains
+the third value:
+
+> A third value, `"history-until-baseline"` (*amended 2026-11-07*,
+> operator: C), is an origin that keeps its history for one period of its
+> own and removes it when the next begins: the plugin declares
+> `origin_period(origin)`, the period of the unit a record's `origin`
+> names, later periods larger. A superseded version is kept as under
+> `"history"` while the origin keeps the units that verify it, and is
+> dropped once every record of it names a period before the one its
+> part's current version names — by the producer when it freezes the
+> snapshot that re-issues the part, by a peer when it promotes the new
+> version. The current version is never dropped, nor a version with a
+> record the plugin cannot place. pubmed declares it: NLM keeps the
+> baseline and every update file of a baseline year at their paths until
+> it publishes the next baseline, and removes them then; its period is the
+> year in the container's name (`pubmed26n1401.xml.gz`: 26).
+
+02 §2.3 says the same of a superseded version and its relations and
+figures; 09 §9.5's "and kept, so that snapshot can still be served and
+checked" gains "for as long as the plugin's `origin_versions` keeps it";
+01 promise 7 names the third case.
 
 ## 9. Deploy and the first run
 
@@ -345,28 +410,44 @@ official was published from pubmed — `share = false` since 2026-10-20):
 1. Deploy the image. Nothing runs on its own for pubmed: it is paused.
 2. `louise hold records fetch pubmed --slice all --dry-run`: the real count
    and bytes, said in the report.
-3. Snapshot 2026-08 is not its cutoff's state (§1). `louise hold snapshot
-   discard pubmed 2026-08` — it refuses by itself if this node ever served
-   or attested it, which München confirms first.
+3. Snapshot 2026-08 is not its cutoff's state (§1): it still applies.
+   `louise hold snapshot discard pubmed 2026-08` — it refuses by itself if
+   this node ever served or attested it, which München confirms first. It
+   MOVES every part the snapshot lists under `<SHARD>/.discarded/2026-08/`,
+   on the SHARD's own filesystem (`/shards/pubmed`): nothing is copied and
+   nothing freed until that directory is removed after step 4's 2026-08
+   rebuild has taken its lines. Its size is the SHARD's record parts —
+   `du -sh /shards/pubmed/records` on München before the discard; not
+   measured from here (an estimate: ~14 GB of records at pack-format.md's
+   measured scale for 40 M PubMed records; the retired v6 SHARD was 40 GB).
 4. Per cutoff, in turn — 2026-08, 2026-09, 2026-10: `records fetch pubmed
    --slice all --snapshot ID` (the files dated before it), a discovery pass
    with pubmed's `embed` off (the text index follows; the card waits),
-   then — **once the operator has answered §5's second question** —
-   `records build` (for 2026-08 with `--records-from-discarded 2026-08`:
-   only the changed records parsed) and `snapshot create ID`. A cutoff's
-   build comes before the next cutoff's fetch: the manifest then holds
-   that cutoff's state and no later one.
+   then `records build` (for 2026-08 with `--records-from-discarded
+   2026-08`: only the changed records parsed) and `snapshot create ID`. A
+   cutoff's build comes before the next cutoff's fetch: the manifest then
+   holds that cutoff's state and no later one. (Held until the operator
+   decided a deleted citation's part; lifted: §5, decision 1.)
 5. Then `embed` back to `all`: each distinct PMID re-encoded once, ~1 day of
    card; and `acquire_enabled` for the daily files (~10 card-minutes a day).
+6. NLM's 2027 baseline (mid-December 2026) lands at the corpus root by the
+   daily fetch; the next discovery moves every record to it, the next build
+   re-issues every part, and that snapshot's freeze (2026-12, cut
+   2027-01-01) drops every version only 2026's files verified (§5, decision
+   2): snapshots 2026-08 to 2026-11 are no longer servable after it, and
+   the SHARD shrinks by the year's superseded versions (estimate: ~55–115
+   GB by then — three monthly re-issues of §6's 10–25 GB, and the whole
+   2026-11 version the rollover itself supersedes, ~14 GB).
 
 **Also open, found here:**
 - the annual baseline (December 2026): the 2027 baseline lands at the root
   beside 2026's files, sorts after them, and supersedes them by rule 2 of
-  §3; what is kept of 2026 is §5's first question; a citation NLM drops from a
+  §3; what is kept of 2026 is decided (§5, decision 2: dropped at the
+  first freeze after it, built); a citation NLM drops from a
   baseline without a DeleteCitation is not yet noticed (06 §6.1: "a
   document the scan does not report is unchanged") — the rollover pass that
   answers it is to be designed before December;
 - versioned citations (`PMID Version="2"`): NLM keeps every version, a uid
   holds one, so a later version replaces the earlier in the current
-  snapshot (kept only as a superseded part under `history`) — an invariant
+  snapshot (kept only as a superseded part, until the next baseline) — an invariant
   11 question for the operator, pre-existing, not changed here.

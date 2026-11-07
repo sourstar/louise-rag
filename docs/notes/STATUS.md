@@ -18,7 +18,7 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
-### 2026-11-07: pubmed's update files — fetched, applied in NLM's order; two questions for the operator
+### 2026-11-07: pubmed's update files — fetched, applied in NLM's order; a deleted citation's part and a baseline year decided
 
 - **The defect** (München, read-only): pubmed's origin copy is the 2026
   baseline alone; no update file was ever fetched, though the spec and the
@@ -34,14 +34,16 @@ measured (published figures disagree).
   the deletion signal (`retracted`), out of every index before its tombstone
   commits. Fixed on the way: with a staging area, fetched files were never
   md5-checked. 06 §6.1, §6.2 and 09 §9.17 amended.
-- **For the operator, before the first snapshot over update files:** a
-  deleted citation leaves its part at the next snapshot (what the build
-  does, and the only rule the peers honour today: a tombstone is read by
-  absence) or stays in its closed part as 02 §2.2 says (pubmed-updatefiles.md
-  §5; recommended: leave, the spec amended; until answered no pubmed
-  snapshot is built over the update files). **Before December's baseline:**
-  what is kept of a year's superseded versions once NLM removes that year's
-  files (§5; A keeps everything until answered).
+- **Decided (operator, 2026-11-07)** ([pubmed-updatefiles.md](pubmed-updatefiles.md)
+  §5): **B** — a deleted citation leaves its part at the next snapshot,
+  tombstoned `retracted` (02 §2.2, 09 §9.4, 04 amended; what the build
+  did; no peer reads a tombstone for a record still in a part); **C** — a
+  superseded version is kept while NLM keeps the files that verify it and
+  dropped at the next baseline: `origin_versions = "history-until-baseline"`
+  with the plugin's `origin_period` (06 §6.2, 02 §2.3, 09 §9.5, 01 promise
+  7 amended; `shard.drop_past_period`, at the freeze that re-issues a part
+  and at a peer's promotion). The hold on pubmed's snapshots over the update
+  files is lifted; the deploy order is the note's §9.
 
 ### 2026-11-02 (morning): harrier evaluation under acquire-only; the web alone on 938c525
 

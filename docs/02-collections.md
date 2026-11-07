@@ -304,10 +304,16 @@ their parts at the same boundaries, which is what lets two sisters
 share members (§2.7). A record whose text changed
 re-issues its part under the same number in the next snapshot; a
 deleted or retracted record becomes a tombstone: it is listed in that
-snapshot's `delta.tombstoned`, it is excluded from search and from
-embedding on every peer that holds the snapshot, and its text stays in
-its closed part — so the part still verifies and 01's promise 7 holds
-— until that part is next re-issued, when it is dropped from the file.
+snapshot's `delta.tombstoned`, and it leaves its part in that snapshot,
+which re-issues the part one record shorter, as a record the origin no
+longer supplies does (*amended 2026-11-07*, operator: B,
+docs/notes/pubmed-updatefiles.md §5): no current part holds a tombstoned
+record, so every peer that holds the snapshot excludes it from search and
+from embedding by its absence, and the version that held it is kept or
+dropped as below, which is where 01's promise 7 holds for it. Until
+2026-11-07 its text stayed in its closed part until the part was re-issued
+for another reason; nothing on a peer read a tombstone for a record still
+in a part, and no plugin had emitted the deletion signal.
 A record the origin no longer supplies cannot be re-parsed, so its own
 going re-issues its part in the next snapshot, one record shorter; the
 version it supersedes is kept or dropped as below, and no later part moves, because
@@ -389,6 +395,14 @@ promotion overwrites it; a part no longer held is not served (01, promise
 7; *amended 2026-10-25*, operator: A; *amended 2026-10-28*: overwritten at
 the build's promotion, the delta read the new bytes on both sides and said
 nothing changed).
+Where the origin keeps its history for one period and removes it when the
+next begins (`"history-until-baseline"`: PubMed, whose baseline year's
+files NLM removes when it publishes the next baseline), a superseded
+version is kept as under `"history"` until every record of it names an
+earlier period than its part's current version, and is dropped then — at
+the freeze of the snapshot that re-issues the part, or a peer's promotion
+of the new version — with the relations and figures of the same snapshot
+(*amended 2026-11-07*, operator: C, docs/notes/pubmed-updatefiles.md §5).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,

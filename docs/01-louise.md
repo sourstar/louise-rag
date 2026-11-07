@@ -118,7 +118,10 @@ consistent, because there is nobody to prove them to.
    be served and checked; where the origin replaces in place (Project
    Gutenberg), the superseded version is dropped once the newer snapshot
    holds its replacement, because it can no longer be checked against
-   the source (02 §2.3, 06 §6.2). A tombstoned record is excluded from
+   the source; where the origin keeps its history for one period
+   (PubMed's baseline year), it is kept until the origin removes the
+   files that verify it (02 §2.3, 06 §6.2; *amended 2026-11-07*,
+   operator: C). A tombstoned record is excluded from
    search and from embedding from the snapshot that tombstones it (02
    §2.2).
 8. **Nothing proceeds with a known defect. "Fix it after" is never, ever

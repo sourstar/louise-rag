@@ -729,9 +729,9 @@ under its number, and open a new number only once it is full. Having
 held that many closes it for good: dropping a tombstoned record at a
 later re-issue leaves it short and it is never refilled, so "open" is
 a part that has never been full, not one that is not full now; a
-tombstoned record stays in
-its closed part until that part is next re-issued and is excluded from
-search and embedding by the tombstone alone. The set of parts re-issued
+tombstoned record leaves its part in the snapshot that tombstones it,
+re-issuing the part (02 §2.2, *amended 2026-11-07*, operator: B). The set
+of parts re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
 in `previous`; nothing lists it separately.
 
@@ -799,7 +799,12 @@ Its sidecar after two peers computed it and a third signed it later:
 part `n` of the slice. When a snapshot re-issues the part, the file it
 supersedes is renamed `records/<slice>/<NNNNN>.<last snapshot id>.jsonl.zst`
 — the last snapshot in which those bytes were current — and kept, so
-that snapshot can still be served and checked (01, promise 7).
+that snapshot can still be served and checked (01, promise 7), for as long
+as the plugin's `origin_versions` keeps it: always under `"history"`, not
+past the next snapshot under `"replaces"`, and under
+`"history-until-baseline"` until every record of it names an earlier
+`origin_period` than the part's current version (06 §6.2, 02 §2.3;
+*amended 2026-11-07*, operator: C).
 
 **The record line.** One record is one line: a JSON object with exactly
 these keys, written in this order, compact (no whitespace outside

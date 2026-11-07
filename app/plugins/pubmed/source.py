@@ -251,13 +251,23 @@ class PubmedSource:
          "authority": {"name": "MeSH"}},
     ]
 
-    #: 06 §6.2: NLM keeps every published file — the baseline and each
-    #: update file — at its own path for the life of its baseline year, so
-    #: a superseded part version is still checkable against the origin, and
-    #: is kept. What becomes of the year's files at the next baseline is the
-    #: operator's question (docs/notes/pubmed-updatefiles.md §5); until it is
-    #: answered this is the platform's default, written out.
-    origin_versions = "history"
+    #: 06 §6.2 (amended 2026-11-07, operator: C): NLM keeps every published
+    #: file — the baseline and each update file — at its own path for the
+    #: life of its baseline year, and removes the year's files when it
+    #: publishes the next baseline. So a superseded part version is kept
+    #: while the files that verify it are at the origin, and dropped at the
+    #: rollover (docs/notes/pubmed-updatefiles.md §5; app/hold/shard.py
+    #: `drop_past_period`), by `origin_period`.
+    origin_versions = "history-until-baseline"
+
+    @staticmethod
+    def origin_period(origin: str) -> int | None:
+        """The baseline year of the NLM container a record's `origin` names
+        (`pubmed26n0001.xml.gz#3`, `updatefiles/pubmed26n1401.xml.gz#17`:
+        26), or None for an origin NLM did not name. A later year's
+        baseline replaces every earlier year's files at the origin."""
+        seq = sequence_of(Path(str(origin).split("#", 1)[0]))
+        return seq[0] if seq else None
 
     @staticmethod
     def tombstone_reason(error: str | None) -> str | None:
